@@ -48,7 +48,20 @@ import type {
   PublicBrandTheme,
 } from "@calasign/shared";
 
-export type { ApiEvent, CompleteSigningInput, CreateEnvelopeRequest, CreateEnvelopeResponse, EnvelopeBatchResponse, EnvelopeDetail, EnvelopeFormData, EnvelopeSummary, WebhookEventPayload, Brand, BrandConfigInput, PublicBrandTheme };
+export type {
+  ApiEvent,
+  CompleteSigningInput,
+  CreateEnvelopeRequest,
+  CreateEnvelopeResponse,
+  EnvelopeBatchResponse,
+  EnvelopeDetail,
+  EnvelopeFormData,
+  EnvelopeSummary,
+  WebhookEventPayload,
+  Brand,
+  BrandConfigInput,
+  PublicBrandTheme,
+};
 
 export const VERSION = "0.1.0";
 
@@ -520,7 +533,16 @@ function cellRedirect(text: string, current: string): string | null {
 const SECOND_LEVELS = new Set(["com", "co", "net", "org", "gob", "gov", "edu", "ac", "mil", "nom"]);
 // Hosting compartido: cualquiera registra un subdominio, así que el "dominio" no identifica a nadie (a.herokuapp.com y
 // b.herokuapp.com son de dueños distintos). Ahí se exige el host completo idéntico (o allowedCellHosts).
-const SHARED_HOSTING = new Set(["herokuapp.com", "vercel.app", "github.io", "netlify.app", "pages.dev", "azurewebsites.net", "cloudfront.net", "appspot.com"]);
+const SHARED_HOSTING = new Set([
+  "herokuapp.com",
+  "vercel.app",
+  "github.io",
+  "netlify.app",
+  "pages.dev",
+  "azurewebsites.net",
+  "cloudfront.net",
+  "appspot.com",
+]);
 
 /**
  * Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la última es un
@@ -704,7 +726,10 @@ class EnvelopesApi {
    * siendo reintentable.
    */
   send(id: string, o: SendEnvelopeOptions = {}): Promise<EnvelopeDetail> {
-    return this.c.request("POST", `/v1/envelopes/${seg(id)}/send`, { idempotencyKey: o.idempotencyKey ?? `send-${seg(id)}`, headers: draftHeaders(o) });
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/send`, {
+      idempotencyKey: o.idempotencyKey ?? `send-${seg(id)}`,
+      headers: draftHeaders(o),
+    });
   }
 
   /**
@@ -862,7 +887,14 @@ class EventsApi {
 
   private page(p: ListEventsParams, signal?: AbortSignal): Promise<ListEventsResponse> {
     return this.c.request("GET", "/v1/events", {
-      query: { after: p.after ?? undefined, since: isoOf(p.since), types: p.types?.join(","), envelope_id: p.envelopeId, scope: p.scope, limit: p.limit },
+      query: {
+        after: p.after ?? undefined,
+        since: isoOf(p.since),
+        types: p.types?.join(","),
+        envelope_id: p.envelopeId,
+        scope: p.scope,
+        limit: p.limit,
+      },
       signal,
     });
   }
@@ -925,9 +957,18 @@ class BrandsApi {
   }
 
   /** Sube logo, logoDark, favicon o font. */
-  uploadAsset(id: string, kind: BrandAssetKind, file: Uint8Array | ArrayBuffer | Blob, filename = kind, contentType = "application/octet-stream"): Promise<Brand> {
+  uploadAsset(
+    id: string,
+    kind: BrandAssetKind,
+    file: Uint8Array | ArrayBuffer | Blob,
+    filename = kind,
+    contentType = "application/octet-stream",
+  ): Promise<Brand> {
     const fd = new FormData();
-    const blob = file instanceof Blob ? file : new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: contentType });
+    const blob =
+      file instanceof Blob
+        ? file
+        : new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: contentType });
     fd.append("file", blob, filename);
     return this.c.request("POST", `/v1/settings/brands/${seg(id)}/assets/${seg(kind)}`, { form: fd });
   }

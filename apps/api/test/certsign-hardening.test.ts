@@ -11,9 +11,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-certsign-hardening-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
-type Blobs = ReturnType<typeof import("../src/infra/storage")["createBlobStore"]>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
+type Blobs = ReturnType<(typeof import("../src/infra/storage"))["createBlobStore"]>;
 let db: Db;
 let app: App;
 let blobs: Blobs;
@@ -35,7 +35,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = util.uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name, retention_days) VALUES ($1, $2, 'T', 30)`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [util.uuidv7(), tenant, util.sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    util.uuidv7(),
+    tenant,
+    util.sha256Hex(KEY),
+  ]);
   const real = createBlobStore();
   blobs = {
     ...real,
@@ -70,32 +74,27 @@ async function draftEnvelope() {
 async function awaitingEnvelope(o: { reqs?: object; idDoc?: string | null; pdf?: Uint8Array; expiresAt?: string } = {}) {
   const env = util.uuidv7();
   const rec = util.uuidv7();
-  await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, expires_at) VALUES ($1, $2, 'Contrato', 'awaiting_certificates', now(), $3)`, [
-    env,
-    tenant,
-    o.expiresAt ?? null,
-  ]);
+  await db.query(
+    `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, expires_at) VALUES ($1, $2, 'Contrato', 'awaiting_certificates', now(), $3)`,
+    [env, tenant, o.expiresAt ?? null],
+  );
   await db.query(
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, signature_type, certificate_requirements, id_document_number)
      VALUES ($1,$2,$3,'signer','Juana','j@x.test','signed','certificate',$4,$5)`,
     [rec, tenant, env, JSON.stringify(o.reqs ?? { matchIdDocument: false, allowedIssuers: [], requireQualified: false }), o.idDoc ?? null],
   );
-  await db.query(`INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name) VALUES ($1,$2,$3,$4,1,'FirmaCertificado1')`, [
-    util.uuidv7(),
-    tenant,
-    env,
-    rec,
-  ]);
+  await db.query(
+    `INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name) VALUES ($1,$2,$3,$4,1,'FirmaCertificado1')`,
+    [util.uuidv7(), tenant, env, rec],
+  );
   const working = o.pdf ?? new TextEncoder().encode("%PDF-1.4 trabajo");
   const workingKey = `tenants/${tenant}/envelopes/${env}/certsign/${util.uuidv7()}-working.pdf`;
   await blobs.put(workingKey, working, "application/pdf");
   const sha = util.sha256Hex(working);
-  await db.query(`INSERT INTO envelope_certsign (envelope_id, tenant_id, working_key, working_sha256, completed_at, chain_head) VALUES ($1,$2,$3,$4, now(), 'c')`, [
-    env,
-    tenant,
-    workingKey,
-    sha,
-  ]);
+  await db.query(
+    `INSERT INTO envelope_certsign (envelope_id, tenant_id, working_key, working_sha256, completed_at, chain_head) VALUES ($1,$2,$3,$4, now(), 'c')`,
+    [env, tenant, workingKey, sha],
+  );
   const code = Array.from({ length: 10 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[randomInt(31)]).join("");
   const sess = util.uuidv7();
   const preparedKey = `tenants/${tenant}/envelopes/${env}/certsign/${sess}-x-prepared.pdf`;
@@ -165,7 +164,9 @@ describe("documento de identidad exigido sin documento", () => {
     );
     const r = await app.inject({ method: "POST", url: `/v1/envelopes/${env}/send`, headers, payload: {} });
     expect(r.statusCode).toBe(422);
-    expect(r.json().error.details.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "missing_id_document", params: { name: "Beto" } })]));
+    expect(r.json().error.details.issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "missing_id_document", params: { name: "Beto" } })]),
+    );
   });
 
   it("enviar un sobre creado desde una plantilla: el control se baja (con la marca) en vez de ser un problema", async () => {
@@ -208,11 +209,17 @@ describe("documento de identidad exigido sin documento", () => {
     const holder = await pki.issue("Juana Pérez");
     const x = await awaitingEnvelope({ reqs: { matchIdDocument: true, allowedIssuers: [], requireQualified: false }, idDoc: null, pdf: samplePdf() });
     await db.query(`UPDATE certsign_sessions SET prepared_key = NULL WHERE id = $1`, [x.sess]);
-    const p = await app.inject({ method: "POST", url: `/v1/certsign/sessions/${x.code}/certificate`, payload: { chain: [holder.certPem, pki.intermediate.certPem] } });
+    const p = await app.inject({
+      method: "POST",
+      url: `/v1/certsign/sessions/${x.code}/certificate`,
+      payload: { chain: [holder.certPem, pki.intermediate.certPem] },
+    });
     expect(p.statusCode, p.body).toBe(200);
     const sess = await db.one<any>(`SELECT cert_check FROM certsign_sessions WHERE id = $1`, [x.sess]);
     expect(sess.cert_check.idDocumentMatch).toBe("skipped_missing_id_document");
-    const signature = Buffer.from(cryptoSign("sha256", Buffer.from(p.json().dataToSign, "base64"), createPrivateKey(holder.keyPem))).toString("base64");
+    const signature = Buffer.from(cryptoSign("sha256", Buffer.from(p.json().dataToSign, "base64"), createPrivateKey(holder.keyPem))).toString(
+      "base64",
+    );
     const ok = await app.inject({ method: "POST", url: `/v1/certsign/sessions/${x.code}/signature`, payload: { signature } });
     expect(ok.statusCode, ok.body).toBe(200);
     const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.certificate_signed'`, [x.env]);
@@ -225,7 +232,10 @@ describe("documento de identidad exigido sin documento", () => {
     const z = await awaitingEnvelope({ reqs: { matchIdDocument: true, allowedIssuers: [], requireQualified: false }, idDoc: null });
     await db.query(`UPDATE envelopes SET status = 'completed' WHERE id = $1`, [z.env]);
     const sql = readFileSync(new URL("../migrations/0092_certsign_id_match_default.sql", import.meta.url), "utf8");
-    const updates = sql.split(/;\s*$/m).map((s) => s.replace(/^\s*--.*$/gm, "").trim()).filter((s) => s.startsWith("UPDATE"));
+    const updates = sql
+      .split(/;\s*$/m)
+      .map((s) => s.replace(/^\s*--.*$/gm, "").trim())
+      .filter((s) => s.startsWith("UPDATE"));
     expect(updates).toHaveLength(2);
     for (const stmt of updates) await db.query(stmt);
     const req = async (rec: string) => (await db.one<any>(`SELECT certificate_requirements AS r FROM recipients WHERE id = $1`, [rec])).r;
@@ -289,7 +299,11 @@ describe("delegación y reasignación de un firmante que debe corresponder a su 
   });
 
   it("sin el control (o pedido sin documento, que no rige) se delega como siempre", async () => {
-    for (const [reqs, doc] of [[{ ...MATCH, matchIdDocument: false }, "30111222"], [MATCH, null], [null, "30111222"]] as const) {
+    for (const [reqs, doc] of [
+      [{ ...MATCH, matchIdDocument: false }, "30111222"],
+      [MATCH, null],
+      [null, "30111222"],
+    ] as const) {
       const x = await sentEnvelope(reqs, doc);
       expect((await delegate(x.token)).statusCode).toBe(200);
     }
@@ -325,7 +339,10 @@ describe("migración 0094: control del documento explícito en sobres no termina
     );
     const f = await awaitingEnvelope({ reqs: noKey, idDoc: "30111222" });
     const sql = readFileSync(new URL("../migrations/0094_certsign_id_match_explicit.sql", import.meta.url), "utf8");
-    const updates = sql.split(/;\s*$/m).map((s) => s.replace(/^\s*--.*$/gm, "").trim()).filter((s) => s.startsWith("UPDATE"));
+    const updates = sql
+      .split(/;\s*$/m)
+      .map((s) => s.replace(/^\s*--.*$/gm, "").trim())
+      .filter((s) => s.startsWith("UPDATE"));
     expect(updates).toHaveLength(1);
     const req = async (rec: string) => (await db.one<any>(`SELECT certificate_requirements AS r FROM recipients WHERE id = $1`, [rec])).r;
     for (let i = 0; i < 2; i++) {
@@ -348,7 +365,10 @@ describe("PDF de la firma con certificado al cerrar el sobre", () => {
     expect(await exists(x.workingKey)).toBe(false);
     expect(await exists(x.preparedKey)).toBe(false);
     expect(await db.one(`SELECT 1 FROM envelope_certsign WHERE envelope_id = $1`, [x.env])).toBeNull();
-    expect(await db.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1`, [x.sess])).toEqual({ status: "expired", prepared_key: null });
+    expect(await db.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1`, [x.sess])).toEqual({
+      status: "expired",
+      prepared_key: null,
+    });
   });
 
   it("vencer (barrido) borra el PDF de trabajo y los preparados", async () => {
@@ -368,7 +388,10 @@ describe("PDF de la firma con certificado al cerrar el sobre", () => {
     expect(await sweepCertsignPrepared(db, blobs)).toBeGreaterThanOrEqual(1);
     expect(await exists(x.preparedKey)).toBe(false);
     expect(await exists(x.workingKey)).toBe(true);
-    expect(await db.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1`, [x.sess])).toEqual({ status: "expired", prepared_key: null });
+    expect(await db.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1`, [x.sess])).toEqual({
+      status: "expired",
+      prepared_key: null,
+    });
   });
 
   it("barrido: PDF de trabajo de un sobre anulado aunque la organización no tenga retención", async () => {
@@ -417,7 +440,13 @@ describe("PDF de la firma con certificado al cerrar el sobre", () => {
     expect(await exists(x.workingKey)).toBe(false);
     expect(await exists(x.preparedKey)).toBe(false);
     const v = await db.one<any>(`SELECT result FROM identity_verifications WHERE id = $1`, [ver]);
-    expect(v.result).toMatchObject({ status: "approved", document: { type: "DNI", country: "AR", number: null }, person: { fullName: null, birthDate: null }, faceMatchScore: 0.9, purged: true });
+    expect(v.result).toMatchObject({
+      status: "approved",
+      document: { type: "DNI", country: "AR", number: null },
+      person: { fullName: null, birthDate: null },
+      faceMatchScore: 0.9,
+      purged: true,
+    });
   });
 });
 
@@ -464,7 +493,11 @@ describe("preparación y firma", () => {
       onGet = null;
       await db.query(`UPDATE certsign_sessions SET prepared_key = $2 WHERE id = $1`, [x.sess, `${k2}.otra`]);
     };
-    const stale = await app.inject({ method: "POST", url: `/v1/certsign/sessions/${x.code}/signature`, payload: { signature: sign(p2.json().dataToSign) } });
+    const stale = await app.inject({
+      method: "POST",
+      url: `/v1/certsign/sessions/${x.code}/signature`,
+      payload: { signature: sign(p2.json().dataToSign) },
+    });
     onGet = null;
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("document_changed");
@@ -472,9 +505,16 @@ describe("preparación y firma", () => {
 
     // Sin la carrera, la firma se completa y la sesión ya no referencia el preparado (borrado).
     await db.query(`UPDATE certsign_sessions SET prepared_key = $2 WHERE id = $1`, [x.sess, k2]);
-    const ok = await app.inject({ method: "POST", url: `/v1/certsign/sessions/${x.code}/signature`, payload: { signature: sign(p2.json().dataToSign) } });
+    const ok = await app.inject({
+      method: "POST",
+      url: `/v1/certsign/sessions/${x.code}/signature`,
+      payload: { signature: sign(p2.json().dataToSign) },
+    });
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(await db.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1`, [x.sess])).toEqual({ status: "completed", prepared_key: null });
+    expect(await db.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1`, [x.sess])).toEqual({
+      status: "completed",
+      prepared_key: null,
+    });
     expect(await exists(k2)).toBe(false);
   }, 60_000);
 });
@@ -510,11 +550,19 @@ describe("verificación de identidad: datos guardados", () => {
         tenant,
         x.env,
         x.rec,
-        JSON.stringify({ status: "approved", document: { type: "DNI", number: "001-1234567-8", country: "DO" }, person: { fullName: "Ana", birthDate: "1988-02-01" } }),
+        JSON.stringify({
+          status: "approved",
+          document: { type: "DNI", number: "001-1234567-8", country: "DO" },
+          person: { fullName: "Ana", birthDate: "1988-02-01" },
+        }),
       ],
     );
     const sql = readFileSync(new URL("../migrations/0091_identity_result_masked.sql", import.meta.url), "utf8");
-    for (const stmt of sql.split(/;\s*$/m).map((x) => x.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean)) await db.query(stmt);
+    for (const stmt of sql
+      .split(/;\s*$/m)
+      .map((x) => x.replace(/^\s*--.*$/gm, "").trim())
+      .filter(Boolean))
+      await db.query(stmt);
     const v = await db.one<any>(`SELECT result FROM identity_verifications WHERE id = $1`, [ver]);
     expect(v.result.document.number).toBe("******67-8");
     expect(v.result.person.birthDate).toBe("1988");
@@ -523,7 +571,8 @@ describe("verificación de identidad: datos guardados", () => {
 });
 
 describe("fotos de identidad sin metadatos", () => {
-  const seg = (marker: number, payload: Buffer) => Buffer.concat([Buffer.from([0xff, marker]), Buffer.from([(payload.length + 2) >> 8, (payload.length + 2) & 0xff]), payload]);
+  const seg = (marker: number, payload: Buffer) =>
+    Buffer.concat([Buffer.from([0xff, marker]), Buffer.from([(payload.length + 2) >> 8, (payload.length + 2) & 0xff]), payload]);
 
   it("JPEG: quita APP1 (EXIF con GPS) y comentarios, conserva JFIF y los datos de imagen", async () => {
     const { stripImageMetadata } = await import("../src/modules/identity/image-meta");
@@ -615,4 +664,3 @@ describe("fotos de identidad sin metadatos", () => {
     expect(() => stripImageMetadata(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff, 1]))).toThrow(InvalidImageError);
   });
 });
-

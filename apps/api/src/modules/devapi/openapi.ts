@@ -12,7 +12,10 @@ const date = (name: string, description: string) => ({ name, description, schema
 export const ENVELOPE_SEARCH_QUERY = [
   date("created_from", "Creados desde (ISO 8601, inclusive)."),
   date("created_to", "Creados antes de (ISO 8601, exclusivo)."),
-  date("updated_from", "Modificados desde (inclusive). Para sincronizar: guardar la hora del último pedido y pedir los cambios desde ahí. Alias: `updated_since`."),
+  date(
+    "updated_from",
+    "Modificados desde (inclusive). Para sincronizar: guardar la hora del último pedido y pedir los cambios desde ahí. Alias: `updated_since`.",
+  ),
   date("updated_to", "Modificados antes de (exclusivo)."),
   date("sent_from", "Enviados desde (inclusive)."),
   date("sent_to", "Enviados antes de (exclusivo)."),
@@ -20,7 +23,8 @@ export const ENVELOPE_SEARCH_QUERY = [
   date("completed_to", "Completados antes de (exclusivo)."),
   {
     name: "metadata",
-    description: "Filtro por metadata, `clave:valor` (repetible, hasta 10; todos tienen que coincidir). También `metadata[clave]=valor`. Compara contra valores string.",
+    description:
+      "Filtro por metadata, `clave:valor` (repetible, hasta 10; todos tienen que coincidir). También `metadata[clave]=valor`. Compara contra valores string.",
     schema: { type: "string", example: "orderId:ORD-1001" },
   },
   { name: "recipient", description: "Correo (sin distinguir mayúsculas) o teléfono E.164 exacto de un destinatario." },
@@ -31,7 +35,12 @@ export const ENVELOPE_SEARCH_QUERY = [
 const ApiEventSchema = named(
   "ApiEvent",
   z.object({
-    id: z.string().uuid().describe("Único por evento y el mismo que el `id` del webhook de ese evento (UUID determinístico por sobre, registro y tipo). Usarlo para descartar duplicados entre webhooks y eventos. No es un cursor: para seguir, `cursor`."),
+    id: z
+      .string()
+      .uuid()
+      .describe(
+        "Único por evento y el mismo que el `id` del webhook de ese evento (UUID determinístico por sobre, registro y tipo). Usarlo para descartar duplicados entre webhooks y eventos. No es un cursor: para seguir, `cursor`.",
+      ),
     legacyId: z
       .string()
       .describe(
@@ -41,18 +50,37 @@ const ApiEventSchema = named(
     occurredAt: iso(),
     envelopeId: z.string().uuid(),
     recipientId: z.string().uuid().nullable(),
-    envelope: z.object({ id: z.string().uuid(), subject: z.string(), status: z.string().describe("Estado ACTUAL del sobre."), metadata: z.record(z.string(), z.unknown()) }),
-    data: z.record(z.string(), z.unknown()).describe("Con scope=webhook solo `reason` (rechazo/anulación); con scope=all, el dato completo de la evidencia."),
+    envelope: z.object({
+      id: z.string().uuid(),
+      subject: z.string(),
+      status: z.string().describe("Estado ACTUAL del sobre."),
+      metadata: z.record(z.string(), z.unknown()),
+    }),
+    data: z
+      .record(z.string(), z.unknown())
+      .describe("Con scope=webhook solo `reason` (rechazo/anulación); con scope=all, el dato completo de la evidencia."),
     cursor: z.string().describe("Valor opaco para `after` (o Last-Event-ID en el stream)."),
   }),
 );
 
 const EVENT_QUERY = [
-  { name: "after", description: "Cursor: devuelve los eventos posteriores a este (`nextCursor` o `cursor` de un evento). Sin `after` se usa `since`." },
+  {
+    name: "after",
+    description: "Cursor: devuelve los eventos posteriores a este (`nextCursor` o `cursor` de un evento). Sin `after` se usa `since`.",
+  },
   date("since", "Sin `after`: eventos desde esta fecha (por defecto, las últimas 24 h)."),
-  { name: "types", description: "Tipos separados por coma (por defecto, todos los de los webhooks).", schema: { type: "string", example: "envelope.completed,recipient.signed" } },
+  {
+    name: "types",
+    description: "Tipos separados por coma (por defecto, todos los de los webhooks).",
+    schema: { type: "string", example: "envelope.completed,recipient.signed" },
+  },
   { name: "envelope_id", description: "Solo los eventos de este sobre.", schema: { type: "string", format: "uuid" } },
-  { name: "scope", description: "`webhook` (por defecto): los tipos públicos de los webhooks. `all`: todos los registros de evidencia (document.added, envelope.reminded, …).", schema: { type: "string", enum: ["webhook", "all"] } },
+  {
+    name: "scope",
+    description:
+      "`webhook` (por defecto): los tipos públicos de los webhooks. `all`: todos los registros de evidencia (document.added, envelope.reminded, …).",
+    schema: { type: "string", enum: ["webhook", "all"] },
+  },
 ];
 
 const FormDataSchema = named(
@@ -81,7 +109,13 @@ const FormDataSchema = named(
             hidden: z.boolean().describe("Oculto por la lógica condicional (no se estampó)."),
             readOnly: z.boolean(),
             attachment: z
-              .object({ name: z.string().nullable(), contentType: z.string(), sizeBytes: z.number().int(), sha256: z.string(), downloadPath: z.string() })
+              .object({
+                name: z.string().nullable(),
+                contentType: z.string(),
+                sizeBytes: z.number().int(),
+                sha256: z.string(),
+                downloadPath: z.string(),
+              })
               .nullable(),
           }),
         ),
@@ -100,8 +134,18 @@ const CloneResponseSchema = named(
           code: z.enum(["telegram_relink_required", "identity_verification_dropped", "certificate_id_match_dropped"]),
           recipientId: z.string().uuid().describe("Destinatario del clon."),
           recipient: z.string(),
-          reason: z.string().optional().describe("identity_verification_dropped: plan_without_kyc, provider_unavailable o not_applicable; certificate_id_match_dropped: missing_id_document."),
-          telegramOnly: z.boolean().optional().describe("telegram_relink_required: Telegram es su único canal (el envío responde 422 telegram_unlinked hasta cargar telegramChatId o agregar email/WhatsApp)."),
+          reason: z
+            .string()
+            .optional()
+            .describe(
+              "identity_verification_dropped: plan_without_kyc, provider_unavailable o not_applicable; certificate_id_match_dropped: missing_id_document.",
+            ),
+          telegramOnly: z
+            .boolean()
+            .optional()
+            .describe(
+              "telegram_relink_required: Telegram es su único canal (el envío responde 422 telegram_unlinked hasta cargar telegramChatId o agregar email/WhatsApp).",
+            ),
           message: z.string(),
         }),
       )
@@ -137,7 +181,14 @@ export const DEVAPI_OPS: Op[] = [
     description:
       "Del más viejo al más nuevo. Para reconciliar: guardar `nextCursor` y pedir `?after=<cursor>` periódicamente; con `hasMore: true`, pedir de nuevo enseguida. " +
       "Cada evento recibe su posición cuando ya está confirmado, así que ningún evento queda detrás del cursor aunque una operación tarde. El cursor es opaco (`p<n>`); los formatos anteriores se siguen aceptando. Una API key sin envelopes:view_all ve solo los de sus sobres.",
-    query: [...EVENT_QUERY, { name: "limit", description: "Registros de evidencia por página (1..500, por defecto 100).", schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } }],
+    query: [
+      ...EVENT_QUERY,
+      {
+        name: "limit",
+        description: "Registros de evidencia por página (1..500, por defecto 100).",
+        schema: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+      },
+    ],
     response: z.object({ items: z.array(ApiEventSchema), nextCursor: z.string().nullable(), hasMore: z.boolean() }),
     errors: ["invalid_cursor"],
   },
@@ -149,8 +200,17 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Eventos en vivo (Server-Sent Events)",
     description:
       "`text/event-stream`: cada mensaje lleva `id:` (cursor), `event:` (tipo) y `data:` (ApiEvent en JSON). Retoma desde `after` o el header `Last-Event-ID`; sin ninguno, desde `since` si se indica y si no, ahora. " +
-      "La conexión se cierra a los `max_seconds` (por defecto 300) con `event: end`; EventSource reconecta solo. Máximo 5 streams abiertos por organización (429 too_many_streams). Cada minuto se revisa la credencial: si se revoca (key, token, sesión), la persona deja la organización, cambian sus permisos o el plan deja de incluir el acceso por API, el stream termina con `event: end` y `{\"reason\":\"unauthorized\"}`; al reconectar rige el acceso nuevo.",
-    query: [...EVENT_QUERY.map((q) => (q.name === "since" ? date("since", "Sin `after` ni `Last-Event-ID`: empieza desde esta fecha en lugar de ahora.") : q)), { name: "max_seconds", description: "Duración máxima de la conexión en segundos (60..3600, por defecto 300; fuera de rango se ajusta al extremo).", schema: { type: "integer", minimum: 60, maximum: 3600, default: 300 } }],
+      'La conexión se cierra a los `max_seconds` (por defecto 300) con `event: end`; EventSource reconecta solo. Máximo 5 streams abiertos por organización (429 too_many_streams). Cada minuto se revisa la credencial: si se revoca (key, token, sesión), la persona deja la organización, cambian sus permisos o el plan deja de incluir el acceso por API, el stream termina con `event: end` y `{"reason":"unauthorized"}`; al reconectar rige el acceso nuevo.',
+    query: [
+      ...EVENT_QUERY.map((q) =>
+        q.name === "since" ? date("since", "Sin `after` ni `Last-Event-ID`: empieza desde esta fecha en lugar de ahora.") : q,
+      ),
+      {
+        name: "max_seconds",
+        description: "Duración máxima de la conexión en segundos (60..3600, por defecto 300; fuera de rango se ajusta al extremo).",
+        schema: { type: "integer", minimum: 60, maximum: 3600, default: 300 },
+      },
+    ],
     responseDescription: "Stream de eventos (text/event-stream).",
     errors: ["invalid_cursor"],
   },
@@ -160,7 +220,8 @@ export const DEVAPI_OPS: Op[] = [
     operationId: "getEnvelopeFormData",
     tag: "Sobres",
     summary: "Datos de formulario completados",
-    description: "Valores de los campos por destinatario, más una vista plana etiqueta → valor. Las firmas e iniciales solo informan `filled`; los adjuntos traen su ruta de descarga.",
+    description:
+      "Valores de los campos por destinatario, más una vista plana etiqueta → valor. Las firmas e iniciales solo informan `filled`; los adjuntos traen su ruta de descarga.",
     response: FormDataSchema,
   },
   {
@@ -216,4 +277,3 @@ export const DEVAPI_OPS: Op[] = [
     response: z.object({ webhook: WebhookSchema, secret: z.string().describe("whsec_…; se muestra una sola vez.") }),
   },
 ];
-

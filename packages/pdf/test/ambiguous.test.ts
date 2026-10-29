@@ -21,13 +21,18 @@ async function shadowed(visible: Uint8Array, hiddenText: string) {
   const contents = (arr instanceof PDFArray ? arr.get(arr.size() - 1) : raw) as PDFRef;
   const fontName = (page.node.Resources()!.lookup(PDFName.of("Font")) as unknown as { entries(): [PDFName, unknown][] }).entries()[0][0].decodeText();
   const body = `BT /${fontName} 14 Tf 50 780 Td (${hiddenText}) Tj ET`;
-  const copy = Buffer.from(`${contents.objectNumber} ${contents.generationNumber} obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`, "latin1");
+  const copy = Buffer.from(
+    `${contents.objectNumber} ${contents.generationNumber} obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
+    "latin1",
+  );
   const buf = Buffer.from(visible);
   const xrefAt = buf.lastIndexOf("xref\n", buf.lastIndexOf("startxref"));
-  const tail = buf.subarray(xrefAt).toString("latin1").replace(/startxref\n(\d+)/, (_, n) => `startxref\n${Number(n) + copy.length}`);
+  const tail = buf
+    .subarray(xrefAt)
+    .toString("latin1")
+    .replace(/startxref\n(\d+)/, (_, n) => `startxref\n${Number(n) + copy.length}`);
   return { bytes: new Uint8Array(Buffer.concat([buf.subarray(0, xrefAt), copy, Buffer.from(tail, "latin1")])), contents };
 }
-
 
 /**
  * Variantes donde el visor (pdf.js) elige un xref distinto del que tomaba el control: el contenido de la página está
@@ -92,7 +97,9 @@ describe("PDF ambiguo al subirlo", () => {
     expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
     // Un PDF normal con el mismo relleno se sigue aceptando.
     const plain = await base("Contrato");
-    expect((await inspectPdf(new Uint8Array(Buffer.concat([Buffer.from(plain), Buffer.from("% relleno\n".repeat(300), "latin1")])))).pageCount).toBe(1);
+    expect((await inspectPdf(new Uint8Array(Buffer.concat([Buffer.from(plain), Buffer.from("% relleno\n".repeat(300), "latin1")])))).pageCount).toBe(
+      1,
+    );
   });
 
   it("una entrada rota del xref (de un objeto que nadie usa) no apaga la detección", async () => {
@@ -236,7 +243,11 @@ describe("preparePdfUpload: el PDF guardado es el que ve pdf-lib", () => {
   });
 
   it("rechaza lo mismo que inspectPdf (no es PDF, demasiadas páginas)", async () => {
-    const codeOf = (b: Uint8Array, max?: number) => preparePdfUpload(b, max).then(() => "ok", (e) => (e as InvalidPdfError).code);
+    const codeOf = (b: Uint8Array, max?: number) =>
+      preparePdfUpload(b, max).then(
+        () => "ok",
+        (e) => (e as InvalidPdfError).code,
+      );
     expect(await codeOf(new Uint8Array(Buffer.from("hola mundo")))).toBe("not_pdf");
     const two = await PDFDocument.create();
     two.addPage();

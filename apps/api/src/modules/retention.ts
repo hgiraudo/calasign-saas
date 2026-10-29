@@ -136,63 +136,74 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
     let failure: string | null = null;
     // Todo con el sobre bloqueado: un clon o una plantilla "desde sobre" que lee el sobre a la vez (FOR SHARE) espera,
     // y no queda apuntando a un original que se está borrando.
-    const ok = await d.db.tx(async (t) => {
-      // La política se vuelve a mirar acá: si un administrador la extendió o la quitó mientras corría la pasada, el resto
-      // del lote no se borra. Sin bloquear la organización (los borrados en el almacenamiento pueden tardar y todo lo
-      // que la bloquea, de IA a miembros, quedaba esperando).
-      const cur = await t.one<any>(
-        `SELECT e.status, e.purged_at, t.retention_days,
+    const ok = await d.db
+      .tx(async (t) => {
+        // La política se vuelve a mirar acá: si un administrador la extendió o la quitó mientras corría la pasada, el resto
+        // del lote no se borra. Sin bloquear la organización (los borrados en el almacenamiento pueden tardar y todo lo
+        // que la bloquea, de IA a miembros, quedaba esperando).
+        const cur = await t.one<any>(
+          `SELECT e.status, e.purged_at, t.retention_days,
                 (${CLOSED_AT} < now() - make_interval(secs => t.retention_days * $2::double precision)) AS due
            FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1 FOR UPDATE OF e`,
-        [e.id, daySeconds()],
-      );
-      if (!CLOSED_STATUSES.includes(cur?.status) || cur.purged_at || cur.retention_days == null) return false;
-      if (!opts.ignoreAge && !cur.due) return false;
-      const files = await purgeableFiles(t, e.id);
-      const done: any[] = [];
-      let failed = 0;
-      for (const f of files) {
-        try {
-          await d.blobs.delete(f.storage_key);
-          done.push(f);
-        } catch (err) {
-          failed++;
-          d.log.error({ envelopeId: e.id, fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
+          [e.id, daySeconds()],
+        );
+        if (!CLOSED_STATUSES.includes(cur?.status) || cur.purged_at || cur.retention_days == null) return false;
+        if (!opts.ignoreAge && !cur.due) return false;
+        const files = await purgeableFiles(t, e.id);
+        const done: any[] = [];
+        let failed = 0;
+        for (const f of files) {
+          try {
+            await d.blobs.delete(f.storage_key);
+            done.push(f);
+          } catch (err) {
+            failed++;
+            d.log.error({ envelopeId: e.id, fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
+          }
         }
-      }
-      if (done.length) await t.query(`UPDATE files SET purged_at = now() WHERE id = ANY($1::uuid[])`, [done.map((f) => f.id)]);
-      // PDF de trabajo y preparados de la firma con certificado (no tienen fila en `files`): los de un sobre anulado o
-      // vencido cuyo borrado falló en su momento.
-      if (!(await discardCertsignFiles(t, d.blobs, e.id))) {
-        failed++;
-        d.log.error({ envelopeId: e.id }, "retención: no se pudieron borrar los PDF de la firma con certificado");
-      }
-      if (failed) {
-        // Se reintenta pasado RETRY_BACKOFF (lo ya borrado queda marcado).
-        failure = `no se pudieron borrar ${failed} archivo(s) del almacenamiento`;
+        if (done.length) await t.query(`UPDATE files SET purged_at = now() WHERE id = ANY($1::uuid[])`, [done.map((f) => f.id)]);
+        // PDF de trabajo y preparados de la firma con certificado (no tienen fila en `files`): los de un sobre anulado o
+        // vencido cuyo borrado falló en su momento.
+        if (!(await discardCertsignFiles(t, d.blobs, e.id))) {
+          failed++;
+          d.log.error({ envelopeId: e.id }, "retención: no se pudieron borrar los PDF de la firma con certificado");
+        }
+        if (failed) {
+          // Se reintenta pasado RETRY_BACKOFF (lo ya borrado queda marcado).
+          failure = `no se pudieron borrar ${failed} archivo(s) del almacenamiento`;
+          return false;
+        }
+        // Resultado de la verificación de identidad: queda solo el resumen (estado, tipo y país del documento, puntajes),
+        // sin nombre, número de documento ni año de nacimiento. Lo que pide la evidencia ya está en los eventos.
+        await t.query(
+          `UPDATE identity_verifications SET result = ${PURGED_IDV_RESULT_SQL}, updated_at = now() WHERE envelope_id = $1 AND result IS NOT NULL`,
+          [e.id],
+        );
+        await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = ${BUMP_UPDATED_AT}, retention_error = NULL WHERE id = $1`, [e.id]);
+        // Las entregas de webhooks del sobre llevan en el payload su asunto y los datos de los firmantes.
+        await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
+        const kinds: Record<string, number> = {};
+        for (const f of done) kinds[f.kind] = (kinds[f.kind] ?? 0) + 1;
+        await appendEvent(t, {
+          tenantId: e.tenant_id,
+          envelopeId: e.id,
+          type: "envelope.purged",
+          actor: SYSTEM,
+          data: {
+            retentionDays: cur.retention_days,
+            files: done.length,
+            kinds,
+            kept: cur.status === "completed" ? ["signed_pdf", "events"] : ["events"],
+            status: cur.status,
+          },
+        });
+        return true;
+      })
+      .catch((err) => {
+        failure = String((err as Error)?.message ?? err);
+        d.log.error({ envelopeId: e.id, err: failure }, "retención: no se pudo purgar el sobre");
         return false;
-      }
-      // Resultado de la verificación de identidad: queda solo el resumen (estado, tipo y país del documento, puntajes),
-      // sin nombre, número de documento ni año de nacimiento. Lo que pide la evidencia ya está en los eventos.
-      await t.query(`UPDATE identity_verifications SET result = ${PURGED_IDV_RESULT_SQL}, updated_at = now() WHERE envelope_id = $1 AND result IS NOT NULL`, [e.id]);
-      await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = ${BUMP_UPDATED_AT}, retention_error = NULL WHERE id = $1`, [e.id]);
-      // Las entregas de webhooks del sobre llevan en el payload su asunto y los datos de los firmantes.
-      await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
-      const kinds: Record<string, number> = {};
-      for (const f of done) kinds[f.kind] = (kinds[f.kind] ?? 0) + 1;
-      await appendEvent(t, {
-        tenantId: e.tenant_id,
-        envelopeId: e.id,
-        type: "envelope.purged",
-        actor: SYSTEM,
-        data: { retentionDays: cur.retention_days, files: done.length, kinds, kept: cur.status === "completed" ? ["signed_pdf", "events"] : ["events"], status: cur.status },
       });
-      return true;
-    }).catch((err) => {
-      failure = String((err as Error)?.message ?? err);
-      d.log.error({ envelopeId: e.id, err: failure }, "retención: no se pudo purgar el sobre");
-      return false;
-    });
     if (ok) purged++;
     else if (failure) await markFailed(e.id, failure);
   }

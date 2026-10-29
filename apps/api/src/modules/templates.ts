@@ -71,7 +71,10 @@ const toTemplateField = (r: any): TemplateField => ({
 function draftPrefill(f: any): string | null {
   if (!VALUE_FIELD_TYPES.includes(f.type) || f.formula) return null;
   try {
-    return checkSenderValue({ type: f.type, label: f.label, options: f.options ?? null, min: f.min_value ?? null, max: f.max_value ?? null, value: f.value }, "Campo");
+    return checkSenderValue(
+      { type: f.type, label: f.label, options: f.options ?? null, min: f.min_value ?? null, max: f.max_value ?? null, value: f.value },
+      "Campo",
+    );
   } catch {
     return null;
   }
@@ -127,7 +130,9 @@ async function touch(db: Db, id: string) {
  * controla que no cambió desde que la validó (ver bulk.ts), así no se cruzan.
  */
 export async function assertTemplateNotInBulk(db: Db, templateId: string) {
-  const r = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM bulk_sends WHERE template_id = $1 AND status IN ('queued','running')`, [templateId]);
+  const r = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM bulk_sends WHERE template_id = $1 AND status IN ('queued','running')`, [
+    templateId,
+  ]);
   if (r && r.n > 0) {
     throw conflict(
       "template_in_use_bulk",
@@ -139,7 +144,12 @@ export async function assertTemplateNotInBulk(db: Db, templateId: string) {
   }
 }
 
-async function insertTemplateField(db: Db, tenantId: string, templateId: string, f: Omit<TemplateField, "id" | "conditions" | "formula"> & { id?: string }) {
+async function insertTemplateField(
+  db: Db,
+  tenantId: string,
+  templateId: string,
+  f: Omit<TemplateField, "id" | "conditions" | "formula"> & { id?: string },
+) {
   await db.query(
     `INSERT INTO template_fields (id, tenant_id, template_id, document_id, role_id, type, page, x, y, width, height, required, label,
        value, read_only, options, min_value, max_value)
@@ -236,7 +246,17 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const tenant = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     await s.db.query(
       `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by, created_by_api_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id, a.tenantId, input.name, input.description ?? null, input.subject ?? null, input.message ?? null, input.locale ?? tenant?.default_locale ?? "es", a.userId, a.apiKeyId],
+      [
+        id,
+        a.tenantId,
+        input.name,
+        input.description ?? null,
+        input.subject ?? null,
+        input.message ?? null,
+        input.locale ?? tenant?.default_locale ?? "es",
+        a.userId,
+        a.apiKeyId,
+      ],
     );
     reply.code(201);
     return loadTemplateDetail(s.db, a.tenantId, id);
@@ -339,24 +359,23 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     await s.blobs.put(key, bytes, "application/pdf");
     const name = (file.filename || "documento.pdf").slice(0, 200);
     // Si la plantilla se borró entre el chequeo y acá, el PDF subido no lo referencia nada.
-    await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
-      const tpl = await lockTemplate(t, a.tenantId, req.params.id);
-      await assertTemplateNotInBulk(t, tpl.id);
-      const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM template_documents WHERE template_id = $1`, [tpl.id]);
-      await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'template',$3,'application/pdf',$4,$5)`, [
-        fileId,
-        a.tenantId,
-        key,
-        bytes.length,
-        sha256Hex(bytes),
-      ]);
-      await t.query(
-        `INSERT INTO template_documents (id, tenant_id, template_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [docId, a.tenantId, tpl.id, pos.p, name, fileId, info.pageCount, JSON.stringify(info.pages)],
-      );
-      await assertDocumentLimits(t, "template", tpl.id);
-      await touch(t, tpl.id);
-    }));
+    await discardBlobsOnFailure(s.blobs, [key], () =>
+      s.db.tx(async (t) => {
+        const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+        await assertTemplateNotInBulk(t, tpl.id);
+        const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM template_documents WHERE template_id = $1`, [tpl.id]);
+        await t.query(
+          `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'template',$3,'application/pdf',$4,$5)`,
+          [fileId, a.tenantId, key, bytes.length, sha256Hex(bytes)],
+        );
+        await t.query(
+          `INSERT INTO template_documents (id, tenant_id, template_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [docId, a.tenantId, tpl.id, pos.p, name, fileId, info.pageCount, JSON.stringify(info.pages)],
+        );
+        await assertDocumentLimits(t, "template", tpl.id);
+        await touch(t, tpl.id);
+      }),
+    );
     reply.code(201);
     const d = (await loadTemplateDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === docId);
     // hadSignatures y formAppearanceMismatch: solo en la respuesta de la subida (avisos del saneamiento del PDF).
@@ -371,7 +390,10 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await assertTemplateNotInBulk(t, tpl.id);
       // Borrar el documento borra sus campos en cascada (o deja la plantilla vacía): no puede romper un formulario activo.
       const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id, "documents");
-      const r = await t.query<any>(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id, file_id`, [req.params.documentId, tpl.id]);
+      const r = await t.query<any>(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id, file_id`, [
+        req.params.documentId,
+        tpl.id,
+      ]);
       if (!r.length) throw notFound("Documento");
       fileId = r[0].file_id;
       await pruneDanglingConditions(t, "template_fields", tpl.id);
@@ -419,7 +441,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, routing_order = EXCLUDED.routing_order, position = EXCLUDED.position`,
           [r.id, a.tenantId, tpl.id, r.name, r.role, r.routingOrder, i],
         );
-        if (r.signatureType === "certificate" && r.role !== "signer") throw badRequest("certificate_not_applicable", "Solo un rol firmante puede firmar con certificado");
+        if (r.signatureType === "certificate" && r.role !== "signer")
+          throw badRequest("certificate_not_applicable", "Solo un rol firmante puede firmar con certificado");
         if (r.signatureType !== undefined || r.certificateRequirements !== undefined) {
           await t.query(
             `UPDATE template_roles SET signature_type = COALESCE($2, signature_type),
@@ -430,7 +453,10 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       }
       await t.query(`UPDATE template_roles SET signature_type = 'electronic' WHERE template_id = $1 AND role <> 'signer'`, [tpl.id]);
       // Como en los sobres: un rol que pasa a copia o a aprobador no conserva campos (el aprobador no firma).
-      await t.query(`DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role IN ('cc','approver')`, [tpl.id]);
+      await t.query(
+        `DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role IN ('cc','approver')`,
+        [tpl.id],
+      );
       // Campos borrados (con su rol o por el cambio de rol): las condiciones que los citaban se quitan.
       await pruneDanglingConditions(t, "template_fields", tpl.id);
       // Reordenar roles también puede dejar una condición citando a un rol que firma después.
@@ -453,7 +479,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await assertTemplateNotInBulk(t, tpl.id);
       const before = await templateLogicOrderProblems(t, tpl.id);
       const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id);
-      const docs = new Map((await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]));
+      const docs = new Map(
+        (await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]),
+      );
       const signerRoles = new Set(
         (await t.query<any>(`SELECT id FROM template_roles WHERE template_id = $1 AND role = 'signer'`, [tpl.id])).map((r) => r.id),
       );
@@ -601,7 +629,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await assertTemplateAccess(s.db, a, input.templateId, "view");
       const loaded = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
       const plan = planFromTemplate(loaded, input);
-      const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
+      const envId = await s.db.tx((t) =>
+        insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan),
+      );
       return { status: 201, body: await loadDetail(s.db, a.tenantId, envId) };
     }),
   );
@@ -637,7 +667,8 @@ export function templateBusyError(): AppError {
  * leer, se vuelve a leer. Sin candados: sirve también dentro de una transacción ajena (formularios, CRM, conectores).
  */
 export async function loadTemplateForUse(db: Db, tenantId: string, templateId: string): Promise<LoadedTemplate> {
-  const stamp = async () => (await db.one<{ v: string }>(`SELECT updated_at::text AS v FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, tenantId]))?.v;
+  const stamp = async () =>
+    (await db.one<{ v: string }>(`SELECT updated_at::text AS v FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, tenantId]))?.v;
   for (let attempt = 0; ; attempt++) {
     const before = await stamp();
     if (before === undefined) throw notFound("Plantilla");
@@ -659,7 +690,8 @@ export async function loadTemplateForUse(db: Db, tenantId: string, templateId: s
 export const normLabel = (s: string) => s.trim().toLowerCase();
 
 /** Campo que acepta un valor del remitente al prellenar por etiqueta: tipo con valor, editable y sin fórmula. */
-export const isPrefillable = (f: Pick<TemplateField, "type" | "readOnly" | "formula">) => VALUE_FIELD_TYPES.includes(f.type) && !f.readOnly && !f.formula;
+export const isPrefillable = (f: Pick<TemplateField, "type" | "readOnly" | "formula">) =>
+  VALUE_FIELD_TYPES.includes(f.type) && !f.readOnly && !f.formula;
 
 /**
  * Lo que impide enviar un sobre armado con la plantilla, sea quien sea el destinatario: un rol firmante sin campo de
@@ -726,7 +758,8 @@ export function planFromTemplate(l: LoadedTemplate, input: FromTemplateInput): T
     for (const f of matches) {
       // "Plan" y " plan" (o un id y su etiqueta) para el mismo campo con valores distintos: no se elige uno en silencio.
       const prev = prefillKey.get(f.id);
-      if (prev !== undefined && prefill.get(f.id) !== v) throw badRequest("duplicate_prefill", `"${prev}" y "${k}" prellenan el mismo campo con valores distintos`);
+      if (prev !== undefined && prefill.get(f.id) !== v)
+        throw badRequest("duplicate_prefill", `"${prev}" y "${k}" prellenan el mismo campo con valores distintos`);
       prefill.set(f.id, v);
       prefillKey.set(f.id, k);
     }
@@ -802,10 +835,16 @@ export async function insertEnvelopeFromTemplate(
   for (const d of tplDocs) {
     const nd = uuidv7();
     docMap.set(d.id, nd);
-    await t.query(
-      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [nd, ctx.tenantId, envId, d.position, d.name, d.file_id, d.page_count, JSON.stringify(d.pages)],
-    );
+    await t.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [
+      nd,
+      ctx.tenantId,
+      envId,
+      d.position,
+      d.name,
+      d.file_id,
+      d.page_count,
+      JSON.stringify(d.pages),
+    ]);
     await appendEvent(t, {
       tenantId: ctx.tenantId,
       envelopeId: envId,

@@ -28,7 +28,9 @@ describe("cola de trabajos", () => {
     const worker = startWorker(db, {
       handlers: {
         notify: (_p: unknown, job: { attempts: number }) =>
-          new Promise<void>((resolve, reject) => pending.push({ attempts: job.attempts, release: (ok) => (ok ? resolve() : reject(new Error("timeout SMTP"))) })),
+          new Promise<void>((resolve, reject) =>
+            pending.push({ attempts: job.attempts, release: (ok) => (ok ? resolve() : reject(new Error("timeout SMTP"))) }),
+          ),
       } as any,
       pollMs: 20,
       log,
@@ -113,7 +115,11 @@ describe("cola de trabajos", () => {
       const live = uuidv7();
       const done = uuidv7();
       await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
-      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'vivo', 'sent'), ($3, $2, 'listo', 'completed')`, [live, tenant, done]);
+      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'vivo', 'sent'), ($3, $2, 'listo', 'completed')`, [
+        live,
+        tenant,
+        done,
+      ]);
       const add = (key: string | null, envelopeId: string | null, status: string, daysAgo: number) =>
         db.query(
           `INSERT INTO jobs (queue, payload, status, dedupe_key, finished_at) VALUES ('notify', $1, $2, $3, CASE WHEN $2 IN ('done','failed') THEN now() - make_interval(days => $4::int) END)`,
@@ -136,11 +142,23 @@ describe("cola de trabajos", () => {
 
       expect(await purgeFinishedJobs(db, { olderThanDays: 30, batch: 2 })).toBe(7);
       const left = (await db.query<any>(`SELECT dedupe_key FROM jobs ORDER BY dedupe_key`)).map((r) => r.dedupe_key);
-      expect(left).toEqual(["exp:c1:vivo", "expiry-warning:r1:2026-01-01T00:00:00.000Z:0", "finalize:vivo", "invite:pendiente", "invite:reciente", "invite:vivo"]);
+      expect(left).toEqual([
+        "exp:c1:vivo",
+        "expiry-warning:r1:2026-01-01T00:00:00.000Z:0",
+        "finalize:vivo",
+        "invite:pendiente",
+        "invite:reciente",
+        "invite:vivo",
+      ]);
 
       // Las retenidas quedan marcadas y no se vuelven a revisar hasta otro plazo.
       const marked = await db.query<any>(`SELECT dedupe_key FROM jobs WHERE purge_checked_at IS NOT NULL ORDER BY dedupe_key`);
-      expect(marked.map((r) => r.dedupe_key)).toEqual(["exp:c1:vivo", "expiry-warning:r1:2026-01-01T00:00:00.000Z:0", "finalize:vivo", "invite:vivo"]);
+      expect(marked.map((r) => r.dedupe_key)).toEqual([
+        "exp:c1:vivo",
+        "expiry-warning:r1:2026-01-01T00:00:00.000Z:0",
+        "finalize:vivo",
+        "invite:vivo",
+      ]);
       await db.query(`UPDATE envelopes SET status = 'completed' WHERE id = $1`, [live]);
       expect(await purgeFinishedJobs(db, { olderThanDays: 30 })).toBe(0);
       // Pasado otro plazo desde la revisión, con el sobre ya terminado, se purgan.
@@ -152,7 +170,12 @@ describe("cola de trabajos", () => {
       const locked = {
         ...db,
         tx: (fn: any) =>
-          db.tx((t) => fn({ ...t, one: (sql: string, params?: unknown[]) => (/pg_try_advisory_xact_lock/.test(sql) ? Promise.resolve({ ok: false }) : t.one(sql, params)) })),
+          db.tx((t) =>
+            fn({
+              ...t,
+              one: (sql: string, params?: unknown[]) => (/pg_try_advisory_xact_lock/.test(sql) ? Promise.resolve({ ok: false }) : t.one(sql, params)),
+            }),
+          ),
       } as typeof db;
       expect(await purgeFinishedJobs(locked, { olderThanDays: 30 })).toBe(0);
       expect(await purgeFinishedJobs(db, { olderThanDays: 30 })).toBe(1);
@@ -315,7 +338,9 @@ describe("cola de trabajos", () => {
     const flaky = {
       ...db,
       query: (sql: string, params?: unknown[]) =>
-        /SET status = 'done'/.test(sql) && /attempts = \$2/.test(sql) && params?.[0] === bId ? Promise.reject(new Error("conexión perdida")) : db.query(sql, params),
+        /SET status = 'done'/.test(sql) && /attempts = \$2/.test(sql) && params?.[0] === bId
+          ? Promise.reject(new Error("conexión perdida"))
+          : db.query(sql, params),
     } as typeof db;
     await enqueue(db, "notify", { kind: "a" }, { maxAttempts: 1 });
     await enqueue(db, "notify", { kind: "b" });
@@ -352,7 +377,9 @@ describe("cola de trabajos", () => {
     await db.query(
       `INSERT INTO jobs (queue, payload, run_at, priority) SELECT 'bulk', jsonb_build_object('kind', 'bulk', 'n', g), now() - interval '1 hour' + g * interval '1 second', -10 FROM generate_series(1, 20) g`,
     );
-    await db.query(`INSERT INTO jobs (queue, payload, run_at, priority) VALUES ('notify', '{"kind":"password_reset"}', now() - interval '1 second', 20)`);
+    await db.query(
+      `INSERT INTO jobs (queue, payload, run_at, priority) VALUES ('notify', '{"kind":"password_reset"}', now() - interval '1 second', 20)`,
+    );
     await db.query(`INSERT INTO jobs (queue, payload, run_at, priority) VALUES ('notify', '{"kind":"custom"}', now() - interval '1 second', 7)`);
     const order: string[] = [];
     const worker = startWorker(db, {

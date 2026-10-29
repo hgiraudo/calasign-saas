@@ -36,7 +36,8 @@ for (const f of [
   "nodes/GenericFunctions.ts",
   "nodes/CalaSign/CalaSign.node.ts",
   "nodes/CalaSignTrigger/CalaSignTrigger.node.ts",
-]) write(f, fill(readFileSync(join(here, f), "utf8")));
+])
+  write(f, fill(readFileSync(join(here, f), "utf8")));
 // Ícono junto a cada nodo (n8n lo busca relativo al .node.js).
 for (const n of ["nodes/CalaSign", "nodes/CalaSignTrigger", "credentials"]) cpSync(join(here, "nodes/calasign.svg"), join(out, `${n}/calasign.svg`));
 cpSync(join(here, "nodes/calasign.svg"), join(out, "nodes/calasign.svg"));
@@ -68,7 +69,15 @@ tsconfig.include = ["credentials/**/*.ts", "nodes/**/*.ts", "nodes/**/*.js"];
 write("tsconfig.json", JSON.stringify(tsconfig, null, 2) + "\n");
 
 const [owner, name] = repo.split("/");
-for (const f of ["LICENSE.md", "CHANGELOG.md", "RELEASING.md", ".gitignore", "eslint.config.mjs", ".github/workflows/ci.yml", ".github/workflows/publish.yml"]) {
+for (const f of [
+  "LICENSE.md",
+  "CHANGELOG.md",
+  "RELEASING.md",
+  ".gitignore",
+  "eslint.config.mjs",
+  ".github/workflows/ci.yml",
+  ".github/workflows/publish.yml",
+]) {
   if (f === "CHANGELOG.md" && existsSync(join(out, f))) continue; // el changelog lo mantiene `release` en el repo
   const text = fill(readFileSync(join(here, "repo", f), "utf8"));
   write(f, text.replaceAll("{{REPO_OWNER}}", owner).replaceAll("{{REPO_NAME}}", name).replaceAll("{{REPO}}", repo));

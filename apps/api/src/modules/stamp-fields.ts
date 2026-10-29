@@ -29,9 +29,9 @@ export function toStampFields(fields: any[], docs: any[], sigImages: Map<string,
     value: f.type === "date_signed" && !f.read_only && typeof f.value === "string" ? signingDateForDisplay(f.value) : f.value,
     imagePng:
       f.type === "signature"
-        ? sigImages.get(`${f.recipient_id}:signature`) ?? null
+        ? (sigImages.get(`${f.recipient_id}:signature`) ?? null)
         : f.type === "initials"
-          ? sigImages.get(`${f.recipient_id}:initials`) ?? sigImages.get(`${f.recipient_id}:signature`) ?? null
+          ? (sigImages.get(`${f.recipient_id}:initials`) ?? sigImages.get(`${f.recipient_id}:signature`) ?? null)
           : null,
   }));
 }

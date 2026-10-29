@@ -2,7 +2,19 @@
 // final del archivo, con su propia tabla xref y /Prev al trailer anterior. Los bytes ya firmados no se
 // tocan, así que las firmas anteriores siguen siendo válidas. Es la base de B-LT (DSS), B-LTA (sello de
 // documento) y de una segunda firma (sello de empresa).
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFObject, PDFRawStream, PDFRef, PDFString, decodePDFRawStream } from "pdf-lib";
+import {
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFHexString,
+  PDFName,
+  PDFNumber,
+  PDFObject,
+  PDFRawStream,
+  PDFRef,
+  PDFString,
+  decodePDFRawStream,
+} from "pdf-lib";
 import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { newByteRangePlaceholder, signPlaceholder } from "./placeholder";
 
@@ -153,7 +165,10 @@ export interface IncrementalPlaceholder {
  * Revisión incremental con el campo de firma y el placeholder (ByteRange y Contents vacíos), sin firmar.
  * Base de la firma en dos pasos (firma remota: el firmante firma un hash en su dispositivo).
  */
-export async function buildSignaturePlaceholderIncremental(pdf: Uint8Array, o: Omit<IncrementalSignatureOptions, "sign">): Promise<IncrementalPlaceholder> {
+export async function buildSignaturePlaceholderIncremental(
+  pdf: Uint8Array,
+  o: Omit<IncrementalSignatureOptions, "sign">,
+): Promise<IncrementalPlaceholder> {
   const u = await IncrementalUpdate.open(pdf);
   const ctx = u.context;
   const placeholder = newByteRangePlaceholder();

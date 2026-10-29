@@ -14,7 +14,17 @@ const ENVELOPE_SAMPLE = {
   signed_sha256: null,
   metadata: {},
   documents: [],
-  recipients: [{ id: "0190a000-0000-7000-8000-0000000000a1", name: "Ana Pérez", email: "ana@example.com", phone: null, role: "signer", status: "sent", signed_at: null }],
+  recipients: [
+    {
+      id: "0190a000-0000-7000-8000-0000000000a1",
+      name: "Ana Pérez",
+      email: "ana@example.com",
+      phone: null,
+      role: "signer",
+      status: "sent",
+      signed_at: null,
+    },
+  ],
   app_url: "{{BASE_URL}}/app/envelopes/0190a000-0000-7000-8000-0000000000e1",
 };
 
@@ -29,7 +39,12 @@ async function templateFields(z, bundle) {
   const fields = [];
   for (const r of s.roles) {
     fields.push({ key: `role_${r.id}_name`, label: `${r.name}: name`, required: true });
-    fields.push({ key: `role_${r.id}_email`, label: `${r.name}: email`, required: false, helpText: "Required unless you give a phone for WhatsApp." });
+    fields.push({
+      key: `role_${r.id}_email`,
+      label: `${r.name}: email`,
+      required: false,
+      helpText: "Required unless you give a phone for WhatsApp.",
+    });
     fields.push({ key: `role_${r.id}_phone`, label: `${r.name}: phone (WhatsApp)`, required: false, helpText: "E.164 format, e.g. +18095551234." });
   }
   for (const f of s.fields) {
@@ -72,13 +87,21 @@ function templateBody(input) {
 const sendFromTemplate = {
   key: "send_from_template",
   noun: "Envelope",
-  display: { label: "Send Envelope From Template", description: "Creates an envelope from a template, fills each role and the prefilled fields, and sends it." },
+  display: {
+    label: "Send Envelope From Template",
+    description: "Creates an envelope from a template, fills each role and the prefilled fields, and sends it.",
+  },
   operation: {
     inputFields: [
       { key: "templateId", label: "Template", required: true, dynamic: "template_list.id.name", altersDynamicFields: true },
       { key: "subject", label: "Subject", required: false, helpText: "Defaults to the template subject." },
       { key: "message", label: "Message", required: false, type: "text" },
-      { key: "external_id", label: "External ID", required: false, helpText: "Your own reference (comes back in every event as metadata.externalId)." },
+      {
+        key: "external_id",
+        label: "External ID",
+        required: false,
+        helpText: "Your own reference (comes back in every event as metadata.externalId).",
+      },
       { key: "send", label: "Send now", type: "boolean", default: "true", required: false },
       IDEMPOTENCY_FIELD,
       templateFields,
@@ -99,7 +122,10 @@ const sendFromTemplate = {
 const sendDocument = {
   key: "send_document",
   noun: "Envelope",
-  display: { label: "Send Document for Signature", description: "Sends a PDF to one or more signers. Signature fields go on the last page, or on the anchor texts \\firma1\\, \\firma2\\…" },
+  display: {
+    label: "Send Document for Signature",
+    description: "Sends a PDF to one or more signers. Signature fields go on the last page, or on the anchor texts \\firma1\\, \\firma2\\…",
+  },
   operation: {
     inputFields: [
       { key: "file", label: "PDF file", type: "file", required: true },
@@ -116,7 +142,13 @@ const sendDocument = {
           { key: "phone", label: "Phone (WhatsApp, E.164)", required: false },
         ],
       },
-      { key: "placement", label: "Signature placement", required: false, default: "auto", choices: { auto: "Last page (automatic)", anchors: "Anchor texts \\firma1\\, \\firma2\\… in the PDF" } },
+      {
+        key: "placement",
+        label: "Signature placement",
+        required: false,
+        default: "auto",
+        choices: { auto: "Last page (automatic)", anchors: "Anchor texts \\firma1\\, \\firma2\\… in the PDF" },
+      },
       { key: "sequential", label: "Sign in order", type: "boolean", default: "false", required: false },
       { key: "external_id", label: "External ID", required: false },
       IDEMPOTENCY_FIELD,
@@ -153,7 +185,11 @@ const voidEnvelope = {
       { key: "reason", label: "Reason", required: true },
     ],
     perform: async (z, bundle) => {
-      const res = await z.request({ url: url(`/v1/envelopes/${encodeURIComponent(bundle.inputData.envelope_id)}/void`), method: "POST", body: { reason: bundle.inputData.reason } });
+      const res = await z.request({
+        url: url(`/v1/envelopes/${encodeURIComponent(bundle.inputData.envelope_id)}/void`),
+        method: "POST",
+        body: { reason: bundle.inputData.reason },
+      });
       return flattenEnvelope(res.data);
     },
     sample: { ...ENVELOPE_SAMPLE, status: "voided" },

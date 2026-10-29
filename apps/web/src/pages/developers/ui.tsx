@@ -10,7 +10,13 @@ import { useDocsText } from "../../lib/i18n-docs";
 const INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\([^)\s]+\))/g;
 
 function isInternal(href: string) {
-  return href.startsWith("/") && !href.startsWith("//") && !href.startsWith("/v1/") && !href.startsWith("/integrations/") && !href.startsWith("/.well-known");
+  return (
+    href.startsWith("/") &&
+    !href.startsWith("//") &&
+    !href.startsWith("/v1/") &&
+    !href.startsWith("/integrations/") &&
+    !href.startsWith("/.well-known")
+  );
 }
 
 export function SmartLink({ href, children }: { href: string; children: ReactNode }) {
@@ -178,7 +184,15 @@ export function Highlighted({ code, lang }: { code: string; lang: Lang }) {
   const toks = useMemo(() => tokenize(code, lang), [code, lang]);
   return (
     <code className={`lang-${lang}`}>
-      {toks.map((tk, i) => (tk.t === "x" ? <Fragment key={i}>{tk.v}</Fragment> : <span key={i} className={`tk-${tk.t}`}>{tk.v}</span>))}
+      {toks.map((tk, i) =>
+        tk.t === "x" ? (
+          <Fragment key={i}>{tk.v}</Fragment>
+        ) : (
+          <span key={i} className={`tk-${tk.t}`}>
+            {tk.v}
+          </span>
+        ),
+      )}
     </code>
   );
 }
@@ -370,7 +384,19 @@ export function CardGrid({ children }: { children: ReactNode }) {
   return <div className="docs-cards">{children}</div>;
 }
 
-export function Card({ icon, title, children, to, action }: { icon?: ReactNode; title: string; children?: ReactNode; to?: string; action?: ReactNode }) {
+export function Card({
+  icon,
+  title,
+  children,
+  to,
+  action,
+}: {
+  icon?: ReactNode;
+  title: string;
+  children?: ReactNode;
+  to?: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="docs-card">
       {icon && (

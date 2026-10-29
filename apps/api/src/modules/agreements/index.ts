@@ -31,16 +31,24 @@ const TERMINAL = new Set(["envelope.completed", "recipient.declined", "envelope.
  */
 export async function queueAgreementEvents(db: Db, envelopeId: string, evidenceType: string) {
   if (!TERMINAL.has(evidenceType)) return;
-  if (evidenceType === "envelope.completed") await enqueue(db, "agreements", { kind: "ingest", envelopeId }, { dedupeKey: `agr:ingest:${envelopeId}` });
-  const waiting = await db.one(`SELECT 1 FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text) LIMIT 1`, [envelopeId]);
+  if (evidenceType === "envelope.completed")
+    await enqueue(db, "agreements", { kind: "ingest", envelopeId }, { dedupeKey: `agr:ingest:${envelopeId}` });
+  const waiting = await db.one(`SELECT 1 FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text) LIMIT 1`, [
+    envelopeId,
+  ]);
   if (waiting) await enqueue(db, "agreements", { kind: "envelope_event", envelopeId });
 }
 
-type AgreementsJob = { kind: "ingest"; envelopeId: string } | { kind: "envelope_event"; envelopeId: string } | { kind: "advance"; runId: string } | NoticeJob;
+type AgreementsJob =
+  | { kind: "ingest"; envelopeId: string }
+  | { kind: "envelope_event"; envelopeId: string }
+  | { kind: "advance"; runId: string }
+  | NoticeJob;
 
 export async function handleAgreementsJob(d: Deps, p: AgreementsJob, jobId?: number) {
   // Avisos por correo (vencimientos, negociaciones): jobId para no repetir a quien ya lo recibió en un reintento.
-  if (p.kind === "expiry_notice" || p.kind === "negotiation_notice" || p.kind === "proposal_notice" || p.kind === "workflow_approval_notice") return handleNoticeJob(d, p, jobId);
+  if (p.kind === "expiry_notice" || p.kind === "negotiation_notice" || p.kind === "proposal_notice" || p.kind === "workflow_approval_notice")
+    return handleNoticeJob(d, p, jobId);
   if (p.kind === "ingest") {
     await ingestEnvelope(d, p.envelopeId);
     // Si un workflow espera este sobre y su próximo paso actualiza el repositorio, ya encuentra el acuerdo.
@@ -73,7 +81,8 @@ async function resumeStalledRuns(d: Deps) {
     `SELECT id, tenant_id FROM workflow_runs WHERE status = 'running' AND updated_at < now() - interval '15 minutes' ORDER BY updated_at LIMIT 50`,
   );
   const hour = new Date().toISOString().slice(0, 13);
-  for (const r of rows) await enqueue(d.db, "agreements", { kind: "advance", runId: r.id }, { dedupeKey: `wf-resume:${r.id}:${hour}`, tenantId: r.tenant_id });
+  for (const r of rows)
+    await enqueue(d.db, "agreements", { kind: "advance", runId: r.id }, { dedupeKey: `wf-resume:${r.id}:${hour}`, tenantId: r.tenant_id });
 }
 
 /**

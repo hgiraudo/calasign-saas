@@ -1,6 +1,14 @@
 // Operaciones de marca blanca para el OpenAPI (y de ahí los SDKs).
 import { z } from "zod";
-import { BRAND_ASSET_KINDS, BRAND_MESSAGE_EVENTS, BrandConfigInput, BrandPreviewInput, CreateBrandInput, SetDomainInput, UpdateBrandInput } from "@calasign/shared";
+import {
+  BRAND_ASSET_KINDS,
+  BRAND_MESSAGE_EVENTS,
+  BrandConfigInput,
+  BrandPreviewInput,
+  CreateBrandInput,
+  SetDomainInput,
+  UpdateBrandInput,
+} from "@calasign/shared";
 import type { Op } from "../openapi-extra";
 import { named } from "../openapi-schemas";
 
@@ -13,7 +21,7 @@ const PublicBrandThemeSchema = named(
     brandId: z.string().describe('"default" (marca de la organización) o id de la sub-marca'),
     name: z.string(),
     productName: z.string().nullable(),
-    whiteLabel: z.boolean().describe("Sin \"Powered by\" ni menciones a la plataforma"),
+    whiteLabel: z.boolean().describe('Sin "Powered by" ni menciones a la plataforma'),
     theme: z.object({
       primaryColor: color,
       secondaryColor: color,
@@ -27,7 +35,12 @@ const PublicBrandThemeSchema = named(
       fontSource: z.enum(["system", "google", "upload"]).nullable(),
     }),
     css: z.string().describe("Variables del tema + CSS propio saneado"),
-    links: z.object({ websiteUrl: z.string().nullable(), supportUrl: z.string().nullable(), privacyUrl: z.string().nullable(), termsUrl: z.string().nullable() }),
+    links: z.object({
+      websiteUrl: z.string().nullable(),
+      supportUrl: z.string().nullable(),
+      privacyUrl: z.string().nullable(),
+      termsUrl: z.string().nullable(),
+    }),
     logoUrl: z.string().nullable(),
     logoDarkUrl: z.string().nullable(),
     faviconUrl: z.string().nullable(),
@@ -59,7 +72,12 @@ const BrandSchema = named(
     slug: z.string(),
     isDefault: z.boolean(),
     config: BrandConfigInput,
-    assets: z.object({ logoUrl: z.string().nullable(), logoDarkUrl: z.string().nullable(), faviconUrl: z.string().nullable(), fontUrl: z.string().nullable() }),
+    assets: z.object({
+      logoUrl: z.string().nullable(),
+      logoDarkUrl: z.string().nullable(),
+      faviconUrl: z.string().nullable(),
+      fontUrl: z.string().nullable(),
+    }),
     emailSender: z.object({ from: z.string(), replyTo: z.string().nullable(), customDomain: z.boolean(), warning: z.string().nullable() }),
     domain: BrandDomainSchema.nullable(),
     baseUrl: z.string(),
@@ -86,7 +104,10 @@ const EmailDomainSchema = named(
     verifiedAt: iso,
     lastCheckedAt: iso,
     lastError: z.string().nullable().describe("Último error de la verificación por DNS"),
-    sesIdentityError: z.string().nullable().describe("Amazon SES rechazó el dominio como remitente (identidad sin verificar): los correos salen desde la plataforma"),
+    sesIdentityError: z
+      .string()
+      .nullable()
+      .describe("Amazon SES rechazó el dominio como remitente (identidad sin verificar): los correos salen desde la plataforma"),
     sesIdentityErrorAt: iso,
   }),
 );
@@ -102,7 +123,7 @@ const PreviewSchema = named(
   }),
 );
 
-const ID = '`id`: `default` (marca de la organización) o el uuid de una sub-marca.';
+const ID = "`id`: `default` (marca de la organización) o el uuid de una sub-marca.";
 const T = "Marca";
 const WL = ["plan_limit_white_label"];
 
@@ -116,7 +137,17 @@ export const WHITE_LABEL_OPS: Op[] = [
     description: "Marca blanca completa: tema, textos por idioma, plantillas de correo, remitente, dominios. Ver docs/MARCA-BLANCA.md.",
     response: z.object({ items: z.array(BrandSchema) }),
   },
-  { method: "post", path: "/v1/settings/brands", operationId: "createBrand", tag: T, summary: "Crear una sub-marca (cliente de una organización revendedora)", body: CreateBrandInput, response: BrandSchema, status: 201, errors: WL },
+  {
+    method: "post",
+    path: "/v1/settings/brands",
+    operationId: "createBrand",
+    tag: T,
+    summary: "Crear una sub-marca (cliente de una organización revendedora)",
+    body: CreateBrandInput,
+    response: BrandSchema,
+    status: 201,
+    errors: WL,
+  },
   { method: "get", path: "/v1/settings/brands/{id}", operationId: "getBrand", tag: T, summary: "Marca", description: ID, response: BrandSchema },
   {
     method: "put",
@@ -129,7 +160,15 @@ export const WHITE_LABEL_OPS: Op[] = [
     response: BrandSchema,
     errors: ["plan_limit_branding", ...WL],
   },
-  { method: "delete", path: "/v1/settings/brands/{id}", operationId: "deleteBrand", tag: T, summary: "Borrar una sub-marca (sus sobres pasan a la marca de la organización)", response: "none", status: 204 },
+  {
+    method: "delete",
+    path: "/v1/settings/brands/{id}",
+    operationId: "deleteBrand",
+    tag: T,
+    summary: "Borrar una sub-marca (sus sobres pasan a la marca de la organización)",
+    response: "none",
+    status: 204,
+  },
   {
     method: "post",
     path: "/v1/settings/brands/{id}/preview",
@@ -152,7 +191,14 @@ export const WHITE_LABEL_OPS: Op[] = [
     response: BrandSchema,
     errors: ["plan_limit_branding", ...WL],
   },
-  { method: "delete", path: "/v1/settings/brands/{id}/assets/{kind}", operationId: "deleteBrandAsset", tag: T, summary: "Quitar un archivo de la marca", response: BrandSchema },
+  {
+    method: "delete",
+    path: "/v1/settings/brands/{id}/assets/{kind}",
+    operationId: "deleteBrandAsset",
+    tag: T,
+    summary: "Quitar un archivo de la marca",
+    response: BrandSchema,
+  },
   {
     method: "put",
     path: "/v1/settings/brands/{id}/domain",
@@ -164,9 +210,33 @@ export const WHITE_LABEL_OPS: Op[] = [
     response: z.object({ domain: BrandDomainSchema }),
     errors: WL,
   },
-  { method: "post", path: "/v1/settings/brands/{id}/domain/verify", operationId: "verifyBrandDomain", tag: T, summary: "Verificar el dominio de la sub-marca", description: "Verificar (o re-verificar) exige la marca blanca en el plan (402); quitarlo no.", response: z.object({ domain: BrandDomainSchema }), errors: WL },
-  { method: "delete", path: "/v1/settings/brands/{id}/domain", operationId: "deleteBrandDomain", tag: T, summary: "Quitar el dominio de la sub-marca", response: "none", status: 204 },
-  { method: "get", path: "/v1/settings/email-domains", operationId: "listEmailDomains", tag: T, summary: "Dominios de correo (remitente propio)", response: z.object({ items: z.array(EmailDomainSchema) }) },
+  {
+    method: "post",
+    path: "/v1/settings/brands/{id}/domain/verify",
+    operationId: "verifyBrandDomain",
+    tag: T,
+    summary: "Verificar el dominio de la sub-marca",
+    description: "Verificar (o re-verificar) exige la marca blanca en el plan (402); quitarlo no.",
+    response: z.object({ domain: BrandDomainSchema }),
+    errors: WL,
+  },
+  {
+    method: "delete",
+    path: "/v1/settings/brands/{id}/domain",
+    operationId: "deleteBrandDomain",
+    tag: T,
+    summary: "Quitar el dominio de la sub-marca",
+    response: "none",
+    status: 204,
+  },
+  {
+    method: "get",
+    path: "/v1/settings/email-domains",
+    operationId: "listEmailDomains",
+    tag: T,
+    summary: "Dominios de correo (remitente propio)",
+    response: z.object({ items: z.array(EmailDomainSchema) }),
+  },
   {
     method: "post",
     path: "/v1/settings/email-domains",
@@ -179,8 +249,25 @@ export const WHITE_LABEL_OPS: Op[] = [
     status: 201,
     errors: WL,
   },
-  { method: "post", path: "/v1/settings/email-domains/{domain}/verify", operationId: "verifyEmailDomain", tag: T, summary: "Verificar un dominio de correo", description: "Verificar (o re-verificar) exige la marca blanca en el plan (402); quitarlo no.", response: EmailDomainSchema, errors: WL },
-  { method: "delete", path: "/v1/settings/email-domains/{domain}", operationId: "deleteEmailDomain", tag: T, summary: "Quitar un dominio de correo", response: "none", status: 204 },
+  {
+    method: "post",
+    path: "/v1/settings/email-domains/{domain}/verify",
+    operationId: "verifyEmailDomain",
+    tag: T,
+    summary: "Verificar un dominio de correo",
+    description: "Verificar (o re-verificar) exige la marca blanca en el plan (402); quitarlo no.",
+    response: EmailDomainSchema,
+    errors: WL,
+  },
+  {
+    method: "delete",
+    path: "/v1/settings/email-domains/{domain}",
+    operationId: "deleteEmailDomain",
+    tag: T,
+    summary: "Quitar un dominio de correo",
+    response: "none",
+    status: 204,
+  },
   {
     method: "get",
     path: "/v1/public/brand-theme",

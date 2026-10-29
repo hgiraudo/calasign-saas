@@ -53,7 +53,12 @@ describe("CSC con credencial ECDSA", () => {
     const chainDer = [holder.certDer, pki.intermediate.certDer, pki.root.certDer];
     const csc = await startMockCsc({ username: "u", password: "p", pin: "1234", credentials: { "cred-1": { identity: holder, chainDer } } });
     try {
-      const provider = new CscSignatureProvider({ id: "csc:mock", baseUrl: csc.url, auth: { type: "basic", username: "u", password: "p" }, pin: "1234" });
+      const provider = new CscSignatureProvider({
+        id: "csc:mock",
+        baseUrl: csc.url,
+        auth: { type: "basic", username: "u", password: "p" },
+        pin: "1234",
+      });
       const digest = sha("hola");
       const sig = await provider.signDigest(digest);
       expect(sig[0]).toBe(0x30); // DER
@@ -68,7 +73,12 @@ describe("CSC con credencial ECDSA", () => {
     }
     // Un prestador que firma con otra clave ECDSA: se rechaza.
     const other = await pki.issue("Otra ECDSA (CSC)", { key: "ec-p256" });
-    const liar = await startMockCsc({ username: "u", password: "p", pin: "1234", credentials: { "cred-1": { identity: holder, chainDer: [other.certDer, pki.intermediate.certDer, pki.root.certDer] } } });
+    const liar = await startMockCsc({
+      username: "u",
+      password: "p",
+      pin: "1234",
+      credentials: { "cred-1": { identity: holder, chainDer: [other.certDer, pki.intermediate.certDer, pki.root.certDer] } },
+    });
     try {
       const p2 = new CscSignatureProvider({ id: "csc:mock", baseUrl: liar.url, auth: { type: "basic", username: "u", password: "p" }, pin: "1234" });
       await expect(p2.signDigest(new Uint8Array(32).fill(7))).rejects.toThrow(/no corresponde al certificado/);

@@ -113,64 +113,71 @@ export function VerifyPage() {
             ? `${result.match ? sx("verify.matchTitle") : sx("verify.noMatchTitle")}. ${result.match ? sx("verify.matchText") : sx("verify.noMatchText")}`
             : ""}
         </div>
-        {result && (() => { const broken = Boolean(result.match && result.chain && !result.chain.ok); return (
-          <div className="final card" data-testid={result.match ? "verify-match" : "verify-nomatch"} role={broken ? "alert" : undefined}>
-            {/* Cadena de eventos rota: no se muestra "Documento válido ✓" aunque el PDF coincida. */}
-            <div className={`final-icon ${result.match && !broken ? "ok" : ""}`} aria-hidden="true">
-              {result.match ? (broken ? "!" : "✓") : "✕"}
-            </div>
-            <h1>{result.match ? (broken ? sx("verify.brokenTitle") : sx("verify.matchTitle")) : sx("verify.noMatchTitle")}</h1>
-            <p className="muted">{result.match ? (broken ? sx("verify.brokenText") : sx("verify.matchText")) : sx("verify.noMatchText")}</p>
-            {result.match && result.version && !result.version.isLatest && (
-              <p className="notice" role="status" data-testid="verify-older-version">
-                {interpolate(sx("verify.olderVersion"), { n: result.version.number, latest: result.version.latest })}
-              </p>
-            )}
-            {result.match && result.envelope && (
-              <table className="table" style={{ textAlign: "left" }}>
-                <tbody>
-                  <tr>
-                    <th>{sx("verify.subject")}</th>
-                    <td>{result.envelope.subject}</td>
-                  </tr>
-                  <tr>
-                    <th>{sx("verify.org")}</th>
-                    <td>{result.envelope.organizationName}</td>
-                  </tr>
-                  <tr>
-                    <th>{sx("verify.completed")}</th>
-                    <td>{formatDateTime(result.envelope.completedAt, locale)}</td>
-                  </tr>
-                  <tr>
-                    <th>{sx("verify.participants")}</th>
-                    <td>
-                      {result.participants?.map((p, i) => (
-                        <div key={i}>
-                          {p.name} <span className="muted small">· {roleLabel(p.role)} · {formatDateTime(p.signedAt, locale)}</span>
-                        </div>
-                      ))}
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>{sx("verify.seal")}</th>
-                    <td>{result.seal?.format ?? "—"}</td>
-                  </tr>
-                  <tr>
-                    <th>{sx("verify.chain")}</th>
-                    <td>{result.chain?.ok ? sx("verify.chainOk", { n: result.chain.events }) : sx("verify.chainBroken")}</td>
-                  </tr>
-                  <tr>
-                    <th>{sx("verify.envelope")}</th>
-                    <td className="mono small break">{result.envelope.id}</td>
-                  </tr>
-                </tbody>
-              </table>
-            )}
-            <p className="small mono break">
-              {sx("verify.hash")}: {result.sha256}
-            </p>
-          </div>
-        ); })()}
+        {result &&
+          (() => {
+            const broken = Boolean(result.match && result.chain && !result.chain.ok);
+            return (
+              <div className="final card" data-testid={result.match ? "verify-match" : "verify-nomatch"} role={broken ? "alert" : undefined}>
+                {/* Cadena de eventos rota: no se muestra "Documento válido ✓" aunque el PDF coincida. */}
+                <div className={`final-icon ${result.match && !broken ? "ok" : ""}`} aria-hidden="true">
+                  {result.match ? (broken ? "!" : "✓") : "✕"}
+                </div>
+                <h1>{result.match ? (broken ? sx("verify.brokenTitle") : sx("verify.matchTitle")) : sx("verify.noMatchTitle")}</h1>
+                <p className="muted">{result.match ? (broken ? sx("verify.brokenText") : sx("verify.matchText")) : sx("verify.noMatchText")}</p>
+                {result.match && result.version && !result.version.isLatest && (
+                  <p className="notice" role="status" data-testid="verify-older-version">
+                    {interpolate(sx("verify.olderVersion"), { n: result.version.number, latest: result.version.latest })}
+                  </p>
+                )}
+                {result.match && result.envelope && (
+                  <table className="table" style={{ textAlign: "left" }}>
+                    <tbody>
+                      <tr>
+                        <th>{sx("verify.subject")}</th>
+                        <td>{result.envelope.subject}</td>
+                      </tr>
+                      <tr>
+                        <th>{sx("verify.org")}</th>
+                        <td>{result.envelope.organizationName}</td>
+                      </tr>
+                      <tr>
+                        <th>{sx("verify.completed")}</th>
+                        <td>{formatDateTime(result.envelope.completedAt, locale)}</td>
+                      </tr>
+                      <tr>
+                        <th>{sx("verify.participants")}</th>
+                        <td>
+                          {result.participants?.map((p, i) => (
+                            <div key={i}>
+                              {p.name}{" "}
+                              <span className="muted small">
+                                · {roleLabel(p.role)} · {formatDateTime(p.signedAt, locale)}
+                              </span>
+                            </div>
+                          ))}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>{sx("verify.seal")}</th>
+                        <td>{result.seal?.format ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <th>{sx("verify.chain")}</th>
+                        <td>{result.chain?.ok ? sx("verify.chainOk", { n: result.chain.events }) : sx("verify.chainBroken")}</td>
+                      </tr>
+                      <tr>
+                        <th>{sx("verify.envelope")}</th>
+                        <td className="mono small break">{result.envelope.id}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
+                <p className="small mono break">
+                  {sx("verify.hash")}: {result.sha256}
+                </p>
+              </div>
+            );
+          })()}
         {report && (
           <div className="card pad">
             <ValidationReportView report={report} />

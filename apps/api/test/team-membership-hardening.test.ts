@@ -22,7 +22,16 @@ function idToken() {
   const enc = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
   const head = enc({ alg: "RS256", kid: "k1", typ: "JWT" });
-  const body = enc({ iss: ISSUER, aud: CLIENT_ID, sub: idp.email, email: idp.email, email_verified: true, nonce: idp.nonce, iat: now, exp: now + 300 });
+  const body = enc({
+    iss: ISSUER,
+    aud: CLIENT_ID,
+    sub: idp.email,
+    email: idp.email,
+    email_verified: true,
+    nonce: idp.nonce,
+    iat: now,
+    exp: now + 300,
+  });
   return `${head}.${body}.${cryptoSign("sha256", Buffer.from(`${head}.${body}`), privateKey).toString("base64url")}`;
 }
 
@@ -41,8 +50,8 @@ vi.mock("../src/modules/webhooks", async (importOriginal) => {
   };
 });
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -67,11 +76,10 @@ const H = (session: string, extra: Record<string, string> = {}) => ({ cookie: `c
 
 async function session(userId: string, tenantId: string) {
   const token = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(token),
-    userId,
-    tenantId,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(token), userId, tenantId],
+  );
   return token;
 }
 
@@ -101,7 +109,11 @@ async function org(domain: string, plan = "enterprise") {
     [id, ISSUER, CLIENT_ID, util.encrypt("secreto")],
   );
   const scim = `cs_scim_${util.randomToken(32)}`;
-  await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim_test',$3)`, [util.uuidv7(), id, util.sha256Hex(scim)]);
+  await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim_test',$3)`, [
+    util.uuidv7(),
+    id,
+    util.sha256Hex(scim),
+  ]);
   return { id, slug, ownerId, ownerSession, scimHeaders: { authorization: `Bearer ${scim}`, "content-type": "application/scim+json" } };
 }
 
@@ -125,7 +137,8 @@ async function ssoLogin(slug: string, email: string) {
   return app.inject({ method: "GET", url: `/v1/auth/sso/oidc/callback?code=c0de&state=${state}`, cookies: { cs_sso_state: state } });
 }
 
-const membership = (tenantId: string, userId: string) => db.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
+const membership = (tenantId: string, userId: string) =>
+  db.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
 const userByEmail = (email: string) => db.one<any>(`SELECT id FROM users WHERE lower(email) = lower($1)`, [email]);
 
 describe("propietario → administrador", () => {
@@ -136,7 +149,11 @@ describe("propietario → administrador", () => {
     const r = await app.inject({ method: "PATCH", url: `/v1/members/${second}`, headers: H(o.ownerSession), payload: { role: "admin" } });
     expect(r.statusCode).toBe(200);
     expect((await db.one<any>(`SELECT revoked_at FROM invitations WHERE id = $1`, [inv.id]))!.revoked_at).not.toBeNull();
-    const accept = await app.inject({ method: "POST", url: `/v1/invite/${inv.token}/accept`, payload: { name: "Alt", password: "una-clave-larga-123" } });
+    const accept = await app.inject({
+      method: "POST",
+      url: `/v1/invite/${inv.token}/accept`,
+      payload: { name: "Alt", password: "una-clave-larga-123" },
+    });
     expect(accept.statusCode).toBe(410);
   });
 });
@@ -145,14 +162,27 @@ describe("x-calasign-tenant", () => {
   it("rechaza con 409 tenant_mismatch un pedido de una pestaña que quedó en otra organización (solo sesiones web)", async () => {
     const o = await org("tabs.test");
     const other = util.uuidv7();
-    const ok = await app.inject({ method: "POST", url: "/v1/roles", headers: H(o.ownerSession, { "x-calasign-tenant": o.id }), payload: { name: "Pestaña ok", permissions: [] } });
+    const ok = await app.inject({
+      method: "POST",
+      url: "/v1/roles",
+      headers: H(o.ownerSession, { "x-calasign-tenant": o.id }),
+      payload: { name: "Pestaña ok", permissions: [] },
+    });
     expect(ok.statusCode).toBe(201);
-    const stale = await app.inject({ method: "POST", url: "/v1/roles", headers: H(o.ownerSession, { "x-calasign-tenant": other }), payload: { name: "Pestaña vieja", permissions: [] } });
+    const stale = await app.inject({
+      method: "POST",
+      url: "/v1/roles",
+      headers: H(o.ownerSession, { "x-calasign-tenant": other }),
+      payload: { name: "Pestaña vieja", permissions: [] },
+    });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("tenant_mismatch");
     expect(await db.one(`SELECT 1 FROM roles WHERE tenant_id = $1 AND name = 'Pestaña vieja'`, [o.id])).toBeNull();
     // Sin encabezado (otros clientes) y las lecturas: como siempre.
-    expect((await app.inject({ method: "POST", url: "/v1/roles", headers: H(o.ownerSession), payload: { name: "Sin encabezado", permissions: [] } })).statusCode).toBe(201);
+    expect(
+      (await app.inject({ method: "POST", url: "/v1/roles", headers: H(o.ownerSession), payload: { name: "Sin encabezado", permissions: [] } }))
+        .statusCode,
+    ).toBe(201);
     expect((await app.inject({ method: "GET", url: "/v1/roles", headers: H(o.ownerSession, { "x-calasign-tenant": other }) })).statusCode).toBe(200);
     // Una API key define su organización: el encabezado se ignora.
     const key = await app.inject({ method: "POST", url: "/v1/api-keys", headers: H(o.ownerSession), payload: { name: "integración" } });
@@ -174,11 +204,22 @@ describe("x-calasign-tenant", () => {
     expect(otherUser.statusCode).toBe(409);
     expect(otherUser.json().error.code).toBe("tenant_mismatch");
     expect(
-      (await app.inject({ method: "POST", url: "/v1/roles", headers: H(o.ownerSession, { "x-calasign-tenant": o.id, "x-calasign-user": o.ownerId }), payload: { name: "Misma cuenta", permissions: [] } }))
-        .statusCode,
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/roles",
+          headers: H(o.ownerSession, { "x-calasign-tenant": o.id, "x-calasign-user": o.ownerId }),
+          payload: { name: "Misma cuenta", permissions: [] },
+        })
+      ).statusCode,
     ).toBe(201);
     // Rutas públicas (firmante): no pasan por authenticate(), el encabezado no aplica.
-    const pub = await app.inject({ method: "POST", url: `/v1/signing/${util.randomToken()}/otp/send`, headers: H(o.ownerSession, { "x-calasign-tenant": other }), payload: {} });
+    const pub = await app.inject({
+      method: "POST",
+      url: `/v1/signing/${util.randomToken()}/otp/send`,
+      headers: H(o.ownerSession, { "x-calasign-tenant": other }),
+      payload: {},
+    });
     expect(pub.json()?.error?.code).not.toBe("tenant_mismatch");
     // Cerrar sesión siempre se puede.
     const extra = await session(o.ownerId, o.id);
@@ -244,7 +285,12 @@ describe("JIT / SCIM con una invitación pendiente", () => {
     const u = await userByEmail("duena@jitowner.test");
     expect(await membership(o.id, u!.id)).toMatchObject({ role: "admin" });
     await invite(o.id, "duena2@jitowner.test", "owner", o.ownerId);
-    const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: o.scimHeaders, payload: { userName: "duena2@jitowner.test", active: true } });
+    const r = await app.inject({
+      method: "POST",
+      url: "/scim/v2/Users",
+      headers: o.scimHeaders,
+      payload: { userName: "duena2@jitowner.test", active: true },
+    });
     expect(r.statusCode).toBe(201);
     expect(await membership(o.id, r.json().id)).toMatchObject({ role: "admin" });
   });
@@ -258,7 +304,7 @@ describe("JIT / SCIM con una invitación pendiente", () => {
     expect(r.headers.location).toBe("/app");
     const u = await userByEmail("invitada@jitinv.test");
     expect(await membership(o.id, u!.id)).toMatchObject({ role: "admin" });
-    expect((await db.one<any>(`SELECT accepted_at, revoked_at FROM invitations WHERE id = $1`, [inv.id]))).toMatchObject({ revoked_at: null });
+    expect(await db.one<any>(`SELECT accepted_at, revoked_at FROM invitations WHERE id = $1`, [inv.id])).toMatchObject({ revoked_at: null });
     expect((await db.one<any>(`SELECT accepted_at FROM invitations WHERE id = $1`, [inv.id]))!.accepted_at).not.toBeNull();
     // Cupo lleno: otra persona sin invitación no entra.
     const full = await ssoLogin(o.slug, "sin-invitacion@jitinv.test");
@@ -269,7 +315,12 @@ describe("JIT / SCIM con una invitación pendiente", () => {
     const o = await org("scimin.test", "starter");
     await member(o.id, "otro@scimin.test");
     const inv = await invite(o.id, "prov@scimin.test", "admin", o.ownerId);
-    const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: o.scimHeaders, payload: { userName: "prov@scimin.test", active: true } });
+    const r = await app.inject({
+      method: "POST",
+      url: "/scim/v2/Users",
+      headers: o.scimHeaders,
+      payload: { userName: "prov@scimin.test", active: true },
+    });
     expect(r.statusCode).toBe(201);
     expect(await membership(o.id, r.json().id)).toMatchObject({ role: "admin" });
     expect((await db.one<any>(`SELECT accepted_by FROM invitations WHERE id = $1`, [inv.id]))!.accepted_by).toBe(r.json().id);
@@ -282,7 +333,11 @@ describe("aceptar una invitación sin dejar cuentas sueltas", () => {
     await member(o.id, "a@orphan.test");
     await member(o.id, "b@orphan.test");
     const inv = await invite(o.id, "nueva@orphan.test", "member", o.ownerId);
-    const r = await app.inject({ method: "POST", url: `/v1/invite/${inv.token}/accept`, payload: { name: "Nueva", password: "una-clave-larga-123" } });
+    const r = await app.inject({
+      method: "POST",
+      url: `/v1/invite/${inv.token}/accept`,
+      payload: { name: "Nueva", password: "una-clave-larga-123" },
+    });
     expect(r.statusCode).toBe(402);
     expect(await userByEmail("nueva@orphan.test")).toBeNull();
   });
@@ -317,12 +372,20 @@ describe("aceptar una invitación sin dejar cuentas sueltas", () => {
     });
     expect(wrong.statusCode).toBe(409);
     expect(wrong.json().error.code).toBe("email_taken");
-    const ok = await app.inject({ method: "POST", url: "/v1/auth/signup", payload: { email: "suelta@solo.test", password: pw, name: "X", organization: "Org Nueva" } });
+    const ok = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: { email: "suelta@solo.test", password: pw, name: "X", organization: "Org Nueva" },
+    });
     expect(ok.statusCode).toBe(201);
     expect(ok.json().user.id).toBe(uid);
     expect(await membership(ok.json().tenant.id, uid)).toMatchObject({ role: "owner" });
     // Ya con organización: un signup más es email_taken aunque la contraseña sea la suya.
-    const twice = await app.inject({ method: "POST", url: "/v1/auth/signup", payload: { email: "suelta@solo.test", password: pw, name: "X", organization: "Otra" } });
+    const twice = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: { email: "suelta@solo.test", password: pw, name: "X", organization: "Otra" },
+    });
     expect(twice.statusCode).toBe(409);
   });
 });
@@ -331,7 +394,12 @@ describe("signup con un correo existente", () => {
   it("no cuenta intentos en cuentas con organizaciones; una cuenta sin organizaciones bloqueada responde email_taken", async () => {
     const o = await org("signup-lock.test");
     const signup = (email: string, password: string) =>
-      app.inject({ method: "POST", url: "/v1/auth/signup", payload: { email, password, name: "X", organization: "Org" }, remoteAddress: `203.0.113.${Math.floor(Math.random() * 200) + 1}` });
+      app.inject({
+        method: "POST",
+        url: "/v1/auth/signup",
+        payload: { email, password, name: "X", organization: "Org" },
+        remoteAddress: `203.0.113.${Math.floor(Math.random() * 200) + 1}`,
+      });
     const taken = await signup(`owner@signup-lock.test`, "otra-clave-larga-123");
     expect(taken.json().error.code).toBe("email_taken");
     expect(await db.one(`SELECT 1 FROM login_attempts WHERE user_id = $1`, [o.ownerId])).toBeNull();
@@ -360,7 +428,12 @@ describe("signup con un correo existente", () => {
 describe("SCIM: cambio de correo", () => {
   it("invalida los links de restablecimiento de contraseña pendientes", async () => {
     const o = await org("mail.test");
-    const created = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: o.scimHeaders, payload: { userName: "antes@mail.test", active: true } });
+    const created = await app.inject({
+      method: "POST",
+      url: "/scim/v2/Users",
+      headers: o.scimHeaders,
+      payload: { userName: "antes@mail.test", active: true },
+    });
     expect(created.statusCode).toBe(201);
     const uid = created.json().id as string;
     const reset = util.sha256Hex(util.randomToken());
@@ -369,7 +442,10 @@ describe("SCIM: cambio de correo", () => {
       method: "PATCH",
       url: `/scim/v2/Users/${uid}`,
       headers: o.scimHeaders,
-      payload: { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [{ op: "replace", path: "userName", value: "despues@mail.test" }] },
+      payload: {
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        Operations: [{ op: "replace", path: "userName", value: "despues@mail.test" }],
+      },
     });
     expect(r.statusCode).toBe(200);
     expect(r.json().userName).toBe("despues@mail.test");

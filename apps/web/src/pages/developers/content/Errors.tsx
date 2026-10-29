@@ -152,7 +152,12 @@ while True:
         break`,
           },
           { id: "sdk-python", label: "Python SDK", lang: "python", code: `for e in cs.envelopes.iterate(status="completed"):\n    print(e["id"])` },
-          { id: "sdk-node", label: "Node SDK", lang: "ts", code: `for await (const e of cs.envelopes.iterate({ status: "completed" })) console.log(e.id);` },
+          {
+            id: "sdk-node",
+            label: "Node SDK",
+            lang: "ts",
+            code: `for await (const e of cs.envelopes.iterate({ status: "completed" })) console.log(e.id);`,
+          },
         ]}
       />
 

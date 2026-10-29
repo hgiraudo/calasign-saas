@@ -5,7 +5,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { encrypt } from "../src/lib/util";
 import { validateKommoDomain, validateKommoDrive } from "../src/modules/crm/kommo";
 import { MappingError, mapPrefill, mapRecipients } from "../src/modules/crm/mapping";
-import { CrmConn, attachSigned, fetchRecord, kommoTokenUrl, oauthApp, oauthConfigured, testConnection, tokenSupported, writeStatus } from "../src/modules/crm/providers";
+import {
+  CrmConn,
+  attachSigned,
+  fetchRecord,
+  kommoTokenUrl,
+  oauthApp,
+  oauthConfigured,
+  testConnection,
+  tokenSupported,
+  writeStatus,
+} from "../src/modules/crm/providers";
 
 const ACC = "https://acme.kommo.com";
 const DRIVE = "https://drive-c.kommo.com";
@@ -26,7 +36,16 @@ const real = globalThis.fetch;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/hal+json" } });
 
 const leadFields = [
-  { id: 501, name: "Estado CalaSign", code: null, type: "select", enums: [{ id: 9001, value: "Enviado" }, { id: 9002, value: "Firmado" }] },
+  {
+    id: 501,
+    name: "Estado CalaSign",
+    code: null,
+    type: "select",
+    enums: [
+      { id: 9001, value: "Enviado" },
+      { id: 9002, value: "Firmado" },
+    ],
+  },
   { id: 502, name: "NIT", code: "NIT", type: "text" },
 ];
 
@@ -52,23 +71,36 @@ function fakeKommo(): typeof fetch {
     const p = u.pathname;
     if (u.origin === DRIVE || u.origin === "https://drive-x.kommo.com") {
       if (!filesScope) return json(403, { title: "Forbidden", detail: "Access to files" });
-      if (p === "/v1.0/sessions") return json(200, { session_id: 1, upload_url: uploadNext ?? `${DRIVE}/upload/tok-1`, max_file_size: 1e9, max_part_size: 65536 });
+      if (p === "/v1.0/sessions")
+        return json(200, { session_id: 1, upload_url: uploadNext ?? `${DRIVE}/upload/tok-1`, max_file_size: 1e9, max_part_size: 65536 });
       if (p.startsWith("/upload/")) {
         uploaded.push((body as Uint8Array).length);
         // Hasta recibir el archivo entero responde con la URL de la parte siguiente; al final, el uuid.
-        if (uploaded.reduce((a, b) => a + b, 0) < 100_000) return json(200, { session_id: 1, next_url: `${DRIVE}/upload/tok-${uploaded.length + 1}` });
+        if (uploaded.reduce((a, b) => a + b, 0) < 100_000)
+          return json(200, { session_id: 1, next_url: `${DRIVE}/upload/tok-${uploaded.length + 1}` });
         return json(200, { uuid: "file-uuid-1", version_uuid: "ver-1", name: "x.pdf" });
       }
     }
     if (u.origin !== ACC) return json(404, { detail: `host ${u.host}` });
-    if (p === "/api/v4/account") return json(200, { id: 31337, name: "ACME", subdomain: "acme", ...(u.searchParams.get("with") === "drive_url" && driveUrl ? { drive_url: driveUrl } : {}) });
+    if (p === "/api/v4/account")
+      return json(200, {
+        id: 31337,
+        name: "ACME",
+        subdomain: "acme",
+        ...(u.searchParams.get("with") === "drive_url" && driveUrl ? { drive_url: driveUrl } : {}),
+      });
     if (p === "/api/v4/leads/42" && method === "GET")
       return json(200, {
         id: 42,
         name: "Licencia Kommo",
         price: 3200,
         custom_fields_values: [{ field_id: 502, field_name: "NIT", field_code: "NIT", field_type: "text", values: [{ value: "900777111" }] }],
-        _embedded: { contacts: [{ id: 8, is_main: false }, { id: 7, is_main: true }] },
+        _embedded: {
+          contacts: [
+            { id: 8, is_main: false },
+            { id: 7, is_main: true },
+          ],
+        },
       });
     if (p === "/api/v4/leads/42" && method === "PATCH") return json(200, { id: 42 });
     if (p === "/api/v4/leads/404") return new Response(null, { status: 204 });
@@ -76,8 +108,27 @@ function fakeKommo(): typeof fetch {
       return json(200, {
         _embedded: {
           contacts: [
-            { id: 7, name: "Karen Main", custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "karen@acme.test", enum_code: "WORK" }] }, { field_code: "PHONE", values: [{ value: "+5731", enum_code: "WORK" }, { value: "+5730", enum_code: "MOB" }] }] },
-            { id: 8, name: "", first_name: "Kevin", last_name: "Otro", custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "kevin@acme.test" }] }] },
+            {
+              id: 7,
+              name: "Karen Main",
+              custom_fields_values: [
+                { field_code: "EMAIL", values: [{ value: "karen@acme.test", enum_code: "WORK" }] },
+                {
+                  field_code: "PHONE",
+                  values: [
+                    { value: "+5731", enum_code: "WORK" },
+                    { value: "+5730", enum_code: "MOB" },
+                  ],
+                },
+              ],
+            },
+            {
+              id: 8,
+              name: "",
+              first_name: "Kevin",
+              last_name: "Otro",
+              custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "kevin@acme.test" }] }],
+            },
           ],
         },
       });
@@ -89,9 +140,19 @@ function fakeKommo(): typeof fetch {
 }
 
 const conn = (creds: Record<string, unknown> = { access_token: "km-at-1", refresh_token: "km-rt", expires_at: Date.now() + 3_600_000 }) =>
-  new CrmConn({ id: "c1", provider: "kommo", auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: { baseDomain: ACC } }, null);
+  new CrmConn(
+    { id: "c1", provider: "kommo", auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: { baseDomain: ACC } },
+    null,
+  );
 
-const attach = { fileName: "Contrato.pdf", pdf: new Uint8Array(100_000).fill(37), subject: "Contrato ACME", envelopeId: "env-1", sha256: "cd".repeat(32), url: "https://app.calasign.test/app/envelopes/env-1" };
+const attach = {
+  fileName: "Contrato.pdf",
+  pdf: new Uint8Array(100_000).fill(37),
+  subject: "Contrato ACME",
+  envelopeId: "env-1",
+  sha256: "cd".repeat(32),
+  url: "https://app.calasign.test/app/envelopes/env-1",
+};
 
 beforeEach(() => {
   calls = [];
@@ -115,7 +176,17 @@ describe("Kommo", () => {
     expect(validateKommoDomain("acme.kommo.com")).toBe(ACC);
     expect(validateKommoDomain("https://acme.kommo.com/")).toBe(ACC);
     expect(validateKommoDomain("vieja.amocrm.com")).toBe("https://vieja.amocrm.com");
-    for (const bad of ["evil.test", "http://acme.kommo.com", "acme.kommo.com.evil.test", "a.b.kommo.com", "www.kommo.com", "drive-c.kommo.com", "acme.kommo.com:8443", "user@acme.kommo.com", ""]) {
+    for (const bad of [
+      "evil.test",
+      "http://acme.kommo.com",
+      "acme.kommo.com.evil.test",
+      "a.b.kommo.com",
+      "www.kommo.com",
+      "drive-c.kommo.com",
+      "acme.kommo.com:8443",
+      "user@acme.kommo.com",
+      "",
+    ]) {
       expect(() => validateKommoDomain(bad), bad).toThrow(/Kommo/);
     }
     expect(kommoTokenUrl("acme.kommo.com")).toBe(`${ACC}/oauth2/access_token`);
@@ -147,7 +218,10 @@ describe("Kommo", () => {
     expect(r.properties._embedded).toBeUndefined();
     const contactsCall = calls.find((c) => c.url.includes("/api/v4/contacts"))!;
     expect(decodeURIComponent(contactsCall.url)).toContain("filter[id][]=7&filter[id][]=8");
-    const rec = mapRecipients(r, [{ role: "Cliente", source: "contact_role", primary: true }, { role: "Otro", source: "contact", index: 1 }] as any);
+    const rec = mapRecipients(r, [
+      { role: "Cliente", source: "contact_role", primary: true },
+      { role: "Otro", source: "contact", index: 1 },
+    ] as any);
     expect(rec.map((x) => x.email)).toEqual(["karen@acme.test", "kevin@acme.test"]);
     expect(mapPrefill(r, [{ field: "Monto", property: "price" }])).toEqual({ Monto: "3200" });
   });
@@ -162,7 +236,12 @@ describe("Kommo", () => {
     const c = conn({ access_token: "viejo", refresh_token: "km-rt", expires_at: Date.now() - 1000 });
     await fetchRecord(c, "deal", "42", []);
     const tok = calls.find((x) => x.url === `${ACC}/oauth2/access_token`)!;
-    expect(tok.body).toMatchObject({ grant_type: "refresh_token", refresh_token: "km-rt", client_id: "km-client", redirect_uri: expect.stringContaining("/v1/crm/oauth/kommo/callback") });
+    expect(tok.body).toMatchObject({
+      grant_type: "refresh_token",
+      refresh_token: "km-rt",
+      client_id: "km-client",
+      redirect_uri: expect.stringContaining("/v1/crm/oauth/kommo/callback"),
+    });
     expect(c.creds).toMatchObject({ access_token: "km-at-2", refresh_token: "km-rt-2" });
   });
 

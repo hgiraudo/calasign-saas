@@ -66,10 +66,11 @@ describe("recordatorios automáticos y aviso de vencimiento", () => {
       const now = new Date("2026-12-10T12:00:00Z");
       const ago = (n: number) => new Date(now.getTime() - n * 86400_000).toISOString();
       await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
-      await db.query(
-        `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1, $2, 'S', 'sent', $3, 2)`,
-        [env, tenant, ago(3)],
-      );
+      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1, $2, 'S', 'sent', $3, 2)`, [
+        env,
+        tenant,
+        ago(3),
+      ]);
       await db.query(
         `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',1,'Ana','a@x.com','sent',$4)`,
         [rec, tenant, env, ago(3)],

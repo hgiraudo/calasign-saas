@@ -55,51 +55,61 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   // ───────── Certificados de la organización ─────────
 
   app.get("/v1/certificates", { preHandler: auth }, async (req) => {
-    const rows = await s.db.query(`SELECT * FROM tenant_certificates WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC`, [req.auth!.tenantId]);
+    const rows = await s.db.query(`SELECT * FROM tenant_certificates WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC`, [
+      req.auth!.tenantId,
+    ]);
     return { items: rows.map(toTenantCertificate) };
   });
 
-  app.post("/v1/certificates", { onRequest: auth, bodyLimit: 3 * 1024 * 1024, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
-    const input = UploadCertificateInput.parse(req.body);
-    const parsed = parseP12(Buffer.from(input.p12Base64, "base64"), input.password);
-    if (new Date(parsed.leaf.validTo) < new Date()) throw badRequest("certificate_expired", "El certificado está vencido");
-    const id = uuidv7();
-    const sealed = await sealKey(parsed.keyPkcs8Pem, { tenantId: req.auth!.tenantId, certificateId: id }, await byokForCustody(s.db, req.auth!.tenantId));
-    const leaf = parsed.leaf;
-    const cn = /(?:^|\n)CN=([^\n]+)/.exec(leaf.subject)?.[1] ?? null;
-    const row = await s.db.one(
-      `INSERT INTO tenant_certificates (id, tenant_id, name, subject, issuer, common_name, serial_number, not_before, not_after, sha256,
+  app.post(
+    "/v1/certificates",
+    { onRequest: auth, bodyLimit: 3 * 1024 * 1024, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (req, reply) => {
+      const input = UploadCertificateInput.parse(req.body);
+      const parsed = parseP12(Buffer.from(input.p12Base64, "base64"), input.password);
+      if (new Date(parsed.leaf.validTo) < new Date()) throw badRequest("certificate_expired", "El certificado está vencido");
+      const id = uuidv7();
+      const sealed = await sealKey(
+        parsed.keyPkcs8Pem,
+        { tenantId: req.auth!.tenantId, certificateId: id },
+        await byokForCustody(s.db, req.auth!.tenantId),
+      );
+      const leaf = parsed.leaf;
+      const cn = /(?:^|\n)CN=([^\n]+)/.exec(leaf.subject)?.[1] ?? null;
+      const row = await s.db.one(
+        `INSERT INTO tenant_certificates (id, tenant_id, name, subject, issuer, common_name, serial_number, not_before, not_after, sha256,
          key_algorithm, chain_pem, key_ciphertext, key_wrapped, key_wrap_method, usages, created_by, key_wrap_key_arn)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
-      [
-        id,
-        req.auth!.tenantId,
-        input.name,
-        leaf.subject.replace(/\n/g, ", "),
-        leaf.issuer.replace(/\n/g, ", "),
-        cn,
-        leaf.serialNumber.toLowerCase(),
-        new Date(leaf.validFrom).toISOString(),
-        new Date(leaf.validTo).toISOString(),
-        leaf.fingerprint256.replace(/:/g, "").toLowerCase(),
-        parsed.keyAlgorithm,
-        parsed.chainPem,
-        sealed.ciphertext,
-        sealed.wrapped,
-        sealed.method,
-        input.usages ?? ["xml", "pdf_seal"],
-        req.auth!.userId,
-        sealed.keyArn ?? null,
-      ],
-    );
-    await auditFromRequest(s.db, req, req.auth!, "certificate.uploaded", {
-      targetType: "certificate",
-      targetId: id,
-      data: { name: input.name, subject: leaf.subject.replace(/\n/g, ", "), serialNumber: leaf.serialNumber, keyWrap: sealed.method },
-    });
-    reply.code(201);
-    return { certificate: toTenantCertificate(row) };
-  });
+        [
+          id,
+          req.auth!.tenantId,
+          input.name,
+          leaf.subject.replace(/\n/g, ", "),
+          leaf.issuer.replace(/\n/g, ", "),
+          cn,
+          leaf.serialNumber.toLowerCase(),
+          new Date(leaf.validFrom).toISOString(),
+          new Date(leaf.validTo).toISOString(),
+          leaf.fingerprint256.replace(/:/g, "").toLowerCase(),
+          parsed.keyAlgorithm,
+          parsed.chainPem,
+          sealed.ciphertext,
+          sealed.wrapped,
+          sealed.method,
+          input.usages ?? ["xml", "pdf_seal"],
+          req.auth!.userId,
+          sealed.keyArn ?? null,
+        ],
+      );
+      await auditFromRequest(s.db, req, req.auth!, "certificate.uploaded", {
+        targetType: "certificate",
+        targetId: id,
+        data: { name: input.name, subject: leaf.subject.replace(/\n/g, ", "), serialNumber: leaf.serialNumber, keyWrap: sealed.method },
+      });
+      reply.code(201);
+      return { certificate: toTenantCertificate(row) };
+    },
+  );
 
   app.delete<{ Params: { id: string } }>("/v1/certificates/:id", { preHandler: auth }, async (req, reply) => {
     // Un sobre que ya se está cerrando con sello de empresa necesita la clave: borrarla lo dejaría trabado. Se bloquean
@@ -119,41 +129,51 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         [req.params.id, req.auth!.tenantId],
       );
       if (!del.length) throw notFound("Certificado");
-      await t.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE company_seal_certificate_id = $1 AND status IN ('draft','sent')`, [req.params.id]);
+      await t.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE company_seal_certificate_id = $1 AND status IN ('draft','sent')`, [
+        req.params.id,
+      ]);
       return del;
     });
-    await auditFromRequest(s.db, req, req.auth!, "certificate.deleted", { targetType: "certificate", targetId: req.params.id, data: { name: r[0].name } });
+    await auditFromRequest(s.db, req, req.auth!, "certificate.deleted", {
+      targetType: "certificate",
+      targetId: req.params.id,
+      data: { name: r[0].name },
+    });
     return reply.code(204).send();
   });
 
   // ───────── Firma XML (facturación electrónica) ─────────
 
-  app.post("/v1/xml/sign", { onRequest: auth, bodyLimit: 6 * 1024 * 1024, config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (req) => {
-    const input = XmlSignInput.parse(req.body);
-    const row = await loadTenantCertificate(s.db, req.auth!.tenantId, input.certificateId, "xml");
-    const provider = await tenantCertificateProvider(s.db, row);
-    let signedXml: string;
-    try {
-      signedXml = await signXml(input.xml, provider, {
-        profile: input.profile,
-        ...(input.policy !== undefined ? { policy: input.policy } : {}),
-        ...(input.signerRole !== undefined ? { signerRole: input.signerRole } : {}),
-        ...(input.signatureAlgorithm ? { signatureAlgorithm: input.signatureAlgorithm } : {}),
+  app.post(
+    "/v1/xml/sign",
+    { onRequest: auth, bodyLimit: 6 * 1024 * 1024, config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (req) => {
+      const input = XmlSignInput.parse(req.body);
+      const row = await loadTenantCertificate(s.db, req.auth!.tenantId, input.certificateId, "xml");
+      const provider = await tenantCertificateProvider(s.db, row);
+      let signedXml: string;
+      try {
+        signedXml = await signXml(input.xml, provider, {
+          profile: input.profile,
+          ...(input.policy !== undefined ? { policy: input.policy } : {}),
+          ...(input.signerRole !== undefined ? { signerRole: input.signerRole } : {}),
+          ...(input.signatureAlgorithm ? { signatureAlgorithm: input.signatureAlgorithm } : {}),
+        });
+      } catch (e) {
+        if (e instanceof AppError) throw e;
+        throw badRequest("xml_sign_failed", `No se pudo firmar el XML: ${(e as Error).message}`);
+      }
+      const verification = verifyXml(signedXml);
+      const sha256 = sha256Hex(signedXml);
+      await auditFromRequest(s.db, req, req.auth!, "certificate.used", {
+        targetType: "certificate",
+        targetId: row.id,
+        data: { purpose: "xml_sign", profile: input.profile, inputSha256: sha256Hex(input.xml), outputSha256: sha256, valid: verification.valid },
       });
-    } catch (e) {
-      if (e instanceof AppError) throw e;
-      throw badRequest("xml_sign_failed", `No se pudo firmar el XML: ${(e as Error).message}`);
-    }
-    const verification = verifyXml(signedXml);
-    const sha256 = sha256Hex(signedXml);
-    await auditFromRequest(s.db, req, req.auth!, "certificate.used", {
-      targetType: "certificate",
-      targetId: row.id,
-      data: { purpose: "xml_sign", profile: input.profile, inputSha256: sha256Hex(input.xml), outputSha256: sha256, valid: verification.valid },
-    });
-    const res: XmlSignResponse = { signedXml, sha256, verification };
-    return res;
-  });
+      const res: XmlSignResponse = { signedXml, sha256, verification };
+      return res;
+    },
+  );
 
   app.post("/v1/xml/verify", { onRequest: auth, bodyLimit: 6 * 1024 * 1024 }, async (req) => {
     const input = XmlVerifyInput.parse(req.body);
@@ -179,7 +199,9 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     };
   };
 
-  app.get<{ Params: { id: string } }>("/v1/envelopes/:id/seal-options", { preHandler: auth }, async (req) => sealOptions(req.auth!.tenantId, req.params.id));
+  app.get<{ Params: { id: string } }>("/v1/envelopes/:id/seal-options", { preHandler: auth }, async (req) =>
+    sealOptions(req.auth!.tenantId, req.params.id),
+  );
 
   app.put<{ Params: { id: string } }>("/v1/envelopes/:id/seal-options", { preHandler: auth }, async (req) => {
     const a = req.auth!;
@@ -193,12 +215,17 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         e.status === "finalizing" &&
         input.signatureLevel === undefined &&
         input.companySealCertificateId !== undefined &&
-        !(await t.one(`SELECT 1 FROM jobs WHERE queue = 'finalize' AND status IN ('pending','running') AND payload->>'envelopeId' = $1 LIMIT 1`, [e.id]));
+        !(await t.one(`SELECT 1 FROM jobs WHERE queue = 'finalize' AND status IN ('pending','running') AND payload->>'envelopeId' = $1 LIMIT 1`, [
+          e.id,
+        ]));
       if (!["draft", "sent"].includes(e.status) && !recovering) throw conflict("not_editable", "El sobre ya está finalizado");
       // El nivel de firma declarado es parte de lo que se les presentó a los firmantes: enviado el sobre ya no cambia (solo
       // el sello de empresa). Mandar el mismo valor vigente no es un cambio.
       if (e.status !== "draft" && input.signatureLevel !== undefined && input.signatureLevel !== e.signature_level) {
-        throw conflict("signature_level_locked", "El nivel de firma solo se puede cambiar en un borrador; en un sobre enviado solo se puede cambiar el sello de empresa");
+        throw conflict(
+          "signature_level_locked",
+          "El nivel de firma solo se puede cambiar en un borrador; en un sobre enviado solo se puede cambiar el sello de empresa",
+        );
       }
       // Cambia el updatedAt del sobre: con X-Expected-Updated-At (el editor lo manda) no tapa una edición ajena.
       assertNotStale(req.headers, e.updated_at);
@@ -270,7 +297,9 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     const busy = () =>
       new AppError(429, "provider_test_in_progress", "Ya hay una prueba de conector en curso en tu organización: esperá a que termine");
     await s.db.tx(async (t) => {
-      const lock = await t.one<{ ok: boolean }>(`SELECT pg_try_advisory_xact_lock(hashtext('signature_provider.tested:' || $1::text)) AS ok`, [tenantId]);
+      const lock = await t.one<{ ok: boolean }>(`SELECT pg_try_advisory_xact_lock(hashtext('signature_provider.tested:' || $1::text)) AS ok`, [
+        tenantId,
+      ]);
       if (!lock?.ok) throw busy();
       const running = await t.one(
         `SELECT 1 FROM account_audit_log st
@@ -289,11 +318,20 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         [tenantId],
       );
       if ((recent?.n ?? 0) >= SIGNATURE_PROVIDER_TESTS_PER_HOUR) {
-        throw new AppError(429, "provider_test_limit", `Se pueden hacer hasta ${SIGNATURE_PROVIDER_TESTS_PER_HOUR} pruebas de conectores por hora: probá más tarde`, {
-          max: SIGNATURE_PROVIDER_TESTS_PER_HOUR,
-        });
+        throw new AppError(
+          429,
+          "provider_test_limit",
+          `Se pueden hacer hasta ${SIGNATURE_PROVIDER_TESTS_PER_HOUR} pruebas de conectores por hora: probá más tarde`,
+          {
+            max: SIGNATURE_PROVIDER_TESTS_PER_HOUR,
+          },
+        );
       }
-      await auditFromRequest(t, req, req.auth!, "signature_provider.test_started", { targetType: "signature_provider", targetId: req.params.id, data: { testId } });
+      await auditFromRequest(t, req, req.auth!, "signature_provider.test_started", {
+        targetType: "signature_provider",
+        targetId: req.params.id,
+        data: { testId },
+      });
     });
     const res: SignatureProviderTestResult = { id: req.params.id, ok: false, holder: null, signatureVerified: false, error: null };
     try {

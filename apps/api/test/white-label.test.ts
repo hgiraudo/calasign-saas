@@ -16,10 +16,16 @@ describe("CSS de la marca", () => {
     expect(css).toContain('--font:"Montserrat"');
   });
   it("ignora valores inválidos", () => {
-    expect(themeToCss({ primaryColor: "red;}body{x:y" as never, fontFamily: "x\"}" })).toBe("");
+    expect(themeToCss({ primaryColor: "red;}body{x:y" as never, fontFamily: 'x"}' })).toBe("");
   });
   it("rechaza CSS que carga recursos o escapa del <style>", () => {
-    for (const bad of ["a{background:url(x)}", "@import 'x';", "a{b:c}</style><script>", "a{background:\\75rl(x)}", "a{background-image:image-set('x' 1x)}"]) {
+    for (const bad of [
+      "a{background:url(x)}",
+      "@import 'x';",
+      "a{b:c}</style><script>",
+      "a{background:\\75rl(x)}",
+      "a{background-image:image-set('x' 1x)}",
+    ]) {
       expect(customCssProblem(bad)).not.toBeNull();
     }
     expect(customCssProblem(".signer-bar{letter-spacing:.02em}")).toBeNull();
@@ -51,7 +57,9 @@ describe("plantillas de correo", () => {
     expect(m.text).not.toMatch(/CalaSign/);
   });
   it("brandText quita el correo de contacto de la plataforma", () => {
-    expect(brandText("escribinos a contacto@calasign.com", { hidePoweredBy: true, brandName: "ACME", supportUrl: "https://ayuda.acme.com" })).toBe("escribinos a https://ayuda.acme.com");
+    expect(brandText("escribinos a contacto@calasign.com", { hidePoweredBy: true, brandName: "ACME", supportUrl: "https://ayuda.acme.com" })).toBe(
+      "escribinos a https://ayuda.acme.com",
+    );
   });
   it("la marca blanca no reescribe los valores del usuario, solo los textos de la plantilla", () => {
     const v = { ...vars, subject: "Migración desde CalaSign", senderName: "Equipo CalaSign", message: "Ver calasign.com" };
@@ -80,7 +88,12 @@ describe("certificado", () => {
 
 describe("sub-marcas", () => {
   it("heredan lo que no definen", () => {
-    const base = BrandConfigInput.parse({ productName: "Revendedor", hidePoweredBy: true, theme: { primaryColor: "#111111", buttonColor: "#222222" }, texts: { es: { a: "1", b: "2" } } });
+    const base = BrandConfigInput.parse({
+      productName: "Revendedor",
+      hidePoweredBy: true,
+      theme: { primaryColor: "#111111", buttonColor: "#222222" },
+      texts: { es: { a: "1", b: "2" } },
+    });
     const sub = BrandConfigInput.parse({ productName: "Cliente", theme: { primaryColor: "#333333" }, texts: { es: { b: "3" } } });
     const m = mergeConfig(base, sub);
     expect(m.productName).toBe("Cliente");

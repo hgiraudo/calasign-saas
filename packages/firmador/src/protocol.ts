@@ -110,7 +110,8 @@ export class CertsignClient {
       // Un proxy o una página de error (502 en HTML): CertsignError con el status, no un SyntaxError suelto.
       if (res.ok) throw new CertsignError(res.status, "invalid_response", "La respuesta de CalaSign no es JSON válido");
     }
-    if (!res.ok) throw new CertsignError(res.status, data?.error?.code ?? "error", data?.error?.message ?? `HTTP ${res.status}`, data?.error?.details);
+    if (!res.ok)
+      throw new CertsignError(res.status, data?.error?.code ?? "error", data?.error?.message ?? `HTTP ${res.status}`, data?.error?.details);
     return data as T;
   }
 
@@ -145,7 +146,11 @@ export class CertsignClient {
  * de `source`. Antes de firmar se comprueba, con bytes y no con lo que diga el servidor, que lo que se firma es el
  * documento anunciado (ver assertPreparedMatchesDocument).
  */
-export async function signWithEntry(client: CertsignClient, source: CertSource, entry: CertEntry): Promise<{ prepared: Prepared; result: SignResult }> {
+export async function signWithEntry(
+  client: CertsignClient,
+  source: CertSource,
+  entry: CertEntry,
+): Promise<{ prepared: Prepared; result: SignResult }> {
   const info = await client.info();
   const working = await client.document();
   const prepared = await client.certificate(entry.chainDer);
@@ -248,7 +253,10 @@ export function assertPreparedMatchesDocument(x: {
   if (prepared[b] !== 0x3c || prepared[c - 1] !== 0x3e) fail("el espacio de la firma no es una cadena hexadecimal");
   const hole = prepared.subarray(b + 1, c - 1).toString("latin1");
   if (!/^[0-9a-fA-F]*$/.test(hole)) fail("el espacio de la firma tiene contenido inesperado");
-  const covered = createHash("sha256").update(prepared.subarray(a, a + b)).update(prepared.subarray(c, c + d)).digest();
+  const covered = createHash("sha256")
+    .update(prepared.subarray(a, a + b))
+    .update(prepared.subarray(c, c + d))
+    .digest();
   const md = messageDigestOf(x.signedAttrsDer);
   if (!md || !covered.equals(md)) fail("los datos a firmar no corresponden al documento");
 }

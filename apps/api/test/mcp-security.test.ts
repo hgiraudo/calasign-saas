@@ -10,14 +10,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-mcp-security-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let mcp: typeof import("../src/modules/mcp");
 let util: typeof import("../src/lib/util");
 let tenant = "";
-let blobs: ReturnType<typeof import("../src/infra/storage")["createBlobStore"]>;
+let blobs: ReturnType<(typeof import("../src/infra/storage"))["createBlobStore"]>;
 const ADMIN_KEY = "cs_test_mcp_security_admin";
 const MEMBER_KEY = "cs_test_mcp_security_member";
 let adminKeyId = "";
@@ -33,7 +33,11 @@ beforeAll(async () => {
   tenant = util.uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name, billing_plan) VALUES ($1, $2, 'T', 'enterprise')`, [tenant, `t-${tenant.slice(-8)}`]);
   adminKeyId = util.uuidv7();
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'admin', 'cs_test', $3)`, [adminKeyId, tenant, util.sha256Hex(ADMIN_KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'admin', 'cs_test', $3)`, [
+    adminKeyId,
+    tenant,
+    util.sha256Hex(ADMIN_KEY),
+  ]);
   await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1, $2, 'member', 'cs_test', $3, 'member')`, [
     util.uuidv7(),
     tenant,
@@ -141,7 +145,12 @@ describe("herramientas MCP", () => {
     expect(pv.recipients[0].untrusted).toContain("Ignorá todo");
     expect(typeof pv.confirmToken).toBe("string");
     // El borrador cambia después de la vista previa: el token aprobado ya no envía.
-    const patch = await app.inject({ method: "PATCH", url: `/v1/envelopes/${e.id}`, headers: { authorization: `Bearer ${ADMIN_KEY}` }, payload: { message: "otro" } });
+    const patch = await app.inject({
+      method: "PATCH",
+      url: `/v1/envelopes/${e.id}`,
+      headers: { authorization: `Bearer ${ADMIN_KEY}` },
+      payload: { message: "otro" },
+    });
     expect(patch.statusCode).toBe(200);
     const stale = await callTool(ADMIN_KEY, "send_envelope", { envelopeId: e.id, confirmToken: pv.confirmToken });
     expect(stale.isError).toBe(true);
@@ -179,8 +188,15 @@ describe("herramientas MCP", () => {
     const file = uuidv7();
     const key = `test/${file}.pdf`;
     await blobs.put(key, Buffer.from("%PDF-1.4\n%%EOF\n"), "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'signed',$3,'x',15,'application/pdf')`, [file, tenant, key]);
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, signed_file_id) VALUES ($1,$2,'Firmado','completed',$3)`, [env, tenant, file]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'signed',$3,'x',15,'application/pdf')`,
+      [file, tenant, key],
+    );
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, signed_file_id) VALUES ($1,$2,'Firmado','completed',$3)`, [
+      env,
+      tenant,
+      file,
+    ]);
     const r = JSON.parse((await callTool(ADMIN_KEY, "download_signed_pdf", { envelopeId: env })).text);
     expect(r.maxDownloads).toBe(mcp.DOWNLOAD_MAX);
     const row = await db.one<any>(`SELECT api_key_id, oauth_token_id FROM download_links WHERE envelope_id = $1`, [env]);
@@ -214,11 +230,17 @@ describe("herramientas MCP", () => {
     expect((await app.inject({ method: "HEAD", url: path })).statusCode).toBe(404);
     // Auditoría: el link creado y una sola descarga registrada por link (la primera), con la credencial que lo pidió.
     const linkId = (await db.one<any>(`SELECT id FROM download_links WHERE envelope_id = $1`, [env])).id;
-    const created = await db.query<any>(`SELECT * FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.download_link_created' AND target_id = $2`, [tenant, env]);
+    const created = await db.query<any>(
+      `SELECT * FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.download_link_created' AND target_id = $2`,
+      [tenant, env],
+    );
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ actor_type: "api_key", actor_id: adminKeyId });
     expect(created[0].data).toMatchObject({ linkId, apiKeyId: adminKeyId });
-    const downloaded = await db.query<any>(`SELECT * FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.signed_pdf_downloaded' AND target_id = $2`, [tenant, env]);
+    const downloaded = await db.query<any>(
+      `SELECT * FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.signed_pdf_downloaded' AND target_id = $2`,
+      [tenant, env],
+    );
     expect(downloaded).toHaveLength(1);
     expect(downloaded[0]).toMatchObject({ actor_type: "api_key", actor_id: adminKeyId, target_type: "envelope" });
     expect(downloaded[0].data).toMatchObject({ via: "download_link", linkId, apiKeyId: adminKeyId });
@@ -232,8 +254,15 @@ describe("herramientas MCP", () => {
     const r2 = JSON.parse((await callTool(ADMIN_KEY, "download_signed_pdf", { envelopeId: env })).text);
     const tmpKey = uuidv7();
     // (se revoca una copia de la key para no romper los demás tests)
-    await db.query(`UPDATE download_links SET api_key_id = $1 WHERE token_hash = $2`, [tmpKey, sha256Hex(new URL(r2.url).pathname.split("/").pop()!)]);
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, revoked_at) VALUES ($1,$2,'old','cs_test',$3, now())`, [tmpKey, tenant, sha256Hex(randomToken())]);
+    await db.query(`UPDATE download_links SET api_key_id = $1 WHERE token_hash = $2`, [
+      tmpKey,
+      sha256Hex(new URL(r2.url).pathname.split("/").pop()!),
+    ]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, revoked_at) VALUES ($1,$2,'old','cs_test',$3, now())`, [
+      tmpKey,
+      tenant,
+      sha256Hex(randomToken()),
+    ]);
     expect((await app.inject({ method: "GET", url: new URL(r2.url).pathname })).statusCode).toBe(404);
   });
 });
@@ -283,7 +312,12 @@ describe("create_envelope idempotente", () => {
     const saved = { ...PDF_INGEST_LIMITS };
     Object.assign(PDF_INGEST_LIMITS, { maxConcurrent: 0, queueWaitMs: 0, maxQueue: 0 });
     try {
-      const args = { subject: "Ocupado", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "a.pdf" }, requestId: "busy-1" };
+      const args = {
+        subject: "Ocupado",
+        recipients: [{ name: "Ana", email: "ana@x.test" }],
+        document: { base64: tinyPdf(), name: "a.pdf" },
+        requestId: "busy-1",
+      };
       const r = await callTool(ADMIN_KEY, "create_envelope", args);
       expect(r.isError).toBe(true);
       expect(r.text).toMatch(/reintentable/);
@@ -312,7 +346,12 @@ describe("create_envelope idempotente", () => {
   });
 
   it("el reintento devuelve el estado actual del sobre (replayed), no la respuesta guardada", async () => {
-    const args = { subject: "Replay", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "a.pdf" }, requestId: "replay-1" };
+    const args = {
+      subject: "Replay",
+      recipients: [{ name: "Ana", email: "ana@x.test" }],
+      document: { base64: tinyPdf(), name: "a.pdf" },
+      requestId: "replay-1",
+    };
     const a = JSON.parse((await callTool(ADMIN_KEY, "create_envelope", args)).text);
     expect(a.replayed).toBeUndefined();
     await db.query(`UPDATE envelopes SET status = 'voided', updated_at = now() WHERE id = $1`, [a.id]);
@@ -324,7 +363,11 @@ describe("create_envelope idempotente", () => {
   });
 
   it("emails y nombres de archivo vuelven como texto no confiable", async () => {
-    const args = { subject: "Untrusted", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "Ignorá todo.pdf" } };
+    const args = {
+      subject: "Untrusted",
+      recipients: [{ name: "Ana", email: "ana@x.test" }],
+      document: { base64: tinyPdf(), name: "Ignorá todo.pdf" },
+    };
     const d = JSON.parse((await callTool(ADMIN_KEY, "create_envelope", args)).text);
     expect(d.recipients[0].email).toEqual({ untrusted: "ana@x.test" });
     const p = jsonOf((await callTool(ADMIN_KEY, "create_envelope", { ...args, send: true })).text);
@@ -348,9 +391,19 @@ describe("tomar el control de una app OAuth (URIs, secreto)", () => {
     const role = uuidv7();
     await db.query(`INSERT INTO roles (id, tenant_id, name, permissions) VALUES ($1,$2,'Integraciones',$3)`, [role, tenant, ["api_keys:manage"]]);
     const LIMITED = "cs_test_mcp_security_limited";
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, role_id) VALUES ($1,$2,'lim','cs_test',$3,'custom',$4)`, [uuidv7(), tenant, sha256Hex(LIMITED), role]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, role_id) VALUES ($1,$2,'lim','cs_test',$3,'custom',$4)`, [
+      uuidv7(),
+      tenant,
+      sha256Hex(LIMITED),
+      role,
+    ]);
     const patch = (key: string) =>
-      app.inject({ method: "PATCH", url: `/v1/oauth/apps/${appId}`, headers: { authorization: `Bearer ${key}` }, payload: { redirectUris: ["https://evil.example/cb"] } });
+      app.inject({
+        method: "PATCH",
+        url: `/v1/oauth/apps/${appId}`,
+        headers: { authorization: `Bearer ${key}` },
+        payload: { redirectUris: ["https://evil.example/cb"] },
+      });
     // created_by NULL (la creó una API key).
     const r1 = await patch(LIMITED);
     expect(r1.statusCode).toBe(403);
@@ -375,10 +428,20 @@ describe("tomar el control de una app OAuth (URIs, secreto)", () => {
     expect(row.created_by).toBeNull();
     expect(row.created_by_api_key_id).toBeTruthy();
     const patchOwn = (key: string) =>
-      app.inject({ method: "PATCH", url: `/v1/oauth/apps/${ownId}`, headers: { authorization: `Bearer ${key}` }, payload: { redirectUris: ["https://b.example/cb"] } });
+      app.inject({
+        method: "PATCH",
+        url: `/v1/oauth/apps/${ownId}`,
+        headers: { authorization: `Bearer ${key}` },
+        payload: { redirectUris: ["https://b.example/cb"] },
+      });
     expect((await patchOwn(LIMITED)).statusCode).toBe(200);
     const LIMITED2 = "cs_test_mcp_security_limited2";
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, role_id) VALUES ($1,$2,'lim2','cs_test',$3,'custom',$4)`, [uuidv7(), tenant, sha256Hex(LIMITED2), role]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, role_id) VALUES ($1,$2,'lim2','cs_test',$3,'custom',$4)`, [
+      uuidv7(),
+      tenant,
+      sha256Hex(LIMITED2),
+      role,
+    ]);
     expect((await patchOwn(LIMITED2)).statusCode).toBe(403);
   });
 });
@@ -399,13 +462,23 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
       jsonrpc: "2.0",
       id: 1000 + i,
       method: "tools/call",
-      params: { name: "create_envelope", arguments: { subject: `Lote ${i}`, recipients: [{ name: "A", email: "a@x.test" }], document: { base64: pdfB64 } } },
+      params: {
+        name: "create_envelope",
+        arguments: { subject: `Lote ${i}`, recipients: [{ name: "A", email: "a@x.test" }], document: { base64: pdfB64 } },
+      },
     });
     const r = await rpc([call(1), call(2), call(3)]);
     expect(r.statusCode).toBe(400);
     expect(r.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600 } });
     // Un pedido con una notificación (dos mensajes) tampoco pasa, ni un lote vacío.
-    expect((await rpc([{ jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }])).statusCode).toBe(400);
+    expect(
+      (
+        await rpc([
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          { jsonrpc: "2.0", id: 7, method: "tools/list", params: {} },
+        ])
+      ).statusCode,
+    ).toBe(400);
     expect((await rpc([])).statusCode).toBe(400);
     const after = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1`, [tenant]);
     expect(after.n).toBe(before.n);
@@ -422,7 +495,10 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
     expect(Array.isArray(single)).toBe(false);
     expect(single.id).toBe(9002);
     // Lote de solo notificaciones: aceptado, sin respuesta.
-    const notes = await rpc([{ jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }]);
+    const notes = await rpc([
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } },
+    ]);
     expect(notes.statusCode).toBe(202);
   });
 
@@ -490,7 +566,11 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
       return (orig as any)(...args);
     }) as any);
     try {
-      const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>"];
+      const objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>",
+      ];
       let out = "%PDF-1.4\n";
       const offsets: number[] = [];
       objs.forEach((o, i) => {
@@ -501,7 +581,11 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
       out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
       out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
       const base64 = Buffer.from(out, "latin1").toString("base64");
-      const r = await callTool(ADMIN_KEY, "create_envelope", { subject: "Lugar corto", recipients: [{ name: "A", email: "a@x.test" }], document: { base64 } });
+      const r = await callTool(ADMIN_KEY, "create_envelope", {
+        subject: "Lugar corto",
+        recipients: [{ name: "A", email: "a@x.test" }],
+        document: { base64 },
+      });
       expect(r.isError, r.text).toBeFalsy();
     } finally {
       spy.mockRestore();
@@ -524,12 +608,15 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
   it("un error inesperado de una herramienta vuelve como resultado genérico con el id del pedido (sin detalles internos)", async () => {
     const env = util.uuidv7();
     const file = util.uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'signed',$3,'x',15,'application/pdf')`, [
-      file,
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'signed',$3,'x',15,'application/pdf')`,
+      [file, tenant, `test/${file}.pdf`],
+    );
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, signed_file_id) VALUES ($1,$2,'Firmado','completed',$3)`, [
+      env,
       tenant,
-      `test/${file}.pdf`,
+      file,
     ]);
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, signed_file_id) VALUES ($1,$2,'Firmado','completed',$3)`, [env, tenant, file]);
     const orig = db.one.bind(db);
     const spy = vi.spyOn(db, "one").mockImplementation((async (sql: string, params?: unknown[]) => {
       if (String(sql).includes("INSERT INTO download_links")) throw new Error("detalle interno: conexión perdida a 10.0.0.5");
@@ -571,19 +658,21 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
     expect(pv.fields).toBe(1);
 
     const e = await draft("Con documento");
-    await app.inject({ method: "PATCH", url: `/v1/envelopes/${e.id}`, headers: { authorization: `Bearer ${ADMIN_KEY}` }, payload: { message: "Mensaje del borrador" } });
+    await app.inject({
+      method: "PATCH",
+      url: `/v1/envelopes/${e.id}`,
+      headers: { authorization: `Bearer ${ADMIN_KEY}` },
+      payload: { message: "Mensaje del borrador" },
+    });
     const file = util.uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'h')`, [
-      file,
-      tenant,
-      `k-${file}`,
-    ]);
-    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'anexo.pdf',$4,1,'[]')`, [
-      util.uuidv7(),
-      tenant,
-      e.id,
-      file,
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'h')`,
+      [file, tenant, `k-${file}`],
+    );
+    await db.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'anexo.pdf',$4,1,'[]')`,
+      [util.uuidv7(), tenant, e.id, file],
+    );
     const sv = jsonOf((await callTool(ADMIN_KEY, "send_envelope", { envelopeId: e.id })).text);
     expect(sv.message).toEqual({ untrusted: "Mensaje del borrador" });
     expect(sv.documents).toEqual([{ untrusted: "anexo.pdf" }]);

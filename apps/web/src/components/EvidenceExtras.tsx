@@ -31,7 +31,9 @@ export function SealOptionsPanel({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api<SealOptions>(`/v1/envelopes/${envelopeId}/seal-options`).then(setOpts).catch((e) => setError(errorText(e)));
+    api<SealOptions>(`/v1/envelopes/${envelopeId}/seal-options`)
+      .then(setOpts)
+      .catch((e) => setError(errorText(e)));
     api<{ items: TenantCertificate[] }>("/v1/certificates")
       .then((r) => setCerts(r.items.filter((c) => !c.expired && c.usages.includes("pdf_seal"))))
       .catch(() => setCerts([]));
@@ -72,18 +74,18 @@ export function SealOptionsPanel({
         {!sealOnly && (
           <label className="field grow">
             <span>{ev("seal.level")}</span>
-          <select
-            value={opts.signatureLevel}
-            disabled={disabled || saving}
-            onChange={(e) => void save({ signatureLevel: e.target.value as SignatureLevel })}
-            data-testid="seal-level"
-          >
-            {(["simple", "advanced", "qualified"] as const).map((l) => (
-              <option key={l} value={l}>
-                {ev(`seal.level.${l}`)}
-              </option>
-            ))}
-          </select>
+            <select
+              value={opts.signatureLevel}
+              disabled={disabled || saving}
+              onChange={(e) => void save({ signatureLevel: e.target.value as SignatureLevel })}
+              data-testid="seal-level"
+            >
+              {(["simple", "advanced", "qualified"] as const).map((l) => (
+                <option key={l} value={l}>
+                  {ev(`seal.level.${l}`)}
+                </option>
+              ))}
+            </select>
           </label>
         )}
         <label className="field grow">
@@ -153,7 +155,11 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
               <strong>{title}</strong>
               <span className={`badge ${ok ? "badge-completed" : "badge-declined"}`}>{ok ? ev("val.intact") : ev("val.broken")}</span>
               {s.chain.entries.length > 0 && (
-                <span className={`badge ${chainOk ? "badge-completed" : s.chain.revoked || s.chain.timeValid === false ? "badge-declined" : "badge-sent"}`}>{chainLabel}</span>
+                <span
+                  className={`badge ${chainOk ? "badge-completed" : s.chain.revoked || s.chain.timeValid === false ? "badge-declined" : "badge-sent"}`}
+                >
+                  {chainLabel}
+                </span>
               )}
               {chainOk && s.chain.revocationUnknown && <span className="badge badge-sent">{ev("val.revUnknown")}</span>}
               {s.weakAlgorithm && <span className="badge badge-declined">{ev("val.weak")}</span>}
@@ -177,7 +183,8 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                   <tr>
                     <th>{ev("val.timestamp")}</th>
                     <td>
-                      {formatDateTime(s.timestamp.time, locale)} · {s.timestamp.tsa ?? "TSA"} {s.timestamp.valid ? (s.timestamp.trusted === false ? `⚠ ${ev("val.tsaUntrusted")}` : "✓") : "✕"}
+                      {formatDateTime(s.timestamp.time, locale)} · {s.timestamp.tsa ?? "TSA"}{" "}
+                      {s.timestamp.valid ? (s.timestamp.trusted === false ? `⚠ ${ev("val.tsaUntrusted")}` : "✓") : "✕"}
                     </td>
                   </tr>
                 )}
@@ -205,7 +212,9 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                 )}
                 <tr>
                   <th>{ev("val.coverage")}</th>
-                  <td>{s.coversWholeDocument ? ev("val.coversAll") : s.changesAfter === "content" ? ev("val.changedAfter") : ev("val.modifiedAfter")}</td>
+                  <td>
+                    {s.coversWholeDocument ? ev("val.coversAll") : s.changesAfter === "content" ? ev("val.changedAfter") : ev("val.modifiedAfter")}
+                  </td>
                 </tr>
                 {s.chain.entries.length > 0 && (
                   <tr>

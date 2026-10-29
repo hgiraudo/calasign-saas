@@ -243,7 +243,11 @@ export const SendFromCrmRecordInput = z.object({
    * dos cuentas conectadas, el mismo id de registro existe en las dos y se leería el de la otra). Sin él se usa la
    * cuenta guardada en la conexión (si no tiene, 409 crm_account_unknown).
    */
-  companyId: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+  companyId: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional(),
 });
 export type SendFromCrmRecordInput = z.infer<typeof SendFromCrmRecordInput>;
 

@@ -10,7 +10,16 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-outbound-fixes-"));
 delete process.env.DATABASE_URL;
 
-type Sent = { to: string; subject: string; text: string; html?: string; from?: string | null; replyTo?: string | null; link?: string | null; fallbackFrom?: string | null };
+type Sent = {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  from?: string | null;
+  replyTo?: string | null;
+  link?: string | null;
+  fallbackFrom?: string | null;
+};
 const mails: Sent[] = [];
 let nextResult: Record<string, unknown> = {};
 vi.mock("../src/notifications/channels", async (orig) => ({
@@ -21,14 +30,18 @@ vi.mock("../src/notifications/channels", async (orig) => ({
   }),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 const log = { info() {}, warn() {}, error() {} };
 
 async function newTenant(branding?: object) {
   const { uuidv7 } = await import("../src/lib/util");
   const t = uuidv7();
-  await db.query(`INSERT INTO tenants (id, slug, name, branding) VALUES ($1, $2, 'Org', COALESCE($3::jsonb, '{}'::jsonb))`, [t, `t-${t.slice(-8)}`, branding ? JSON.stringify(branding) : null]);
+  await db.query(`INSERT INTO tenants (id, slug, name, branding) VALUES ($1, $2, 'Org', COALESCE($3::jsonb, '{}'::jsonb))`, [
+    t,
+    `t-${t.slice(-8)}`,
+    branding ? JSON.stringify(branding) : null,
+  ]);
   return t;
 }
 
@@ -64,7 +77,16 @@ describe("WhatsApp", () => {
     const { whatsAppPayload } = await import("../src/notifications/channels");
     const { config } = await import("../src/config");
     expect(config.whatsapp.otpTemplateKind).toBe("authentication");
-    const p = whatsAppPayload({ channel: "whatsapp", to: "+5491100000000", subject: "", text: "", templateParams: ["123456"], buttonParams: ["123456"], template: "calasign_verification_code", locale: "es" });
+    const p = whatsAppPayload({
+      channel: "whatsapp",
+      to: "+5491100000000",
+      subject: "",
+      text: "",
+      templateParams: ["123456"],
+      buttonParams: ["123456"],
+      template: "calasign_verification_code",
+      locale: "es",
+    });
     expect(p.to).toBe("5491100000000");
     expect(p.template.components).toEqual([
       { type: "body", parameters: [{ type: "text", text: "123456" }] },
@@ -160,7 +182,9 @@ describe("SMS del código de verificación", () => {
 
 describe("rechazo de SES del dominio propio", () => {
   it("554 identidad sin verificar: reintenta una vez desde la plataforma con el nombre de la marca", async () => {
-    const { sendEmail, setMailTransportForTests, isSesIdentityRejection, resetSesIdentityBackoffForTests } = await import("../src/notifications/channels");
+    const { sendEmail, setMailTransportForTests, isSesIdentityRejection, resetSesIdentityBackoffForTests } = await import(
+      "../src/notifications/channels"
+    );
     resetSesIdentityBackoffForTests();
     const { config } = await import("../src/config");
     const calls: any[] = [];
@@ -169,10 +193,16 @@ describe("rechazo de SES del dominio propio", () => {
       sendMail: (async (msg: any) => {
         calls.push(msg);
         if (failFirst && calls.length === 1) {
-          throw Object.assign(new Error("Message failed: 554 Message rejected: Email address is not verified. The following identities failed the check in region US-EAST-1: firmas@acme.test"), {
-            responseCode: 554,
-            response: "554 Message rejected: Email address is not verified. The following identities failed the check in region US-EAST-1: firmas@acme.test",
-          });
+          throw Object.assign(
+            new Error(
+              "Message failed: 554 Message rejected: Email address is not verified. The following identities failed the check in region US-EAST-1: firmas@acme.test",
+            ),
+            {
+              responseCode: 554,
+              response:
+                "554 Message rejected: Email address is not verified. The following identities failed the check in region US-EAST-1: firmas@acme.test",
+            },
+          );
         }
         return { response: "250 Ok 0100abc-000000", messageId: "<x@y>" };
       }) as any,
@@ -191,7 +221,9 @@ describe("rechazo de SES del dominio propio", () => {
 
       // Sin dominio propio (sin DKIM) o con otro error: no se reintenta.
       calls.length = 0;
-      await expect(sendEmail({ channel: "email", to: "ana@x.com", subject: "s", text: "t", from: '"X" <no-reply@calasign.test>' })).rejects.toThrow(/554/);
+      await expect(sendEmail({ channel: "email", to: "ana@x.com", subject: "s", text: "t", from: '"X" <no-reply@calasign.test>' })).rejects.toThrow(
+        /554/,
+      );
       expect(calls).toHaveLength(1);
       expect(isSesIdentityRejection(Object.assign(new Error("550 mailbox unavailable"), { responseCode: 550 }))).toBe(false);
       expect(isSesIdentityRejection(new Error("554 Message rejected: Email address is not verified."))).toBe(true);
@@ -209,7 +241,14 @@ describe("rechazo de SES del dominio propio", () => {
       expect(again.dkimDomain).toBeUndefined();
       // Otro dominio no está en espera; un envío con DKIM aceptado lo informa.
       calls.length = 0;
-      const other = await sendEmail({ channel: "email", to: "ana@x.com", subject: "s", text: "t", from: '"B" <b@otro.test>', dkim: { ...dkim, domainName: "otro.test" } });
+      const other = await sendEmail({
+        channel: "email",
+        to: "ana@x.com",
+        subject: "s",
+        text: "t",
+        from: '"B" <b@otro.test>',
+        dkim: { ...dkim, domainName: "otro.test" },
+      });
       expect(calls).toHaveLength(1);
       expect(calls[0].dkim?.domainName).toBe("otro.test");
       expect(other.dkimDomain).toBe("otro.test");
@@ -237,12 +276,16 @@ describe("rechazo de SES del dominio propio", () => {
     const send = async (r: Record<string, unknown>) => {
       nextResult = r;
       try {
-        expect((await sendTracked(db, { tenantId: t, template: "invite" }, { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t })).status).toBe("sent");
+        expect(
+          (await sendTracked(db, { tenantId: t, template: "invite" }, { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t }))
+            .status,
+        ).toBe("sent");
       } finally {
         nextResult = {};
       }
     };
-    const sesFlag = async () => (await db.one<any>(`SELECT ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t])).ses_identity_error_at != null;
+    const sesFlag = async () =>
+      (await db.one<any>(`SELECT ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t])).ses_identity_error_at != null;
     const lastError = async () => (await db.one<any>(`SELECT last_error FROM email_domains WHERE tenant_id = $1`, [t])).last_error;
     await send({ identityRejectedDomain: "acme5.test" });
     expect(await sesFlag()).toBe(true);
@@ -292,13 +335,18 @@ describe("rechazo de SES del dominio propio", () => {
     const send = async (r: Record<string, unknown>) => {
       nextResult = r;
       try {
-        await sendTracked(db, { tenantId: t, template: "invite", log: { error: vi.fn(), warn } }, { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t });
+        await sendTracked(
+          db,
+          { tenantId: t, template: "invite", log: { error: vi.fn(), warn } },
+          { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t },
+        );
       } finally {
         nextResult = {};
       }
     };
     const version = async () => (await db.one<any>(`SELECT xmin::text AS v FROM email_domains WHERE tenant_id = $1`, [t])).v;
-    const sesFlag = async () => (await db.one<any>(`SELECT ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t])).ses_identity_error_at != null;
+    const sesFlag = async () =>
+      (await db.one<any>(`SELECT ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t])).ses_identity_error_at != null;
     // Sin aviso anotado (p. ej. lo borró un envío aceptado de otra réplica): en espera no se vuelve a anotar (no oscila).
     await db.query(`UPDATE email_domains SET ses_identity_error_at = NULL WHERE tenant_id = $1`, [t]);
     let before = await version();
@@ -325,7 +373,11 @@ describe("rechazo de SES del dominio propio", () => {
     await verifiedMailDomain(t, "acme.test");
     nextResult = { identityRejectedDomain: "acme.test" };
     try {
-      const out = await sendTracked(db, { tenantId: t, template: "invite" }, { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t });
+      const out = await sendTracked(
+        db,
+        { tenantId: t, template: "invite" },
+        { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t },
+      );
       expect(out.status).toBe("sent");
     } finally {
       nextResult = {};
@@ -362,7 +414,11 @@ describe("Reply-To de los avisos al firmante", () => {
       const t = await newTenant({ whiteLabel: { email: { replyTo: "respuestas@org.test" } } });
       const creator = await newUser(t, `creador-${t.slice(-6)}@org.test`);
       const env = uuidv7();
-      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, created_by) VALUES ($1,$2,'Contrato','sent',now(),$3)`, [env, t, creator]);
+      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, created_by) VALUES ($1,$2,'Contrato','sent',now(),$3)`, [
+        env,
+        t,
+        creator,
+      ]);
       const rec = uuidv7();
       const token = randomToken();
       await db.query(
@@ -380,7 +436,11 @@ describe("Reply-To de los avisos al firmante", () => {
     const t = await newTenant({ whiteLabel: { email: { fromEmail: "firmas@org-sin-dominio.test" } } });
     const creator = await newUser(t, `creador-${t.slice(-6)}@org.test`);
     const env = uuidv7();
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, created_by) VALUES ($1,$2,'Contrato','sent',now(),$3)`, [env, t, creator]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, created_by) VALUES ($1,$2,'Contrato','sent',now(),$3)`, [
+      env,
+      t,
+      creator,
+    ]);
     const rec = uuidv7();
     const token = randomToken();
     await db.query(
@@ -433,7 +493,12 @@ describe("invitación al equipo", () => {
     await app.ready();
     try {
       mails.length = 0;
-      const res = await app.inject({ method: "POST", url: "/v1/invitations", headers: { authorization: `Bearer ${key}` }, payload: { email: "otra@x.com", role: "member" } });
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/invitations",
+        headers: { authorization: `Bearer ${key}` },
+        payload: { email: "otra@x.com", role: "member" },
+      });
       expect(res.statusCode, res.body).toBe(201);
       expect(res.json().acceptUrl.startsWith(`${config.appUrl}/invite/`)).toBe(true);
       expect(mails).toHaveLength(1);
@@ -454,12 +519,21 @@ describe("restablecimiento de contraseña", () => {
     const run = async (email: string) => {
       const u = await newUser(null, email);
       const token = randomToken();
-      await db.query(`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '1 hour')`, [sha256Hex(token), u]);
+      await db.query(`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '1 hour')`, [
+        sha256Hex(token),
+        u,
+      ]);
       mails.length = 0;
-      await handlers.notify({ kind: "password_reset", envelopeId: "", tenantId: "", userId: u, tokenEnc: encrypt(token) } as any, { id: 1, attempts: 1, maxAttempts: 8 });
+      await handlers.notify({ kind: "password_reset", envelopeId: "", tenantId: "", userId: u, tokenEnc: encrypt(token) } as any, {
+        id: 1,
+        attempts: 1,
+        maxAttempts: 8,
+      });
       return mails.length;
     };
-    await db.query(`INSERT INTO email_suppressions (address, reason, expires_at) VALUES ('rebota-reset@x.com', 'bounce', now() + interval '30 days')`);
+    await db.query(
+      `INSERT INTO email_suppressions (address, reason, expires_at) VALUES ('rebota-reset@x.com', 'bounce', now() + interval '30 days')`,
+    );
     expect(await run("rebota-reset@x.com")).toBe(0);
     expect(await run("ok-reset@x.com")).toBe(1);
   });
@@ -487,7 +561,14 @@ describe("alerta BYOK", () => {
 describe("plantillas propias", () => {
   it("{{ message }} con espacios: el mensaje no se repite", async () => {
     const { render } = await import("../src/notifications/templates");
-    const vars = { recipientName: "Ana", senderName: "Juan", organizationName: "ACME", subject: "NDA", message: "Mensaje único 42", link: "https://x/s/t" };
+    const vars = {
+      recipientName: "Ana",
+      senderName: "Juan",
+      organizationName: "ACME",
+      subject: "NDA",
+      message: "Mensaje único 42",
+      link: "https://x/s/t",
+    };
     const m = render("invite", "es", vars, { template: { body: "Hola\n\n{{ message }}" } });
     expect(m.text.split("Mensaje único 42").length - 1).toBe(1);
     expect(m.html.split("Mensaje único 42").length - 1).toBe(1);
@@ -498,7 +579,14 @@ describe("plantillas propias", () => {
 
   it("finalize_failed: {{code}} y {{reason}}; sin ninguno, se agrega la explicación de un documento que no se puede sellar", async () => {
     const { render } = await import("../src/notifications/templates");
-    const vars = { recipientName: "Ana", senderName: "Juan", organizationName: "ACME", subject: "NDA", link: "https://x/app", unsealableCode: "pdf_form_unsupported" };
+    const vars = {
+      recipientName: "Ana",
+      senderName: "Juan",
+      organizationName: "ACME",
+      subject: "NDA",
+      link: "https://x/app",
+      unsealableCode: "pdf_form_unsupported",
+    };
     const withCode = render("finalize_failed", "es", vars, { template: { body: "Falló el sellado (código {{code}})." } });
     expect(withCode.text).toContain("Falló el sellado (código pdf_form_unsupported).");
     expect(withCode.text).not.toContain("Reintentar no lo resuelve");

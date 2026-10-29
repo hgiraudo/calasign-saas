@@ -9,12 +9,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-audit-coverage-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
-let blobs: ReturnType<typeof import("../src/infra/storage")["createBlobStore"]>;
+let blobs: ReturnType<(typeof import("../src/infra/storage"))["createBlobStore"]>;
 
 beforeAll(async () => {
   const { createDb, migrate } = await import("../src/infra/db");
@@ -39,17 +39,19 @@ async function newTenant() {
 }
 async function newUser(tenantId: string | null, role = "owner") {
   const id = util.uuidv7();
-  await db.query(`INSERT INTO users (id, email, name, password_hash, password_reset_at) VALUES ($1,$2,'Ana','scrypt$x', now())`, [id, `u-${id.slice(-10)}@empresa.test`]);
+  await db.query(`INSERT INTO users (id, email, name, password_hash, password_reset_at) VALUES ($1,$2,'Ana','scrypt$x', now())`, [
+    id,
+    `u-${id.slice(-10)}@empresa.test`,
+  ]);
   if (tenantId) await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3)`, [tenantId, id, role]);
   return id;
 }
 async function newSession(userId: string, tenantId: string) {
   const token = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(token),
-    userId,
-    tenantId,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(token), userId, tenantId],
+  );
   return { cs_session: token };
 }
 const audits = (tenantId: string, action: string) =>
@@ -77,9 +79,21 @@ describe("PUT /v1/settings/sso", () => {
     const owner = await newUser(t);
     const cookies = await newSession(owner, t);
     const put = (payload: Record<string, unknown>) => app.inject({ method: "PUT", url: "/v1/settings/sso", cookies, payload });
-    const r1 = await put({ enabled: false, protocol: "oidc", jitRole: "member", oidc: { issuer: "https://idp.empresa.test", clientId: "abc", clientSecret: "super-secreto-1" } });
+    const r1 = await put({
+      enabled: false,
+      protocol: "oidc",
+      jitRole: "member",
+      oidc: { issuer: "https://idp.empresa.test", clientId: "abc", clientSecret: "super-secreto-1" },
+    });
     expect(r1.statusCode).toBe(200);
-    const r2 = await put({ enabled: false, protocol: "oidc", jitRole: "admin", sessionTtlHours: 8, domains: ["empresa.test"], oidc: { issuer: "https://idp.empresa.test", clientId: "xyz" } });
+    const r2 = await put({
+      enabled: false,
+      protocol: "oidc",
+      jitRole: "admin",
+      sessionTtlHours: 8,
+      domains: ["empresa.test"],
+      oidc: { issuer: "https://idp.empresa.test", clientId: "xyz" },
+    });
     expect(r2.statusCode).toBe(200);
 
     const rows = await audits(t, "settings.sso_updated");
@@ -171,21 +185,24 @@ describe("adjuntos", () => {
     const attFile = uuidv7();
     const field = uuidv7();
     await blobs.put(`test/${attFile}.pdf`, Buffer.from("%PDF-1.4\n%%EOF\n"), "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'original','x','x',1,'application/pdf')`, [docFile, t]);
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'attachment',$3,'x',15,'application/pdf')`, [
-      attFile,
-      t,
-      `test/${attFile}.pdf`,
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'original','x','x',1,'application/pdf')`,
+      [docFile, t],
+    );
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'attachment',$3,'x',15,'application/pdf')`,
+      [attFile, t, `test/${attFile}.pdf`],
+    );
     await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1,$2,'Con adjunto','completed')`, [env, t]);
-    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`, [
-      doc,
+    await db.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`,
+      [doc, t, env, docFile, JSON.stringify([{ width: 600, height: 800 }])],
+    );
+    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email) VALUES ($1,$2,$3,'signer','Ana','ana@x.test')`, [
+      rec,
       t,
       env,
-      docFile,
-      JSON.stringify([{ width: 600, height: 800 }]),
     ]);
-    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email) VALUES ($1,$2,$3,'signer','Ana','ana@x.test')`, [rec, t, env]);
     await db.query(
       `INSERT INTO fields (id, tenant_id, envelope_id, document_id, recipient_id, type, page, x, y, width, height, value, attachment_file_id)
        VALUES ($1,$2,$3,$4,$5,'attachment',0,0.1,0.1,0.1,0.1,'dni.pdf',$6)`,
@@ -213,7 +230,12 @@ describe("almacenamiento", () => {
       t,
       JSON.stringify({ bucket: "b", prefix: "firmados/", includeEvidence: true }),
     ]);
-    const r = await app.inject({ method: "PATCH", url: `/v1/storage/connections/${id}`, cookies, payload: { active: false, prefix: "otros", includeEvidence: false } });
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/v1/storage/connections/${id}`,
+      cookies,
+      payload: { active: false, prefix: "otros", includeEvidence: false },
+    });
     expect(r.statusCode).toBe(200);
     const [row] = await audits(t, "storage.updated");
     expect(row.target_id).toBe(id);
@@ -237,7 +259,12 @@ describe("2FA", () => {
     const enable = await app.inject({ method: "POST", url: "/v1/me/2fa/enable", cookies, payload: { code: totpAt(secret, currentStep()) } });
     expect(enable.statusCode).toBe(200);
     // Otro paso (el último usado no se acepta dos veces): el próximo.
-    const regen = await app.inject({ method: "POST", url: "/v1/me/2fa/recovery-codes", cookies, payload: { code: totpAt(secret, currentStep() + 1) } });
+    const regen = await app.inject({
+      method: "POST",
+      url: "/v1/me/2fa/recovery-codes",
+      cookies,
+      payload: { code: totpAt(secret, currentStep() + 1) },
+    });
     expect(regen.statusCode).toBe(200);
     const disable = await app.inject({ method: "POST", url: "/v1/me/2fa/disable", cookies, payload: { code: regen.json().recoveryCodes[0] } });
     expect(disable.statusCode).toBe(200);

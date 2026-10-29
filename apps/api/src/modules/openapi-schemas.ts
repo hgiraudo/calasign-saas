@@ -111,7 +111,11 @@ export const UploadedDocumentSchema = named(
 export const CertificateRequirementsSchema = named(
   "CertificateRequirements",
   z.object({
-    matchIdDocument: z.boolean().describe("El certificado tiene que corresponder al documento declarado del firmante (false por defecto; solo rige si el destinatario tiene idDocumentNumber)."),
+    matchIdDocument: z
+      .boolean()
+      .describe(
+        "El certificado tiene que corresponder al documento declarado del firmante (false por defecto; solo rige si el destinatario tiene idDocumentNumber).",
+      ),
     allowedIssuers: z.array(z.string()).describe("Partes del DN del emisor permitidas. Vacío = cualquiera."),
     requireQualified: z.boolean().describe("Exige una CA del almacén de confianza de la plataforma."),
   }),
@@ -224,7 +228,10 @@ export const EnvelopeDetailSchema = named(
     documents: z.array(DocumentSchema),
     recipients: z.array(RecipientSchema),
     fields: z.array(FieldSchema),
-    canManage: z.boolean().optional().describe("Solo en GET /v1/envelopes/{id}: si quien consulta puede modificar el sobre (anular, corregir, reasignar, compartir)"),
+    canManage: z
+      .boolean()
+      .optional()
+      .describe("Solo en GET /v1/envelopes/{id}: si quien consulta puede modificar el sobre (anular, corregir, reasignar, compartir)"),
   }),
 );
 
@@ -269,7 +276,10 @@ export const SigningUrlSchema = named(
   z.object({
     url: z.string().url().describe("URL de un solo uso para el iframe o la redirección."),
     expiresAt: iso(),
-    tabOnly: z.boolean().optional().describe("true: el firmante tiene código OTP; la URL se abre en una pestaña o redirección (no dentro de un iframe)."),
+    tabOnly: z
+      .boolean()
+      .optional()
+      .describe("true: el firmante tiene código OTP; la URL se abre en una pestaña o redirección (no dentro de un iframe)."),
   }),
 );
 
@@ -284,7 +294,10 @@ export const WebhookSchema = named(
     events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).describe("Vacío = todos los eventos."),
     active: z.boolean(),
     secretPrefix: z.string().describe("Primeros caracteres del secreto (whsec_…), para identificarlo."),
-    previousSecretExpiresAt: iso().nullable().optional().describe("Después de rotar el secreto: hasta cuándo las entregas van firmadas también con el anterior."),
+    previousSecretExpiresAt: iso()
+      .nullable()
+      .optional()
+      .describe("Después de rotar el secreto: hasta cuándo las entregas van firmadas también con el anterior."),
     deactivatedReason: z
       .enum(["credential_revoked", "permission_lost", "gone", "failing"])
       .nullable()
@@ -349,7 +362,9 @@ export const WebhookEventSchema = named(
             ),
           })
           .nullable()
-          .describe("Estado del sobre cuando se armó la entrega (segundos después del evento: puede reflejar cambios posteriores). null en webhook.test."),
+          .describe(
+            "Estado del sobre cuando se armó la entrega (segundos después del evento: puede reflejar cambios posteriores). null en webhook.test.",
+          ),
         recipientId: uuid().nullable().optional().describe("Destinatario que originó el evento (recipient.*). No viene en webhook.test."),
         reason: z.string().nullable().optional().describe("Motivo (rechazo o anulación), si lo hay. No viene en webhook.test."),
       }),
@@ -369,7 +384,7 @@ export const MeSchema = named(
   z.object({
     user: z
       .object({ id: uuid(), email: z.string(), name: z.string(), locale: z.enum(LOCALES) })
-      .describe("Con una API key: id = id de la key, email vacío y name = \"API key: <nombre>\"."),
+      .describe('Con una API key: id = id de la key, email vacío y name = "API key: <nombre>".'),
     tenant: z.object({ id: uuid(), slug: z.string(), name: z.string(), plan: z.string(), defaultLocale: z.enum(LOCALES) }),
   }),
 );
@@ -411,10 +426,7 @@ export const TemplateRoleSchema = named(
   }),
 );
 
-export const TemplateFieldSchema = named(
-  "TemplateField",
-  FieldSchema.omit({ recipientId: true }).extend({ roleId: uuid() }),
-);
+export const TemplateFieldSchema = named("TemplateField", FieldSchema.omit({ recipientId: true }).extend({ roleId: uuid() }));
 
 export const TemplateDetailSchema = named(
   "TemplateDetail",
@@ -423,7 +435,10 @@ export const TemplateDetailSchema = named(
     documents: z.array(DocumentSchema),
     roles: z.array(TemplateRoleSchema),
     fields: z.array(TemplateFieldSchema),
-    canManage: z.boolean().optional().describe("Solo en GET /v1/templates/{id}: si quien consulta puede modificar la plantilla (editar, borrar, compartir)"),
+    canManage: z
+      .boolean()
+      .optional()
+      .describe("Solo en GET /v1/templates/{id}: si quien consulta puede modificar la plantilla (editar, borrar, compartir)"),
   }),
 );
 
@@ -435,7 +450,9 @@ export const BulkValidationResultSchema = named(
     total: z.number().int(),
     valid: z.number().int(),
     invalid: z.number().int(),
-    errors: z.array(z.object({ row: z.number().int().describe("Número de fila de datos (desde 1, sin contar el encabezado)."), errors: z.array(z.string()) })),
+    errors: z.array(
+      z.object({ row: z.number().int().describe("Número de fila de datos (desde 1, sin contar el encabezado)."), errors: z.array(z.string()) }),
+    ),
     columns: z.array(z.string()).describe("Encabezados del CSV (vacío si las filas vinieron en JSON)."),
     duplicates: z
       .array(z.object({ row: z.number().int(), sameAs: z.number().int() }))
@@ -457,7 +474,12 @@ export const BulkSendSchema = named(
     total: z.number().int(),
     sent: z.number().int(),
     failed: z.number().int(),
-    retryable: z.number().int().describe("Fallidas que POST /v1/bulk-sends/{id}/retry-failed volvería a encolar (las que fallaron por sus datos no; 0 si el envío se canceló)."),
+    retryable: z
+      .number()
+      .int()
+      .describe(
+        "Fallidas que POST /v1/bulk-sends/{id}/retry-failed volvería a encolar (las que fallaron por sus datos no; 0 si el envío se canceló).",
+      ),
     cancelled: z.number().int(),
     pending: z.number().int().describe("Pendientes + en proceso."),
     createdAt: iso(),
@@ -478,7 +500,7 @@ export const BulkSendItemSchema = named(
       .string()
       .nullable()
       .describe(
-        "Motivo de la falla (texto, no un código de error HTTP): validación de la fila, cupo del plan, o la plantilla dejó de estar disponible durante el envío (\"La plantilla fue eliminada\" u otro problema al cargarla). Las que no son de datos se reintentan con POST /v1/bulk-sends/{id}/retry-failed.",
+        'Motivo de la falla (texto, no un código de error HTTP): validación de la fila, cupo del plan, o la plantilla dejó de estar disponible durante el envío ("La plantilla fue eliminada" u otro problema al cargarla). Las que no son de datos se reintentan con POST /v1/bulk-sends/{id}/retry-failed.',
       ),
     processedAt: iso().nullable(),
   }),
@@ -508,7 +530,11 @@ export const WebFormSchema = named(
       }),
     ),
     prefill: z.record(z.string(), z.string()),
-    lockPrefill: z.boolean().describe("Los valores prellenados de los campos de quien completa el formulario son de solo lectura (por defecto false: valores sugeridos que se pueden corregir)."),
+    lockPrefill: z
+      .boolean()
+      .describe(
+        "Los valores prellenados de los campos de quien completa el formulario son de solo lectura (por defecto false: valores sugeridos que se pueden corregir).",
+      ),
     active: z.boolean(),
     maxUses: z.number().int().nullable(),
     uses: z.number().int(),
@@ -591,7 +617,9 @@ export const RecipientIdentityDetailSchema = z.object({
   unavailableReason: z
     .string()
     .nullable()
-    .describe("Por qué el proveedor no puede hacer el nivel pedido en este entorno (null si puede). Se resuelve reiniciando con otro nivel o proveedor."),
+    .describe(
+      "Por qué el proveedor no puede hacer el nivel pedido en este entorno (null si puede). Se resuelve reiniciando con otro nivel o proveedor.",
+    ),
   attempts: z.array(
     z.object({
       id: uuid(),
@@ -749,14 +777,25 @@ export const AuditLogEntrySchema = named(
 export const VerifyResponseSchema = named(
   "VerifyResponse",
   z.object({
-    match: z.boolean().describe("true si el archivo es, byte a byte, un PDF final sellado por CalaSign (versión vigente o anterior a una renovación de archivo)."),
+    match: z
+      .boolean()
+      .describe("true si el archivo es, byte a byte, un PDF final sellado por CalaSign (versión vigente o anterior a una renovación de archivo)."),
     sha256: z.string(),
     envelope: z.object({ id: uuid(), subject: z.string(), organizationName: z.string(), completedAt: iso().nullable() }).optional(),
     participants: z.array(z.object({ name: z.string(), role: z.enum(RECIPIENT_ROLES), signedAt: iso().nullable() })).optional(),
     seal: z.object({ format: z.string().nullable(), provider: z.string().nullable(), timestamped: z.boolean() }).optional(),
-    chain: z.object({ ok: z.boolean(), events: z.number().int(), head: z.string() }).optional().describe("Integridad de la cadena de eventos del sobre."),
+    chain: z
+      .object({ ok: z.boolean(), events: z.number().int(), head: z.string() })
+      .optional()
+      .describe("Integridad de la cadena de eventos del sobre."),
     version: z
-      .object({ number: z.number().int(), latest: z.number().int(), isLatest: z.boolean(), reason: z.enum(["completed", "archive_renewal"]), createdAt: iso().nullable() })
+      .object({
+        number: z.number().int(),
+        latest: z.number().int(),
+        isLatest: z.boolean(),
+        reason: z.enum(["completed", "archive_renewal"]),
+        createdAt: iso().nullable(),
+      })
       .optional(),
   }),
 );
@@ -790,7 +829,9 @@ export const ReportsSummarySchema = z.object({
       expired: z.number().int(),
     }),
   ),
-  topSenders: z.array(z.object({ userId: uuid().nullable(), name: z.string(), email: z.string().nullable(), sent: z.number().int(), completed: z.number().int() })),
+  topSenders: z.array(
+    z.object({ userId: uuid().nullable(), name: z.string(), email: z.string().nullable(), sent: z.number().int(), completed: z.number().int() }),
+  ),
   notifications: z.array(z.object({ channel: z.string(), sent: z.number().int(), failed: z.number().int() })),
 });
 

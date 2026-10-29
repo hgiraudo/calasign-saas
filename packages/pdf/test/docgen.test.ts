@@ -7,7 +7,17 @@ describe("renderDocumentPdf", () => {
     const rows = Array.from({ length: 80 }, (_, i) => [[{ text: `Ítem ${i + 1}` }], [{ text: String(i + 1) }], [{ text: `${(i + 1) * 10},00 US$` }]]);
     const blocks: DocBlock[] = [
       { type: "heading", level: 1, runs: [{ text: "Contrato de servicios" }] },
-      { type: "paragraph", runs: [{ text: "Entre " }, { text: "ACME S.A.", b: true }, { text: " y " }, { text: "José Ñandú", i: true }, { br: true }, { text: "Segunda línea." }] },
+      {
+        type: "paragraph",
+        runs: [
+          { text: "Entre " },
+          { text: "ACME S.A.", b: true },
+          { text: " y " },
+          { text: "José Ñandú", i: true },
+          { br: true },
+          { text: "Segunda línea." },
+        ],
+      },
       { type: "list", ordered: true, items: [[{ text: "Primero" }], [{ text: "Segundo" }]] },
       { type: "table", header: [[{ text: "Producto" }], [{ text: "Cant." }], [{ text: "Precio" }]], rows },
       { type: "pagebreak" },
@@ -74,7 +84,9 @@ describe("renderDocumentPdf: listas, encabezados repetidos y leyendas", () => {
 
   it("las marcas de un encabezado de tabla repetido en otras páginas no se registran otra vez", async () => {
     const rows = Array.from({ length: 120 }, (_, i) => [[{ text: `Fila ${i + 1}` }], [{ text: "x" }]]);
-    const { marks, pageCount } = await renderDocumentPdf([{ type: "table", header: [[{ text: "Detalle" }], [{ mark: "initials", role: "Cliente" }]], rows }]);
+    const { marks, pageCount } = await renderDocumentPdf([
+      { type: "table", header: [[{ text: "Detalle" }], [{ mark: "initials", role: "Cliente" }]], rows },
+    ]);
     expect(pageCount).toBeGreaterThan(1);
     expect(marks).toHaveLength(1);
     expect(marks[0].page).toBe(0);

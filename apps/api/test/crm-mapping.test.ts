@@ -1,12 +1,29 @@
 import { describe, expect, it } from "vitest";
 import type { CrmRecord } from "@calasign/shared";
 import { CreateCrmMappingInput } from "@calasign/shared";
-import { MappingError, mapPrefill, mapRecipients, neededProperties, normalizePhone, readProperty, scalarValue, statusForEvidence, statusValue, webhookMatches } from "../src/modules/crm/mapping";
+import {
+  MappingError,
+  mapPrefill,
+  mapRecipients,
+  neededProperties,
+  normalizePhone,
+  readProperty,
+  scalarValue,
+  statusForEvidence,
+  statusValue,
+  webhookMatches,
+} from "../src/modules/crm/mapping";
 
 const deal: CrmRecord = {
   id: "9001",
   objectType: "deal",
-  properties: { dealname: "Renovación 2027", amount: "1500.50", closedate: "2026-12-31", owner_email: "ventas@acme.co", Account: { Name: "ACME S.A.S." } },
+  properties: {
+    dealname: "Renovación 2027",
+    amount: "1500.50",
+    closedate: "2026-12-31",
+    owner_email: "ventas@acme.co",
+    Account: { Name: "ACME S.A.S." },
+  },
   contacts: [
     { id: "1", name: "Ana Pérez", email: "ana@cliente.co", phone: "+57 300 123 4567", role: null, primary: true },
     { id: "2", name: "Luis Gómez", email: null, phone: "3001234567", role: "Garante", primary: false },
@@ -36,18 +53,27 @@ describe("mapeo CRM → plantilla", () => {
 
   it("errores claros cuando falta un contacto o no hay cómo contactarlo", () => {
     expect(() => mapRecipients(deal, [{ role: "Otro", source: "contact", index: 5, channels: ["email"] }])).toThrow(MappingError);
-    expect(() => mapRecipients(deal, [{ role: "Otro", source: "contact_role", contactRole: "Firmante", channels: ["email"] }])).toThrow(/rol "Firmante"/);
+    expect(() => mapRecipients(deal, [{ role: "Otro", source: "contact_role", contactRole: "Firmante", channels: ["email"] }])).toThrow(
+      /rol "Firmante"/,
+    );
     const sinDatos: CrmRecord = { ...deal, contacts: [{ id: "3", name: "X", email: null, phone: null, role: null, primary: false }] };
     expect(() => mapRecipients(sinDatos, [{ role: "C", source: "contact", index: 0, channels: ["email"] }])).toThrow(/no tiene correo ni teléfono/);
   });
 
   it("prellenado desde propiedades, con rutas y omitiendo vacíos", () => {
-    expect(mapPrefill(deal, [
-      { field: "Monto", property: "amount" },
-      { field: "Empresa", property: "Account.Name" },
-      { field: "Vacío", property: "noexiste" },
-    ])).toEqual({ Monto: "1500.50", Empresa: "ACME S.A.S." });
-    expect(neededProperties([{ role: "V", source: "property", nameProperty: "Account.Name", emailProperty: "owner_email", channels: ["email"] }], [{ field: "M", property: "amount" }]).sort()).toEqual(["Account", "amount", "owner_email"]);
+    expect(
+      mapPrefill(deal, [
+        { field: "Monto", property: "amount" },
+        { field: "Empresa", property: "Account.Name" },
+        { field: "Vacío", property: "noexiste" },
+      ]),
+    ).toEqual({ Monto: "1500.50", Empresa: "ACME S.A.S." });
+    expect(
+      neededProperties(
+        [{ role: "V", source: "property", nameProperty: "Account.Name", emailProperty: "owner_email", channels: ["email"] }],
+        [{ field: "M", property: "amount" }],
+      ).sort(),
+    ).toEqual(["Account", "amount", "owner_email"]);
     expect(readProperty(deal.properties, "Account.Name")).toBe("ACME S.A.S.");
   });
 
@@ -70,8 +96,14 @@ describe("mapeo CRM → plantilla", () => {
       objectType: "contact",
       properties: {
         name: "Ana",
-        email: [{ label: "home", value: "ana@casa.co", primary: false }, { label: "work", value: "ana@acme.co", primary: true }],
-        phone: [{ label: "work", value: "+57 300 111 2233" }, { label: "mobile", value: "+57 310 999 0000" }],
+        email: [
+          { label: "home", value: "ana@casa.co", primary: false },
+          { label: "work", value: "ana@acme.co", primary: true },
+        ],
+        phone: [
+          { label: "work", value: "+57 300 111 2233" },
+          { label: "mobile", value: "+57 310 999 0000" },
+        ],
         person_id: { name: "Ana", value: 7, email: [{ value: "", primary: true }, { value: "otra@acme.co" }] },
         emails: [{ email: "rd@acme.com.br" }],
         phones: [{ phone: "+55 11 99999-0000", type: "mobile" }],
@@ -80,7 +112,9 @@ describe("mapeo CRM → plantilla", () => {
       },
       contacts: [],
     };
-    const [r] = mapRecipients(person, [{ role: "Cliente", source: "property", nameProperty: "name", emailProperty: "email", phoneProperty: "phone", channels: ["email"] }] as any);
+    const [r] = mapRecipients(person, [
+      { role: "Cliente", source: "property", nameProperty: "name", emailProperty: "email", phoneProperty: "phone", channels: ["email"] },
+    ] as any);
     expect(r).toMatchObject({ name: "Ana", email: "ana@acme.co", phone: "+573001112233" });
     expect(
       mapPrefill(person, [
@@ -92,7 +126,14 @@ describe("mapeo CRM → plantilla", () => {
         { field: "Tags", property: "tags" },
         { field: "Vacío", property: "empty" },
       ]),
-    ).toEqual({ Correo: "ana@acme.co", Tel: "+57 300 111 2233", "Correo persona": "otra@acme.co", RD: "rd@acme.com.br", RDTel: "+55 11 99999-0000", Tags: "vip, pro" });
+    ).toEqual({
+      Correo: "ana@acme.co",
+      Tel: "+57 300 111 2233",
+      "Correo persona": "otra@acme.co",
+      RD: "rd@acme.com.br",
+      RDTel: "+55 11 99999-0000",
+      Tags: "vip, pro",
+    });
     expect(scalarValue("x")).toBe("x");
     expect(scalarValue([null, ""])).toBeNull();
   });

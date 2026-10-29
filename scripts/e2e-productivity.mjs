@@ -100,7 +100,11 @@ await api("POST", "/v1/settings/branding/logo", evilSvg, { expect: 400 });
 step("branding: color, pie de correo, logo PNG público; SVG con script rechazado");
 
 // ── Plantilla ──
-const { template } = await api("POST", "/v1/templates", { name: `Contrato de servicios ${stamp}`, subject: "Contrato de servicios", message: "Firmá por favor" });
+const { template } = await api("POST", "/v1/templates", {
+  name: `Contrato de servicios ${stamp}`,
+  subject: "Contrato de servicios",
+  message: "Firmá por favor",
+});
 const tfd = new FormData();
 tfd.append("file", new Blob([tinyPdf(2, "Contrato")], { type: "application/pdf" }), "contrato.pdf");
 const tdoc = await api("POST", `/v1/templates/${template.id}/documents`, tfd);
@@ -137,7 +141,10 @@ const tpl = await api("PUT", `/v1/templates/${template.id}/fields`, {
 });
 assert(tpl.fields.length === 10 && tpl.roles.length === 3, "plantilla con 10 campos y 3 roles");
 const { items: tplList } = await api("GET", "/v1/templates");
-assert(tplList.some((t) => t.id === template.id && t.documentCount === 1 && t.roles.length === 3), "listado de plantillas");
+assert(
+  tplList.some((t) => t.id === template.id && t.documentCount === 1 && t.roles.length === 3),
+  "listado de plantillas",
+);
 step("plantilla: documento, 3 roles, 10 campos (validación de desplegable sin opciones)");
 
 // ── Sobre desde plantilla ──
@@ -185,9 +192,24 @@ const attField = await api("POST", `/v1/signing/${t1}/fields/${att.id}/attachmen
 assert(attField.value === "cedula.pdf", "adjunto registrado");
 const vals = (o) => Object.entries(o).map(([l, value]) => ({ id: byLabel(l).id, value }));
 const sig = { kind: "drawn", imagePng: PNG };
-await api("POST", `/v1/signing/${t1}/complete`, { fields: vals({ Monto: "abc", Plan: "Anual", Empresa: "ACME", Cargo: "CEO" }), signature: sig }, { expect: 422 });
-await api("POST", `/v1/signing/${t1}/complete`, { fields: vals({ Monto: "999999", Plan: "Anual", Empresa: "ACME", Cargo: "CEO" }), signature: sig }, { expect: 422 });
-await api("POST", `/v1/signing/${t1}/complete`, { fields: vals({ Monto: "10", Plan: "Semanal", Empresa: "ACME", Cargo: "CEO" }), signature: sig }, { expect: 422 });
+await api(
+  "POST",
+  `/v1/signing/${t1}/complete`,
+  { fields: vals({ Monto: "abc", Plan: "Anual", Empresa: "ACME", Cargo: "CEO" }), signature: sig },
+  { expect: 422 },
+);
+await api(
+  "POST",
+  `/v1/signing/${t1}/complete`,
+  { fields: vals({ Monto: "999999", Plan: "Anual", Empresa: "ACME", Cargo: "CEO" }), signature: sig },
+  { expect: 422 },
+);
+await api(
+  "POST",
+  `/v1/signing/${t1}/complete`,
+  { fields: vals({ Monto: "10", Plan: "Semanal", Empresa: "ACME", Cargo: "CEO" }), signature: sig },
+  { expect: 422 },
+);
 sess = await api("POST", `/v1/signing/${t1}/complete`, {
   fields: vals({ Monto: "1.500,50", Plan: "Anual", Empresa: "ACME Dominicana S.R.L.", Cargo: "Directora", Versión: "manipulado" }),
   signature: sig,
@@ -216,7 +238,17 @@ writeFileSync(out, pdf);
 const pages = Number(/Pages:\s+(\d+)/.exec(execFileSync("pdfinfo", [out], { encoding: "utf8" }))[1]);
 assert(pages >= 4, `2 del contrato + 1 del adjunto + certificado (vino ${pages})`);
 const text = execFileSync("pdftotext", [out, "-"], { encoding: "utf8" });
-for (const s of ["1.500,50", "Anual", "ACME Dominicana S.R.L.", "Directora", "C-001", "Condiciones v3", "Adjunto: cedula.pdf", "Cedula escaneada", "Adjuntos"]) {
+for (const s of [
+  "1.500,50",
+  "Anual",
+  "ACME Dominicana S.R.L.",
+  "Directora",
+  "C-001",
+  "Condiciones v3",
+  "Adjunto: cedula.pdf",
+  "Cedula escaneada",
+  "Adjuntos",
+]) {
   assert(text.includes(s), `el PDF final contiene "${s}"`);
 }
 assert(!text.includes("manipulado"), "el valor de solo lectura no cambió");
@@ -270,9 +302,14 @@ const apRoles = (
 const solicitante = apRoles.find((r) => r.name === "Solicitante");
 const gerencia = apRoles.find((r) => r.name === "Gerencia");
 assert(gerencia.role === "approver", "el rol aprobador se guarda en la plantilla");
-await api("PUT", `/v1/templates/${apTpl.id}/fields`, {
-  fields: [{ documentId: apDoc.id, roleId: gerencia.id, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.25, height: 0.06 }],
-}, { expect: 400 });
+await api(
+  "PUT",
+  `/v1/templates/${apTpl.id}/fields`,
+  {
+    fields: [{ documentId: apDoc.id, roleId: gerencia.id, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.25, height: 0.06 }],
+  },
+  { expect: 400 },
+);
 await api("PUT", `/v1/templates/${apTpl.id}/fields`, {
   fields: [{ documentId: apDoc.id, roleId: solicitante.id, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.25, height: 0.06 }],
 });
@@ -304,7 +341,10 @@ for (let i = 0; i < 60; i++) {
 }
 assert(apDetail.envelope.status === "completed", `sobre con aprobador completado (estado ${apDetail.envelope.status})`);
 const apEvents = (await api("GET", `/v1/envelopes/${apEnv.envelope.id}/events`)).items;
-assert(apEvents.some((e) => e.type === "recipient.approved"), "la evidencia registra la aprobación");
+assert(
+  apEvents.some((e) => e.type === "recipient.approved"),
+  "la evidencia registra la aprobación",
+);
 step("plantilla con aprobador: el solicitante firma, gerencia aprueba sin campos y el sobre se completa");
 
 // ── Condición que cita un campo borrado: se quita, no deja el campo oculto para siempre ──
@@ -325,9 +365,32 @@ const cRecips = [
 await api("PUT", `/v1/envelopes/${cEnv.id}/recipients`, { recipients: cRecips });
 await api("PUT", `/v1/envelopes/${cEnv.id}/fields`, {
   fields: [
-    { id: ctrlId, documentId: cDoc.id, recipientId: rCtrl, type: "checkbox", page: 0, x: 0.1, y: 0.2, width: 0.04, height: 0.03, required: false, label: "Acepta anexo" },
+    {
+      id: ctrlId,
+      documentId: cDoc.id,
+      recipientId: rCtrl,
+      type: "checkbox",
+      page: 0,
+      x: 0.1,
+      y: 0.2,
+      width: 0.04,
+      height: 0.03,
+      required: false,
+      label: "Acepta anexo",
+    },
     { documentId: cDoc.id, recipientId: rCtrl, type: "signature", page: 0, x: 0.1, y: 0.4, width: 0.25, height: 0.06 },
-    { id: firmaId, documentId: cDoc.id, recipientId: rFirma, type: "signature", page: 0, x: 0.5, y: 0.7, width: 0.25, height: 0.06, conditions: [{ fieldId: ctrlId, operator: "checked" }] },
+    {
+      id: firmaId,
+      documentId: cDoc.id,
+      recipientId: rFirma,
+      type: "signature",
+      page: 0,
+      x: 0.5,
+      y: 0.7,
+      width: 0.25,
+      height: 0.06,
+      conditions: [{ fieldId: ctrlId, operator: "checked" }],
+    },
   ],
 });
 // Quien controlaba la condición pasa a copia: su casilla se borra.
@@ -373,8 +436,33 @@ await api("PUT", `/v1/envelopes/${hEnv.id}/recipients`, {
 });
 await api("PUT", `/v1/envelopes/${hEnv.id}/fields`, {
   fields: [
-    { id: noAplicaId, documentId: hDoc.id, recipientId: rH, type: "checkbox", page: 0, x: 0.1, y: 0.2, width: 0.04, height: 0.03, required: false, label: "No aplica" },
-    { id: hAttId, documentId: hDoc.id, recipientId: rH, type: "attachment", page: 0, x: 0.1, y: 0.3, width: 0.4, height: 0.05, required: true, label: "Comprobante", conditions: [{ fieldId: noAplicaId, operator: "unchecked" }] },
+    {
+      id: noAplicaId,
+      documentId: hDoc.id,
+      recipientId: rH,
+      type: "checkbox",
+      page: 0,
+      x: 0.1,
+      y: 0.2,
+      width: 0.04,
+      height: 0.03,
+      required: false,
+      label: "No aplica",
+    },
+    {
+      id: hAttId,
+      documentId: hDoc.id,
+      recipientId: rH,
+      type: "attachment",
+      page: 0,
+      x: 0.1,
+      y: 0.3,
+      width: 0.4,
+      height: 0.05,
+      required: true,
+      label: "Comprobante",
+      conditions: [{ fieldId: noAplicaId, operator: "unchecked" }],
+    },
     { documentId: hDoc.id, recipientId: rH, type: "signature", page: 0, x: 0.1, y: 0.6, width: 0.25, height: 0.06 },
   ],
 });
@@ -385,11 +473,19 @@ const hAfd = new FormData();
 hAfd.append("file", new Blob([tinyPdf(1, "Comprobante privado")], { type: "application/pdf" }), "comprobante.pdf");
 await api("POST", `/v1/signing/${tH}/fields/${hAttId}/attachment`, hAfd);
 // Intento fallido con firma: un campo desconocido lo rechaza dentro de la transacción, con las imágenes ya subidas.
-await api("POST", `/v1/signing/${tH}/complete`, { fields: [{ id: randomUUID(), value: "x" }], signature: { kind: "typed", imagePng: PNG, text: "Firma" } }, { expect: 400 });
+await api(
+  "POST",
+  `/v1/signing/${tH}/complete`,
+  { fields: [{ id: randomUUID(), value: "x" }], signature: { kind: "typed", imagePng: PNG, text: "Firma" } },
+  { expect: 400 },
+);
 const afterFail = countSignatureBlobs(hEnv.id);
 if (afterFail !== null) assert(afterFail === 0, `la firma de un intento fallido no queda guardada (quedaron ${afterFail})`);
 // Marca "No aplica": el adjunto queda oculto.
-await api("POST", `/v1/signing/${tH}/complete`, { fields: [{ id: noAplicaId, value: "true" }], signature: { kind: "typed", imagePng: PNG, text: "Firma" } });
+await api("POST", `/v1/signing/${tH}/complete`, {
+  fields: [{ id: noAplicaId, value: "true" }],
+  signature: { kind: "typed", imagePng: PNG, text: "Firma" },
+});
 if (afterFail !== null) assert(countSignatureBlobs(hEnv.id) === 1, "la firma completada sí queda guardada");
 let hDetail;
 for (let i = 0; i < 60; i++) {
@@ -473,7 +569,19 @@ await api("PUT", `/v1/envelopes/${fEnv.id}/fields`, {
   fields: [
     { id: fMonto, documentId: fDoc.id, recipientId: fA, type: "number", page: 0, x: 0.1, y: 0.2, width: 0.2, height: 0.04, label: "Monto" },
     { documentId: fDoc.id, recipientId: fA, type: "signature", page: 0, x: 0.1, y: 0.3, width: 0.25, height: 0.06 },
-    { id: fTotal, documentId: fDoc.id, recipientId: fB, type: "number", page: 0, x: 0.5, y: 0.2, width: 0.2, height: 0.04, label: "Total", formula: "{Monto} * 2" },
+    {
+      id: fTotal,
+      documentId: fDoc.id,
+      recipientId: fB,
+      type: "number",
+      page: 0,
+      x: 0.5,
+      y: 0.2,
+      width: 0.2,
+      height: 0.04,
+      label: "Total",
+      formula: "{Monto} * 2",
+    },
     { documentId: fDoc.id, recipientId: fB, type: "signature", page: 0, x: 0.5, y: 0.3, width: 0.25, height: 0.06 },
   ],
 });
@@ -483,7 +591,10 @@ await api("PUT", `/v1/envelopes/${fEnv.id}/recipients`, {
 });
 const fSend = await api("POST", `/v1/envelopes/${fEnv.id}/send`, null, { raw: true });
 const fBody = await fSend.json();
-assert(fSend.status === 422 && /Monto/.test(fBody.error?.message ?? ""), `una fórmula que cita un campo borrado frena el envío (HTTP ${fSend.status} ${JSON.stringify(fBody.error ?? {})})`);
+assert(
+  fSend.status === 422 && /Monto/.test(fBody.error?.message ?? ""),
+  `una fórmula que cita un campo borrado frena el envío (HTTP ${fSend.status} ${JSON.stringify(fBody.error ?? {})})`,
+);
 step("una fórmula que cita un campo número que ya no está frena el envío");
 
 console.log("\nE2E PRODUCTIVIDAD OK");

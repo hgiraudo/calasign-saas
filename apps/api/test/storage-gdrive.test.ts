@@ -24,7 +24,8 @@ describe("reintento de exportación a Drive", () => {
 });
 
 describe("carpeta de Drive fijada", () => {
-  const reply = (status: number, body: unknown) => async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const reply = (status: number, body: unknown) => async () =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   it("no sirve si está en la papelera o ya no existe; sí si está viva", async () => {
     const { gdriveFolderUsable } = await import("../src/modules/storage-export");
     const real = globalThis.fetch;

@@ -7,7 +7,6 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { fontCharset } from "./layout";
 
-
 const widthCache = new WeakMap<object, Map<string, number>>();
 /** Ancho de un carácter con esa fuente y tamaño (memoizado). */
 function charWidth(font: { widthOfTextAtSize(t: string, size: number): number }, ch: string, size: number): number {
@@ -92,7 +91,10 @@ interface Line {
   ascent: number;
 }
 
-export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptions = {}): Promise<{ pdf: Uint8Array; marks: DocMarkPosition[]; pageCount: number }> {
+export async function renderDocumentPdf(
+  blocks: DocBlock[],
+  opts: RenderDocOptions = {},
+): Promise<{ pdf: Uint8Array; marks: DocMarkPosition[]; pageCount: number }> {
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
   fontBytes ??= {
@@ -217,7 +219,12 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
    * `repeat`: encabezado de tabla repetido en otra página. Sus marcas no se dibujan ni se registran: si no, cada página
    * de la tabla agregaba otro campo de firma del mismo rol (el firmante tenía que firmar N veces lo mismo).
    */
-  function drawLines(lines: Line[], x0: number, width: number, opts2: { align?: "left" | "center"; color?: ReturnType<typeof rgb>; paginate?: boolean; repeat?: boolean } = {}) {
+  function drawLines(
+    lines: Line[],
+    x0: number,
+    width: number,
+    opts2: { align?: "left" | "center"; color?: ReturnType<typeof rgb>; paginate?: boolean; repeat?: boolean } = {},
+  ) {
     for (const line of lines) {
       if (opts2.paginate !== false) ensure(line.height);
       const lineW = line.items.length ? line.items[line.items.length - 1].x + itemW(line.items[line.items.length - 1].item) : 0;
@@ -226,7 +233,8 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
       const markLine = line.items.some((p) => p.item.k === "mark");
       const baseline = markLine ? top - (line.height - CAPTION - 4) : top - line.ascent - (line.height - line.ascent * 1.2) / 2;
       for (const { item, x } of line.items) {
-        if (item.k === "word") page.drawText(item.text, { x: x0 + off + x, y: baseline, size: item.size, font: item.font, color: opts2.color ?? INK });
+        if (item.k === "word")
+          page.drawText(item.text, { x: x0 + off + x, y: baseline, size: item.size, font: item.font, color: opts2.color ?? INK });
         else if (item.k === "mark" && !opts2.repeat) {
           const bx = x0 + off + x;
           const by = baseline; // borde inferior del espacio de firma
@@ -291,10 +299,7 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
     const size = BASE - 1;
     const allRows = [...(block.header ? [block.header] : []), ...block.rows];
     const natural = Array.from({ length: cols }, (_, c) =>
-      Math.max(
-        24,
-        ...allRows.map((r) => Math.min(260, toItems(r[c] ?? [], size, r === block.header).reduce((a, it) => a + itemW(it), 0) + pad * 2)),
-      ),
+      Math.max(24, ...allRows.map((r) => Math.min(260, toItems(r[c] ?? [], size, r === block.header).reduce((a, it) => a + itemW(it), 0) + pad * 2))),
     );
     const total = natural.reduce((a, b) => a + b, 0);
     const widths = natural.map((n) => (n / total) * contentW);

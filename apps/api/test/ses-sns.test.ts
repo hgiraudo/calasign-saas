@@ -45,7 +45,7 @@ const notification = (message: object): Msg => ({
   Timestamp: new Date().toISOString(),
 });
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let tenant: string;
 const fetchCert = vi.fn(async () => PEM);
@@ -76,7 +76,10 @@ describe("SNS: verificación", () => {
     const signed = await sign(base);
     expect((await verifySnsMessage({ ...signed, Message: "{}" }, deps())).ok).toBe(false);
     // Tema que no está en la lista blanca (aunque la firma sea válida).
-    expect(await verifySnsMessage(await sign({ ...base, TopicArn: "arn:aws:sns:us-east-1:123456789012:otro" }), deps())).toEqual({ ok: false, reason: "topic_not_allowed" });
+    expect(await verifySnsMessage(await sign({ ...base, TopicArn: "arn:aws:sns:us-east-1:123456789012:otro" }), deps())).toEqual({
+      ok: false,
+      reason: "topic_not_allowed",
+    });
     // Certificado fuera de sns.<región>.amazonaws.com, o de otra región que la del tema.
     for (const url of [
       "https://evil.example.com/cert.pem",
@@ -154,15 +157,27 @@ describe("SES: rebotes y quejas", () => {
     const bounce = {
       notificationType: "Bounce",
       mail: { messageId: "ses-1", destination: ["Rebote@X.com"] },
-      bounce: { bounceType: "Permanent", bounceSubType: "General", bouncedRecipients: [{ emailAddress: "Rebote@X.com", diagnosticCode: "smtp; 550 5.1.1 user unknown" }] },
+      bounce: {
+        bounceType: "Permanent",
+        bounceSubType: "General",
+        bouncedRecipients: [{ emailAddress: "Rebote@X.com", diagnosticCode: "smtp; 550 5.1.1 user unknown" }],
+      },
     };
     expect(await handleSnsMessage(db, await sign(notification(bounce)), deps())).toEqual({ status: 200, result: "bounce_permanent" });
     // SNS puede entregar dos veces: sin duplicar eventos.
     await handleSnsMessage(db, await sign(notification(bounce)), deps());
-    const complaint = { eventType: "Complaint", mail: { messageId: "ses-2" }, complaint: { complainedRecipients: [{ emailAddress: "queja@x.com" }], complaintFeedbackType: "abuse" } };
+    const complaint = {
+      eventType: "Complaint",
+      mail: { messageId: "ses-2" },
+      complaint: { complainedRecipients: [{ emailAddress: "queja@x.com" }], complaintFeedbackType: "abuse" },
+    };
     expect((await handleSnsMessage(db, await sign(notification(complaint)), deps())).result).toBe("complaint");
     // Rebote transitorio: no suprime.
-    const transient = { notificationType: "Bounce", mail: { messageId: "ses-3" }, bounce: { bounceType: "Transient", bouncedRecipients: [{ emailAddress: "lleno@x.com" }] } };
+    const transient = {
+      notificationType: "Bounce",
+      mail: { messageId: "ses-3" },
+      bounce: { bounceType: "Transient", bouncedRecipients: [{ emailAddress: "lleno@x.com" }] },
+    };
     expect((await handleSnsMessage(db, await sign(notification(transient)), deps())).result).toBe("bounce_transient");
 
     const sup = await db.query<any>(
@@ -197,7 +212,11 @@ describe("SES: rebotes y quejas", () => {
     expect(await clearBounceSuppression(db, "Rebote@X.com")).toBe(true);
     expect(await clearBounceSuppression(db, "queja@x.com")).toBe(false);
     // Queja sin aviso asociado (no se sabe de qué organización): no suprime.
-    const orphan = { eventType: "Complaint", mail: { messageId: "ses-nadie" }, complaint: { complainedRecipients: [{ emailAddress: "huerfana@x.com" }] } };
+    const orphan = {
+      eventType: "Complaint",
+      mail: { messageId: "ses-nadie" },
+      complaint: { complainedRecipients: [{ emailAddress: "huerfana@x.com" }] },
+    };
     await handleSnsMessage(db, await sign(notification(orphan)), deps());
     expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'huerfana@x.com'`)).toBeFalsy();
   });
@@ -210,8 +229,15 @@ describe("SES: rebotes y quejas", () => {
       mail: { messageId: `ses-${uuidv7()}`, ...(tags ? { tags } : {}) },
       complaint: { complainedRecipients: [{ emailAddress: to }] },
     });
-    await handleSnsMessage(db, await sign(notification(complaint("Etiqueta@x.com", { tenant: [tenant.toUpperCase()], "ses:configuration-set": ["cs"] }))), deps());
-    expect(await db.one<any>(`SELECT tenant_id, reason FROM email_suppressions WHERE address = 'etiqueta@x.com'`)).toEqual({ tenant_id: tenant, reason: "complaint" });
+    await handleSnsMessage(
+      db,
+      await sign(notification(complaint("Etiqueta@x.com", { tenant: [tenant.toUpperCase()], "ses:configuration-set": ["cs"] }))),
+      deps(),
+    );
+    expect(await db.one<any>(`SELECT tenant_id, reason FROM email_suppressions WHERE address = 'etiqueta@x.com'`)).toEqual({
+      tenant_id: tenant,
+      reason: "complaint",
+    });
     // Etiqueta de una organización que no existe o inválida: no suprime (y no falla).
     await handleSnsMessage(db, await sign(notification(complaint("fantasma@x.com", { tenant: [uuidv7()] }))), deps());
     await handleSnsMessage(db, await sign(notification(complaint("rara@x.com", { tenant: ["no-es-uuid"] }))), deps());

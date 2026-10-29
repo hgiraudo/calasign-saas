@@ -77,7 +77,10 @@ await relog("GET", "/v1/me");
 step("la contraseña vieja ya no entra; la nueva sí");
 
 const audit = await relog("GET", "/v1/audit-log?action=user.password_reset");
-assert((audit.items ?? []).some((x) => x.action === "user.password_reset"), "auditoría del cambio de contraseña");
+assert(
+  (audit.items ?? []).some((x) => x.action === "user.password_reset"),
+  "auditoría del cambio de contraseña",
+);
 step("queda en la auditoría de la cuenta");
 
 // Un pedido nuevo invalida el link anterior que no se usó.
@@ -102,7 +105,12 @@ step("retry-finalize rechaza sobres que no están en finalización (409)");
 // Bloqueo por cuenta: 10 intentos fallidos (desde cualquier IP) bloquean 15 minutos, aun con la contraseña correcta;
 // restablecer la contraseña desbloquea.
 const lockEmail = `lock+${stamp}@example.com`;
-await client()("POST", "/v1/auth/signup", { name: "Lucía Bloqueo", email: lockEmail, password: "clave-correcta-123", organization: `Bloqueo ${stamp}` });
+await client()("POST", "/v1/auth/signup", {
+  name: "Lucía Bloqueo",
+  email: lockEmail,
+  password: "clave-correcta-123",
+  organization: `Bloqueo ${stamp}`,
+});
 const atk = client();
 for (let i = 0; i < 10; i++) await atk("POST", "/v1/auth/login", { email: lockEmail, password: `incorrecta-${i}` }, { expect: 401 });
 await sleep(500); // la auditoría del intento fallido se registra al responder
@@ -122,16 +130,33 @@ step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correc
   const u = client();
   await u("POST", "/v1/auth/signup", { name: "Olga OAuth", email: oEmail, password: "clave-robada-12345", organization: `OAuth clave ${stamp}` });
   const REDIRECT = "http://localhost:5998/callback";
-  const app = await u("POST", "/v1/oauth/apps", { name: "App propia", grantTypes: ["authorization_code"], redirectUris: [REDIRECT], scopes: ["envelopes:read", "offline_access"], role: "member" });
+  const app = await u("POST", "/v1/oauth/apps", {
+    name: "App propia",
+    grantTypes: ["authorization_code"],
+    redirectUris: [REDIRECT],
+    scopes: ["envelopes:read", "offline_access"],
+    role: "member",
+  });
   const verifier = Buffer.from(randomBytes(48)).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const params = { response_type: "code", client_id: app.app.clientId, redirect_uri: REDIRECT, scope: "envelopes:read offline_access", state: "s", code_challenge: challenge, code_challenge_method: "S256" };
+  const params = {
+    response_type: "code",
+    client_id: app.app.clientId,
+    redirect_uri: REDIRECT,
+    scope: "envelopes:read offline_access",
+    state: "s",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  };
   const dec = await u("POST", "/v1/oauth/authorize/decision", { ...params, approve: true });
   const code = new URL(dec.redirectTo).searchParams.get("code");
   const tokenPost = async (body) => {
     const res = await fetch(BASE + "/oauth/token", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from(`${app.app.clientId}:${app.clientSecret}`).toString("base64")}` },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: `Basic ${Buffer.from(`${app.app.clientId}:${app.clientSecret}`).toString("base64")}`,
+      },
       body: new URLSearchParams(body),
     });
     return { status: res.status, body: await res.json() };

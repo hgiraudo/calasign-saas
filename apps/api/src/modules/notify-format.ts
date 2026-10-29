@@ -84,7 +84,9 @@ export function slackPayload(m: Message) {
     text: parts.filter(Boolean).join(" — "),
     blocks: [
       { type: "section", text: { type: "mrkdwn", text: [`*${parts[0]}*`, parts[1], parts[2]].filter(Boolean).join("\n") } },
-      ...(m.link ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: m.linkLabel ?? "Abrir" }, url: m.link }] }] : []),
+      ...(m.link
+        ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: m.linkLabel ?? "Abrir" }, url: m.link }] }]
+        : []),
     ],
   };
 }
@@ -121,7 +123,11 @@ export function teamsPayload(m: Message) {
 /** Discord: un embed con color por evento y el título linkeado al sobre. */
 export function discordPayload(m: Message) {
   const c = clipped(m);
-  const desc = [c.subject ? `**${discordEscape(c.subject)}**` : null, c.detail ? discordEscape(c.detail) : null, m.link ? `[${discordEscape(m.linkLabel ?? "Abrir")}](${m.link})` : null]
+  const desc = [
+    c.subject ? `**${discordEscape(c.subject)}**` : null,
+    c.detail ? discordEscape(c.detail) : null,
+    m.link ? `[${discordEscape(m.linkLabel ?? "Abrir")}](${m.link})` : null,
+  ]
     .filter(Boolean)
     .join("\n");
   return {
@@ -181,7 +187,12 @@ export function slackCompatPayload(m: Message) {
 /** Webex (app "Incoming Webhooks"): un mensaje en markdown. */
 export function webexPayload(m: Message) {
   const c = clipped(m);
-  const lines = [`**${m.title}**`, c.subject ? webexEscape(c.subject) : null, c.detail ? `_${webexEscape(c.detail)}_` : null, m.link ? `[${webexEscape(m.linkLabel ?? "Abrir")}](${m.link})` : null];
+  const lines = [
+    `**${m.title}**`,
+    c.subject ? webexEscape(c.subject) : null,
+    c.detail ? `_${webexEscape(c.detail)}_` : null,
+    m.link ? `[${webexEscape(m.linkLabel ?? "Abrir")}](${m.link})` : null,
+  ];
   return { markdown: lines.filter(Boolean).join("  \n") };
 }
 

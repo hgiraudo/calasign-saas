@@ -38,7 +38,17 @@ interface FixedDraft {
   email: string;
 }
 
-function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: WebForm | null; initialTemplateId?: string; onClose: () => void; onSaved: (f: WebForm) => void }) {
+function WebFormEditor({
+  form,
+  initialTemplateId,
+  onClose,
+  onSaved,
+}: {
+  form: WebForm | null;
+  initialTemplateId?: string;
+  onClose: () => void;
+  onSaved: (f: WebForm) => void;
+}) {
   const st = useScaleText();
   const { t } = useI18n();
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
@@ -197,10 +207,10 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
               <span>{st("forms.signerRole")}</span>
               <select value={signerRoleId} onChange={(e) => setSignerRoleId(e.target.value)}>
                 {formSignerRoles(tpl.roles).map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
               </select>
             </label>
             {otherRoles.length > 0 && (
@@ -213,11 +223,20 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
                       <span>
                         {r.name} — {t("field.name")}
                       </span>
-                      <input required value={fixed[r.id]?.name ?? ""} onChange={(e) => setFixed((x) => ({ ...x, [r.id]: { ...(x[r.id] ?? { email: "" }), name: e.target.value } }))} />
+                      <input
+                        required
+                        value={fixed[r.id]?.name ?? ""}
+                        onChange={(e) => setFixed((x) => ({ ...x, [r.id]: { ...(x[r.id] ?? { email: "" }), name: e.target.value } }))}
+                      />
                     </label>
                     <label className="field">
                       <span>Email</span>
-                      <input required={fixedChannels(r.id).includes("email")} type="email" value={fixed[r.id]?.email ?? ""} onChange={(e) => setFixed((x) => ({ ...x, [r.id]: { ...(x[r.id] ?? { name: "" }), email: e.target.value } }))} />
+                      <input
+                        required={fixedChannels(r.id).includes("email")}
+                        type="email"
+                        value={fixed[r.id]?.email ?? ""}
+                        onChange={(e) => setFixed((x) => ({ ...x, [r.id]: { ...(x[r.id] ?? { name: "" }), email: e.target.value } }))}
+                      />
                     </label>
                   </div>
                 ))}

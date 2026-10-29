@@ -19,11 +19,14 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "In this organization, sign in with single sign-on (SSO) or reset your password.",
   },
   password_reset_required: {
-    "pt-BR": "Para entrar com senha, redefina-a em \"Esqueci minha senha\".",
-    en: "To sign in with a password, reset it from \"Forgot password\".",
+    "pt-BR": 'Para entrar com senha, redefina-a em "Esqueci minha senha".',
+    en: 'To sign in with a password, reset it from "Forgot password".',
   },
   session_required: { "pt-BR": "Esta operação exige entrar pela web.", en: "This operation requires signing in on the web." },
-  insufficient_scope: { "pt-BR": "O token não tem permissão (scope) para esta operação.", en: "The token doesn't have the scope for this operation." },
+  insufficient_scope: {
+    "pt-BR": "O token não tem permissão (scope) para esta operação.",
+    en: "The token doesn't have the scope for this operation.",
+  },
   use_platform_host: {
     "pt-BR": "Não é possível entrar a partir de um domínio próprio: use o endereço principal do serviço.",
     en: "You can't sign in from a custom domain: use the service's main address.",
@@ -31,7 +34,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   wrong_cell: { "pt-BR": "Os dados desta organização estão em outra região.", en: "This organization's data is in another region." },
   cell_unavailable: { "pt-BR": "Essa região ainda não está disponível.", en: "That region isn't available yet." },
   bad_origin: { "pt-BR": "Origem não permitida.", en: "Origin not allowed." },
-  shutting_down: { "pt-BR": "O servidor está reiniciando: tente novamente em alguns segundos.", en: "The server is restarting: try again in a few seconds." },
+  shutting_down: {
+    "pt-BR": "O servidor está reiniciando: tente novamente em alguns segundos.",
+    en: "The server is restarting: try again in a few seconds.",
+  },
   conflict: {
     "pt-BR": "O recurso já existe ou mudou ao mesmo tempo: tente novamente.",
     en: "The resource already exists or changed at the same time: try again.",
@@ -45,7 +51,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   invalid_json: { "pt-BR": "Os dados enviados não são JSON válido.", en: "The data sent isn't valid JSON." },
   invalid_meta: { "pt-BR": "O campo 'meta' não é JSON válido.", en: "The 'meta' field isn't valid JSON." },
   invalid_version: { "pt-BR": "Versão inválida.", en: "Invalid version." },
-  invalid_url: { "pt-BR": "URL inválida (deve ser https e não pode ser um endereço local).", en: "Invalid URL (it must be https and not a local address)." },
+  invalid_url: {
+    "pt-BR": "URL inválida (deve ser https e não pode ser um endereço local).",
+    en: "Invalid URL (it must be https and not a local address).",
+  },
   invalid_origin: { "pt-BR": "Só são aceitas origens https.", en: "Only https origins are allowed." },
   invalid_event: { "pt-BR": "Evento desconhecido.", en: "Unknown event." },
   no_changes: { "pt-BR": "Não há alterações para aplicar.", en: "There are no changes to apply." },
@@ -59,7 +68,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
 
   // ── SSO ──
   sso_disabled: { "pt-BR": "Para exigir SSO, primeiro é preciso habilitá-lo.", en: "To require SSO, enable it first." },
-  oidc_config_required: { "pt-BR": "Falta a configuração OIDC (issuer e client id).", en: "The OIDC configuration (issuer and client ID) is missing." },
+  oidc_config_required: {
+    "pt-BR": "Falta a configuração OIDC (issuer e client id).",
+    en: "The OIDC configuration (issuer and client ID) is missing.",
+  },
   invalid_issuer: { "pt-BR": "O issuer deve ser https.", en: "The issuer must be https." },
   invalid_entry_point: { "pt-BR": "A URL de login do IdP deve ser https.", en: "The IdP sign-in URL must be https." },
   sso_assertion_replay: { "pt-BR": "Esta resposta SAML já foi usada: entre novamente.", en: "This SAML response was already used: sign in again." },
@@ -115,7 +127,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "A marca da organização usa Configurações → Domínio próprio.",
     en: "The organization's brand uses Settings → Custom domain.",
   },
-  domain_taken: { "pt-BR": "Esse domínio já está registrado por outra organização.", en: "That domain is already registered by another organization." },
+  domain_taken: {
+    "pt-BR": "Esse domínio já está registrado por outra organização.",
+    en: "That domain is already registered by another organization.",
+  },
   reserved_domain: { "pt-BR": "Esse domínio não pode ser usado.", en: "That domain can't be used." },
   email_domain_required: {
     "pt-BR": "Adicione e verifique o domínio de e-mail antes de usá-lo como remetente.",
@@ -133,7 +148,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Quem conectou esta conta não faz mais parte da organização: conecte o armazenamento novamente.",
     en: "The person who connected this account is no longer part of the organization: connect the storage again.",
   },
-  too_many_integrations: { "pt-BR": "Máximo de 20 integrações de avisos por organização.", en: "At most 20 notification integrations per organization." },
+  too_many_integrations: {
+    "pt-BR": "Máximo de 20 integrações de avisos por organização.",
+    en: "At most 20 notification integrations per organization.",
+  },
   site_required: { "pt-BR": "Informe a URL do site do SharePoint.", en: "Enter the SharePoint site URL." },
   storage_test_failed: {
     "pt-BR": "Não foi possível gravar no bucket: revise as credenciais e permissões.",
@@ -150,14 +168,18 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The verification code template must include {{code}}.",
   },
   byok_key_unavailable: {
-    "pt-BR": "A chave de criptografia da sua organização (BYOK) não está disponível: não é possível salvar nem ler documentos até restabelecer o acesso.",
+    "pt-BR":
+      "A chave de criptografia da sua organização (BYOK) não está disponível: não é possível salvar nem ler documentos até restabelecer o acesso.",
     en: "Your organization's encryption key (BYOK) isn't available: documents can't be saved or read until access is restored.",
   },
   byok_not_configured: { "pt-BR": "Não há uma chave configurada.", en: "No key is configured." },
 
   // ── CRM ──
   crm_connection_inactive: { "pt-BR": "A conexão está desativada.", en: "The connection is deactivated." },
-  crm_invalid_record: { "pt-BR": "O registro tem dados que não servem para o envelope.", en: "The record has data that can't be used for the envelope." },
+  crm_invalid_record: {
+    "pt-BR": "O registro tem dados que não servem para o envelope.",
+    en: "The record has data that can't be used for the envelope.",
+  },
   crm_link_exists: {
     "pt-BR": "O envelope já está vinculado a um registro desta conexão.",
     en: "The envelope is already linked to a record from this connection.",
@@ -185,7 +207,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "A assinatura só pode ser alterada pelo console, com uma sessão de usuário.",
     en: "The subscription can only be changed from the console, with a user session.",
   },
-  email_required: { "pt-BR": "O Mercado Pago precisa do e-mail de um usuário para a assinatura.", en: "Mercado Pago needs a user's email for the subscription." },
+  email_required: {
+    "pt-BR": "O Mercado Pago precisa do e-mail de um usuário para a assinatura.",
+    en: "Mercado Pago needs a user's email for the subscription.",
+  },
   invalid_plan: { "pt-BR": "Esse plano não tem preço nessa moeda.", en: "That plan has no price in that currency." },
   portal_not_available: {
     "pt-BR": "O portal de faturamento está disponível para assinaturas do Stripe.",
@@ -226,8 +251,14 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   },
 
   // ── Envío de sobres (consola y API) ──
-  anchor_not_found: { "pt-BR": "O texto âncora de um campo não foi encontrado no documento.", en: "A field's anchor text wasn't found in the document." },
-  pdf_reader_busy: { "pt-BR": "O leitor de PDF está ocupado: tente novamente em alguns segundos.", en: "The PDF reader is busy: try again in a few seconds." },
+  anchor_not_found: {
+    "pt-BR": "O texto âncora de um campo não foi encontrado no documento.",
+    en: "A field's anchor text wasn't found in the document.",
+  },
+  pdf_reader_busy: {
+    "pt-BR": "O leitor de PDF está ocupado: tente novamente em alguns segundos.",
+    en: "The PDF reader is busy: try again in a few seconds.",
+  },
   unreadable_pdf: { "pt-BR": "Não foi possível ler o PDF.", en: "Couldn't read the PDF." },
   unsupported_format: {
     "pt-BR": "Envie um PDF: a conversão de documentos do Word não está disponível.",
@@ -277,7 +308,8 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "This signer is verified with a code: enter the person's email or phone.",
   },
   delegation_requires_id_match: {
-    "pt-BR": "Este signatário precisa assinar com um certificado que corresponda ao documento de identidade: para delegar, informe o número do documento da pessoa.",
+    "pt-BR":
+      "Este signatário precisa assinar com um certificado que corresponda ao documento de identidade: para delegar, informe o número do documento da pessoa.",
     en: "This signer must sign with a certificate matching their ID document: to delegate, enter the person's document number.",
   },
   not_editable: { "pt-BR": "O envelope não pode mais ser editado.", en: "The envelope can no longer be edited." },
@@ -323,12 +355,24 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "O envelope atingiu o máximo de renovações do selo de arquivo.",
     en: "The envelope has reached the maximum number of archive timestamp renewals.",
   },
-  not_timestamped: { "pt-BR": "O PDF não tem carimbo de tempo: não há selo de arquivo para renovar.", en: "The PDF has no timestamp: there's no archive to renew." },
-  tsa_not_configured: { "pt-BR": "Não há TSA configurada para renovar o selo de arquivo.", en: "No TSA is configured to renew the archive timestamp." },
+  not_timestamped: {
+    "pt-BR": "O PDF não tem carimbo de tempo: não há selo de arquivo para renovar.",
+    en: "The PDF has no timestamp: there's no archive to renew.",
+  },
+  tsa_not_configured: {
+    "pt-BR": "Não há TSA configurada para renovar o selo de arquivo.",
+    en: "No TSA is configured to renew the archive timestamp.",
+  },
 
   // ── Firmante: código, identidad, certificado, en persona ──
-  code_expired: { "pt-BR": "O código expirou: gere um novo a partir do link de assinatura.", en: "The code expired: generate a new one from the signing link." },
-  code_failed: { "pt-BR": "O código ficou inválido: gere um novo a partir do link de assinatura.", en: "The code is no longer valid: generate a new one from the signing link." },
+  code_expired: {
+    "pt-BR": "O código expirou: gere um novo a partir do link de assinatura.",
+    en: "The code expired: generate a new one from the signing link.",
+  },
+  code_failed: {
+    "pt-BR": "O código ficou inválido: gere um novo a partir do link de assinatura.",
+    en: "The code is no longer valid: generate a new one from the signing link.",
+  },
   code_used: { "pt-BR": "Este código já foi usado ou não é mais válido.", en: "This code was already used or is no longer valid." },
   otp_no_destination: { "pt-BR": "Não há para onde enviar o código.", en: "There's nowhere to send the code." },
   otp_not_required: { "pt-BR": "Este link não exige código.", en: "This link doesn't require a code." },
@@ -368,7 +412,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   not_ready: { "pt-BR": "Ainda não é hora de assinar com certificado.", en: "It's not time to sign with a certificate yet." },
   not_prepared: { "pt-BR": "Primeiro é preciso enviar o certificado.", en: "The certificate must be sent first." },
   certificate_expired: { "pt-BR": "O certificado está vencido.", en: "The certificate has expired." },
-  certificate_rejected: { "pt-BR": "O certificado não atende aos requisitos desta assinatura.", en: "The certificate doesn't meet this signature's requirements." },
+  certificate_rejected: {
+    "pt-BR": "O certificado não atende aos requisitos desta assinatura.",
+    en: "The certificate doesn't meet this signature's requirements.",
+  },
   certificate_unsupported: { "pt-BR": "Este certificado não é suportado.", en: "This certificate isn't supported." },
   certificate_usage: { "pt-BR": "O certificado não está habilitado para este uso.", en: "The certificate isn't enabled for this use." },
   invalid_certificate: { "pt-BR": "O certificado está faltando ou não pode ser lido.", en: "The certificate is missing or unreadable." },
@@ -398,8 +445,14 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Não foi possível verificar que você não é um robô: conclua a verificação e envie novamente.",
     en: "Couldn't verify that you're not a robot: complete the check and submit again.",
   },
-  invalid_form: { "pt-BR": "O modelo não fica completo com esta configuração do formulário.", en: "The template isn't complete with this form configuration." },
-  invalid_form_token: { "pt-BR": "O formulário expirou: envie novamente em alguns segundos.", en: "The form expired: submit it again in a few seconds." },
+  invalid_form: {
+    "pt-BR": "O modelo não fica completo com esta configuração do formulário.",
+    en: "The template isn't complete with this form configuration.",
+  },
+  invalid_form_token: {
+    "pt-BR": "O formulário expirou: envie novamente em alguns segundos.",
+    en: "The form expired: submit it again in a few seconds.",
+  },
   too_fast: { "pt-BR": "Aguarde alguns segundos e envie novamente.", en: "Wait a few seconds and submit again." },
   phone_required: { "pt-BR": "O telefone é obrigatório.", en: "The phone number is required." },
   rejected: { "pt-BR": "Não foi possível processar o pedido.", en: "Couldn't process the request." },
@@ -460,15 +513,18 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "Mercado Pago only charges in its account's currency: choose that currency or another provider.",
   },
   identity_level_not_supported: {
-    "pt-BR": "A verificação de identidade não pode ser concluída com a configuração atual do provedor: escolha outro nível ou provedor (ou corrija a configuração) e reinicie-a.",
+    "pt-BR":
+      "A verificação de identidade não pode ser concluída com a configuração atual do provedor: escolha outro nível ou provedor (ou corrija a configuração) e reinicie-a.",
     en: "The identity verification can't be completed with the provider's current setup: choose another level or provider (or fix the setup) and restart it.",
   },
   payment_webhook_not_configured: {
-    "pt-BR": "O provedor de cobrança não tem o segredo do webhook configurado neste ambiente e o pagamento não poderia ser confirmado: remova a cobrança do envelope ou escolha outro provedor.",
+    "pt-BR":
+      "O provedor de cobrança não tem o segredo do webhook configurado neste ambiente e o pagamento não poderia ser confirmado: remova a cobrança do envelope ou escolha outro provedor.",
     en: "The payment provider has no webhook secret configured in this environment, so the payment couldn't be confirmed: remove the payment from the envelope or choose another provider.",
   },
   metadata_changed: {
-    "pt-BR": "Os metadados do contrato mudaram enquanto eram extraídos (alguém os editou ou extraiu de novo): revise-os e, se necessário, extraia-os novamente.",
+    "pt-BR":
+      "Os metadados do contrato mudaram enquanto eram extraídos (alguém os editou ou extraiu de novo): revise-os e, se necessário, extraia-os novamente.",
     en: "The contract metadata changed while it was being extracted (someone edited it or extracted it again): review it and, if needed, extract it again.",
   },
   reauth_required: {

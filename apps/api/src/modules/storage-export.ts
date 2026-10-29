@@ -171,7 +171,11 @@ export async function revokeProviderToken(p: StorageProvider, creds: Partial<OAu
         if (!creds.refresh_token) return { ok: true, skipped: true };
         token = (await freshToken("dropbox", { access_token: "", refresh_token: creds.refresh_token, expires_at: 0 })).token;
       }
-      const res = await fetch(DROPBOX_REVOKE(), { method: "POST", headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+      const res = await fetch(DROPBOX_REVOKE(), {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
       return res.ok || res.status === 401 ? { ok: true } : { ok: false, error: `HTTP ${res.status}` };
     }
     // Box
@@ -284,7 +288,10 @@ async function accountLabel(p: OAuthProvider, tokenBody: any): Promise<string | 
       return me?.mail ?? me?.userPrincipalName ?? null;
     }
     if (p === "box") {
-      const r = await fetch(`${BOX_API()}/2.0/users/me?fields=login,name`, { headers: { authorization: `Bearer ${tokenBody.access_token}` }, signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(`${BOX_API()}/2.0/users/me?fields=login,name`, {
+        headers: { authorization: `Bearer ${tokenBody.access_token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
       return ((await r.json()) as any)?.login ?? null;
     }
   } catch {
@@ -340,7 +347,10 @@ async function check(res: Response, what: string) {
  */
 export function gdriveFolderQuery(folder: string, parentId?: string | null): string {
   const lit = (v: string) => v.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-  return `name = '${lit(folder)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false` + (parentId ? ` and '${lit(parentId)}' in parents` : "");
+  return (
+    `name = '${lit(folder)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false` +
+    (parentId ? ` and '${lit(parentId)}' in parents` : "")
+  );
 }
 
 /**
@@ -349,7 +359,8 @@ export function gdriveFolderQuery(folder: string, parentId?: string | null): str
  * tienen que incluir los elementos de las unidades compartidas.
  */
 const DRIVE_ALL = "supportsAllDrives=true";
-const driveListAll = (parentId: string | null | undefined) => (parentId ? `${DRIVE_ALL}&includeItemsFromAllDrives=true&corpora=allDrives` : DRIVE_ALL);
+const driveListAll = (parentId: string | null | undefined) =>
+  parentId ? `${DRIVE_ALL}&includeItemsFromAllDrives=true&corpora=allDrives` : DRIVE_ALL;
 
 const GDRIVE_FOLDER_UNAVAILABLE =
   "la carpeta de Drive indicada no existe o la app no tiene acceso: usá una ruta (Contratos/2026) o el id de una carpeta creada por la app";
@@ -375,7 +386,10 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
   const fromUrl = isUrl ? (/\/folders\/([A-Za-z0-9_-]{10,})/.exec(raw)?.[1] ?? null) : null;
   const id = fromUrl ?? (looksLikeGdriveId(raw) ? raw : null);
   if (id) {
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,mimeType,trashed&${DRIVE_ALL}`, { headers: auth, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,mimeType,trashed&${DRIVE_ALL}`, {
+      headers: auth,
+      signal: AbortSignal.timeout(15_000),
+    });
     if (res.ok) {
       const f: any = await res.json().catch(() => ({}));
       if (f?.id && f.mimeType === "application/vnd.google-apps.folder" && f.trashed !== true) return String(f.id);
@@ -386,7 +400,10 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
   // Una URL que no lleva a una carpeta que la app vea: no se arma una ruta con sus pedazos. Un id suelto que la app no
   // ve sigue como nombre de carpeta.
   if (isUrl) throw new Error(GDRIVE_FOLDER_UNAVAILABLE);
-  const segments = raw.split("/").map((x) => x.trim()).filter(Boolean);
+  const segments = raw
+    .split("/")
+    .map((x) => x.trim())
+    .filter(Boolean);
   let parent: string | null = null;
   for (const seg of segments.length ? segments : [raw]) {
     // Con timeout: corre con la fila de la conexión bloqueada, y sin él undici espera hasta 5 min a un Drive colgado,
@@ -394,7 +411,10 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
     const q = gdriveFolderQuery(seg, parent);
     const found: any = await (
       await check(
-        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)&${driveListAll(parent)}`, { headers: auth, signal: AbortSignal.timeout(15_000) }),
+        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)&${driveListAll(parent)}`, {
+          headers: auth,
+          signal: AbortSignal.timeout(15_000),
+        }),
         "buscar carpeta",
       )
     ).json();
@@ -447,7 +467,10 @@ async function ensureGdriveFolder(db: Db, connId: string, stale?: string): Promi
     const { token, updated } = await freshToken("gdrive", JSON.parse(decrypt(row.credentials_enc)));
     const folderId = await findOrCreateGdriveFolder(token, String(cfg.folder));
     if (updated) await t.query(`UPDATE storage_connections SET credentials_enc = $2 WHERE id = $1`, [connId, encrypt(JSON.stringify(updated))]);
-    await t.query(`UPDATE storage_connections SET config = config || $2::jsonb, updated_at = now() WHERE id = $1`, [connId, JSON.stringify({ folderId })]);
+    await t.query(`UPDATE storage_connections SET config = config || $2::jsonb, updated_at = now() WHERE id = $1`, [
+      connId,
+      JSON.stringify({ folderId }),
+    ]);
   });
   return db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [connId]);
 }
@@ -497,10 +520,13 @@ export async function uploadGdrive(
     const q = gdriveExportQuery(opts.envelopeId, opts.kind, folderId);
     const found: any = await (
       await check(
-        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink,appProperties)&pageSize=10&${driveListAll(folderId)}`, {
-          headers: auth,
-          signal: AbortSignal.timeout(15_000),
-        }),
+        await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink,appProperties)&pageSize=10&${driveListAll(folderId)}`,
+          {
+            headers: auth,
+            signal: AbortSignal.timeout(15_000),
+          },
+        ),
         "buscar exportación previa",
       )
     ).json();
@@ -513,18 +539,23 @@ export async function uploadGdrive(
       // Con el nombre actual: un archivo subido con el formato viejo de nombre (8 caracteres del id) queda renombrado.
       const meta = JSON.stringify({ name, appProperties: { calasignSha256: sha } });
       const body = Buffer.concat([
-        Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
+        Buffer.from(
+          `--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`,
+        ),
         Buffer.from(bytes),
         Buffer.from(`\r\n--${boundary}--`),
       ]);
       const upd: any = await (
         await check(
-          await fetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(prev.id)}?uploadType=multipart&fields=id,webViewLink&${DRIVE_ALL}`, {
-            method: "PATCH",
-            headers: { ...auth, "content-type": `multipart/related; boundary=${boundary}` },
-            body,
-            signal: AbortSignal.timeout(60_000),
-          }),
+          await fetch(
+            `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(prev.id)}?uploadType=multipart&fields=id,webViewLink&${DRIVE_ALL}`,
+            {
+              method: "PATCH",
+              headers: { ...auth, "content-type": `multipart/related; boundary=${boundary}` },
+              body,
+              signal: AbortSignal.timeout(60_000),
+            },
+          ),
           "actualizar exportación previa en Drive",
         )
       ).json();
@@ -533,9 +564,16 @@ export async function uploadGdrive(
   }
   const boundary = `calasign${randomToken(12)}`;
   const appProperties = opts ? { calasignEnvelopeId: opts.envelopeId, calasignKind: opts.kind, calasignSha256: sha } : undefined;
-  const meta = JSON.stringify({ name, mimeType: contentType, ...(folderId ? { parents: [folderId] } : {}), ...(appProperties ? { appProperties } : {}) });
+  const meta = JSON.stringify({
+    name,
+    mimeType: contentType,
+    ...(folderId ? { parents: [folderId] } : {}),
+    ...(appProperties ? { appProperties } : {}),
+  });
   const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
+    Buffer.from(
+      `--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`,
+    ),
     Buffer.from(bytes),
     Buffer.from(`\r\n--${boundary}--`),
   ]);
@@ -560,7 +598,12 @@ export async function uploadGdrive(
 export function dropboxContentHash(bytes: Uint8Array): string {
   const BLOCK = 4 * 1024 * 1024;
   const outer = createHash("sha256");
-  for (let off = 0; off < bytes.length; off += BLOCK) outer.update(createHash("sha256").update(bytes.subarray(off, off + BLOCK)).digest());
+  for (let off = 0; off < bytes.length; off += BLOCK)
+    outer.update(
+      createHash("sha256")
+        .update(bytes.subarray(off, off + BLOCK))
+        .digest(),
+    );
   return outer.digest("hex");
 }
 
@@ -619,7 +662,10 @@ export async function uploadDropbox(
     }
   }
   // Dropbox-API-Arg viaja en un header: los caracteres no ASCII van escapados.
-  const arg = JSON.stringify({ path, mode: "add", autorename: true, mute: true }).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const arg = JSON.stringify({ path, mode: "add", autorename: true, mute: true }).replace(
+    /[\u007f-￿]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
   const res: any = await (
     await check(
       await fetch("https://content.dropboxapi.com/2/files/upload", {
@@ -659,7 +705,16 @@ export async function uploadSharepoint(
 ): Promise<UploadResult> {
   const { token, updated } = await freshToken("sharepoint", creds, onRefresh);
   if (!cfg.driveId) throw new Error("conexión de SharePoint sin biblioteca resuelta: volvé a conectarla");
-  const item = await graphUpload(token, `${GRAPH()}/drives/${encodeURIComponent(String(cfg.driveId))}`, cfg, name, bytes, contentType, "SharePoint", opts);
+  const item = await graphUpload(
+    token,
+    `${GRAPH()}/drives/${encodeURIComponent(String(cfg.driveId))}`,
+    cfg,
+    name,
+    bytes,
+    contentType,
+    "SharePoint",
+    opts,
+  );
   return { ref: item?.webUrl ?? `sharepoint:${item?.id ?? name}`, creds: updated ?? undefined };
 }
 
@@ -734,21 +789,33 @@ export function parseSharepointSite(raw: string): { host: string; path: string }
 }
 
 /** Resuelve sitio y biblioteca de SharePoint a ids de Graph (se guardan en la conexión). */
-export async function resolveSharepointDrive(token: string, siteUrl: string, library?: string | null): Promise<{ siteId: string; driveId: string; driveName: string | null }> {
+export async function resolveSharepointDrive(
+  token: string,
+  siteUrl: string,
+  library?: string | null,
+): Promise<{ siteId: string; driveId: string; driveName: string | null }> {
   const { host, path } = parseSharepointSite(siteUrl);
   const auth = { authorization: `Bearer ${token}` };
   const siteRef = path ? `${host}:${path.split("/").map(encodeURIComponent).join("/")}` : host;
-  const site: any = await (await check(await fetch(`${GRAPH()}/sites/${siteRef}?$select=id,webUrl`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "buscar sitio")).json();
+  const site: any = await (
+    await check(await fetch(`${GRAPH()}/sites/${siteRef}?$select=id,webUrl`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "buscar sitio")
+  ).json();
   if (library) {
     const drives: any = await (
-      await check(await fetch(`${GRAPH()}/sites/${encodeURIComponent(site.id)}/drives?$select=id,name`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "listar bibliotecas")
+      await check(
+        await fetch(`${GRAPH()}/sites/${encodeURIComponent(site.id)}/drives?$select=id,name`, { headers: auth, signal: AbortSignal.timeout(15_000) }),
+        "listar bibliotecas",
+      )
     ).json();
     const d = (drives.value ?? []).find((x: any) => String(x.name).toLowerCase() === library.toLowerCase());
     if (!d) throw new Error(`no existe la biblioteca "${library}" en el sitio`);
     return { siteId: site.id, driveId: d.id, driveName: d.name };
   }
   const d: any = await (
-    await check(await fetch(`${GRAPH()}/sites/${encodeURIComponent(site.id)}/drive?$select=id,name`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "biblioteca del sitio")
+    await check(
+      await fetch(`${GRAPH()}/sites/${encodeURIComponent(site.id)}/drive?$select=id,name`, { headers: auth, signal: AbortSignal.timeout(15_000) }),
+      "biblioteca del sitio",
+    )
   ).json();
   return { siteId: site.id, driveId: d.id, driveName: d.name ?? null };
 }
@@ -758,10 +825,21 @@ export async function resolveSharepointDrive(token: string, siteUrl: string, lib
  * un intento anterior pudo haber subido (nombre actual y el del formato anterior) y, si tiene los mismos bytes (hash de
  * Graph), se reutiliza en lugar de subir una copia "(1)" con conflictBehavior=rename.
  */
-async function graphUpload(token: string, driveBase: string, cfg: any, name: string, bytes: Uint8Array, contentType: string, what: string, opts?: UploadOpts): Promise<any> {
+async function graphUpload(
+  token: string,
+  driveBase: string,
+  cfg: any,
+  name: string,
+  bytes: Uint8Array,
+  contentType: string,
+  what: string,
+  opts?: UploadOpts,
+): Promise<any> {
   // Cada segmento por separado: con la carpeta entera en encodeURIComponent, "Contratos/2026" viajaba como
   // "Contratos%2F2026" y Graph lo toma como un nombre con "/" (inválido) en lugar de una subcarpeta.
-  const folder = String(cfg.folder ?? "").split("/").filter(Boolean);
+  const folder = String(cfg.folder ?? "")
+    .split("/")
+    .filter(Boolean);
   const pathOf = (n: string) => [...folder, n].map(encodeURIComponent).join("/");
   const path = pathOf(name);
   const auth = { authorization: `Bearer ${token}` };
@@ -820,7 +898,10 @@ async function graphUpload(token: string, driveBase: string, cfg: any, name: str
 /** Busca o crea cada segmento de la carpeta en Box. Ante un 409 (ya existe) usa el id que informa Box. */
 export async function ensureBoxFolder(token: string, folder: string): Promise<string> {
   let parent = "0";
-  for (const seg of folder.split("/").map((x) => x.trim()).filter(Boolean)) {
+  for (const seg of folder
+    .split("/")
+    .map((x) => x.trim())
+    .filter(Boolean)) {
     const res = await fetch(`${BOX_API()}/2.0/folders?fields=id`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -840,7 +921,14 @@ export async function ensureBoxFolder(token: string, folder: string): Promise<st
   return parent;
 }
 
-export async function uploadBox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+export async function uploadBox(
+  creds: OAuthCreds,
+  cfg: any,
+  name: string,
+  bytes: Uint8Array,
+  contentType: string,
+  onRefresh?: OnRefresh,
+): Promise<UploadResult> {
   const { token, updated } = await freshToken("box", creds, onRefresh);
   let folderId: string = cfg.folderId ?? "";
   const newCfg: Record<string, unknown> = {};
@@ -906,7 +994,9 @@ async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Arra
   });
   const key = `${String(cfg.prefix ?? "").replace(/^\/+/, "")}${name}`;
   try {
-    await client.send(new m.PutObjectCommand({ Bucket: cfg.bucket, Key: key, Body: bytes, ContentType: contentType }), { abortSignal: AbortSignal.timeout(120_000) });
+    await client.send(new m.PutObjectCommand({ Bucket: cfg.bucket, Key: key, Body: bytes, ContentType: contentType }), {
+      abortSignal: AbortSignal.timeout(120_000),
+    });
   } finally {
     client.destroy();
   }
@@ -932,9 +1022,11 @@ async function uploadTo(
   return uploadS3(creds, cfg, name, bytes, contentType);
 }
 
-const persistCreds = (db: Db, connId: string): OnRefresh => async (creds) => {
-  await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [connId, encrypt(JSON.stringify(creds))]);
-};
+const persistCreds =
+  (db: Db, connId: string): OnRefresh =>
+  async (creds) => {
+    await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [connId, encrypt(JSON.stringify(creds))]);
+  };
 
 /**
  * Guarda lo que devolvió la subida. La configuración (id de la carpeta resuelta) solo si la conexión sigue apuntando a la
@@ -942,13 +1034,16 @@ const persistCreds = (db: Db, connId: string): OnRefresh => async (creds) => {
  * carpeta vieja no puede quedar fijado para la nueva.
  */
 export async function persistUpload(db: Db, connId: string, r: UploadResult, folder: unknown) {
-  if (r.creds) await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [connId, encrypt(JSON.stringify(r.creds))]);
-  if (r.config) {
-    await db.query(`UPDATE storage_connections SET config = config || $2::jsonb, updated_at = now() WHERE id = $1 AND COALESCE(config->>'folder', '') = $3`, [
+  if (r.creds)
+    await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [
       connId,
-      JSON.stringify(r.config),
-      String(folder ?? ""),
+      encrypt(JSON.stringify(r.creds)),
     ]);
+  if (r.config) {
+    await db.query(
+      `UPDATE storage_connections SET config = config || $2::jsonb, updated_at = now() WHERE id = $1 AND COALESCE(config->>'folder', '') = $3`,
+      [connId, JSON.stringify(r.config), String(folder ?? "")],
+    );
   }
 }
 
@@ -999,15 +1094,24 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
     // El PDF ya subido en un intento anterior (falló solo el certificado de evidencia) no se vuelve a subir.
     const prev = await db.one<any>(`SELECT pdf_ref, pdf_sha256 FROM storage_exports WHERE id = $1`, [ex.id]);
     let ref: string = prev?.pdf_ref ?? null;
-    let pdfSha: string | null = prev?.pdf_ref ? prev.pdf_sha256 ?? null : null;
+    let pdfSha: string | null = prev?.pdf_ref ? (prev.pdf_sha256 ?? null) : null;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
-      const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes, "application/pdf", persistCreds(db, c.id), {
-        envelopeId: p.envelopeId,
-        kind: "pdf",
-        retry,
-        legacyName: legacyFileName(e.subject, p.envelopeId),
-      });
+      const r = await uploadTo(
+        cur.provider,
+        cur.credentials_enc,
+        cur.config ?? {},
+        fileName(e.subject, p.envelopeId),
+        bytes,
+        "application/pdf",
+        persistCreds(db, c.id),
+        {
+          envelopeId: p.envelopeId,
+          kind: "pdf",
+          retry,
+          legacyName: legacyFileName(e.subject, p.envelopeId),
+        },
+      );
       await persistUpload(db, c.id, r, cur.config?.folder);
       ref = r.ref;
       pdfSha = e.sha256 ?? null;
@@ -1018,12 +1122,21 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
       cur = (await db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [c.id])) ?? cur;
       // Describe el PDF que se subió (si una renovación del sello cambió el PDF entre medio, no el nuevo).
       const ev = await evidenceCertificate(db, p.envelopeId, { signedSha256: pdfSha });
-      const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json", persistCreds(db, c.id), {
-        envelopeId: p.envelopeId,
-        kind: "evidence",
-        retry,
-        legacyName: `${legacySafeBaseName(e.subject, p.envelopeId)} - evidencia.json`,
-      });
+      const r2 = await uploadTo(
+        cur.provider,
+        cur.credentials_enc,
+        cur.config ?? {},
+        `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`,
+        ev,
+        "application/json",
+        persistCreds(db, c.id),
+        {
+          envelopeId: p.envelopeId,
+          kind: "evidence",
+          retry,
+          legacyName: `${legacySafeBaseName(e.subject, p.envelopeId)} - evidencia.json`,
+        },
+      );
       await persistUpload(db, c.id, r2, cur.config?.folder);
     }
     await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, ref]);
@@ -1067,7 +1180,9 @@ const toApi = (r: any): StorageConnection => ({
   includeEvidence: Boolean(r.config?.includeEvidence),
   createdAt: iso(r.created_at)!,
   // Quién la conectó: las OAuth exportan a SU cuenta (al sacarla de la organización se desactivan).
-  createdBy: r.created_by ? { id: r.created_by, name: r.created_by_name ?? null, email: r.created_by_email ?? null, member: Boolean(r.created_by_member) } : null,
+  createdBy: r.created_by
+    ? { id: r.created_by, name: r.created_by_name ?? null, email: r.created_by_email ?? null, member: Boolean(r.created_by_member) }
+    : null,
   deactivatedReason: r.deactivated_reason === STORAGE_CREATOR_REMOVED ? STORAGE_CREATOR_REMOVED : null,
   lastSuccessAt: iso(r.last_success_at),
   lastError: r.last_error,
@@ -1097,15 +1212,28 @@ export async function notifyStorageMemberRemoved(
   const who = u ? (u.name ? `${u.name} <${u.email}>` : u.email) : "?";
   const list = conns.map((c) => `- ${c.name} (${PROVIDER_LABEL[c.provider] ?? c.provider})`).join("\n");
   const link = `${await tenantBaseUrl(db, p.tenantId)}/app/settings/storage`;
-  const r = await alertTenantAdmins(db, p.tenantId, "storage_member_removed", (L, c) => MEMBER_REMOVED_ALERT[L](c.product, c.name, who, list, link), { jobId: job?.id, log });
+  const r = await alertTenantAdmins(db, p.tenantId, "storage_member_removed", (L, c) => MEMBER_REMOVED_ALERT[L](c.product, c.name, who, list, link), {
+    jobId: job?.id,
+    log,
+  });
   // Con un envío transitorio fallido se reintenta aunque otros hayan salido: la deduplicación por job (sendTracked con
   // jobId) no repite los ya enviados.
   if (r.transient.length) throw new Error(`no se pudo avisar la desactivación del almacenamiento: ${r.transient.join("; ")}`);
 }
 
-const PROVIDER_LABEL: Record<string, string> = { gdrive: "Google Drive", dropbox: "Dropbox", onedrive: "OneDrive", sharepoint: "SharePoint", box: "Box", s3: "S3" };
+const PROVIDER_LABEL: Record<string, string> = {
+  gdrive: "Google Drive",
+  dropbox: "Dropbox",
+  onedrive: "OneDrive",
+  sharepoint: "SharePoint",
+  box: "Box",
+  s3: "S3",
+};
 
-const MEMBER_REMOVED_ALERT: Record<AlertLocale, (p: string, name: string, who: string, list: string, link: string) => { subject: string; text: string }> = {
+const MEMBER_REMOVED_ALERT: Record<
+  AlertLocale,
+  (p: string, name: string, who: string, list: string, link: string) => { subject: string; text: string }
+> = {
   es: (p, name, who, list, link) => ({
     subject: `${p}: se desactivaron conexiones de almacenamiento de una persona que dejó la organización`,
     text:
@@ -1165,9 +1293,11 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
   // de conexiones llenaban la cola compartida con trabajos de una sola organización.
   const MAX_CONNECTIONS = 20;
   const tooManyConnections = async (tenantId: string) =>
-    ((await s.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM storage_connections WHERE tenant_id = $1`, [tenantId]))?.n ?? 0) >= MAX_CONNECTIONS;
+    ((await s.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM storage_connections WHERE tenant_id = $1`, [tenantId]))?.n ?? 0) >=
+    MAX_CONNECTIONS;
   const assertConnectionQuota = async (tenantId: string) => {
-    if (await tooManyConnections(tenantId)) throw badRequest("too_many_connections", `Máximo ${MAX_CONNECTIONS} conexiones de almacenamiento por organización`);
+    if (await tooManyConnections(tenantId))
+      throw badRequest("too_many_connections", `Máximo ${MAX_CONNECTIONS} conexiones de almacenamiento por organización`);
   };
   /**
    * Inserta la conexión con la organización bloqueada y el tope contado de nuevo: el chequeo previo queda lejos del
@@ -1196,8 +1326,15 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const input = CreateS3ConnectionInput.parse(req.body);
     await assertConnectionQuota(a.tenantId);
     const endpoint = validateS3Endpoint(input.endpoint);
-    const prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix ?? "";
-    const cfg = { endpoint, region: input.region, bucket: input.bucket, prefix, forcePathStyle: input.forcePathStyle, includeEvidence: Boolean(input.includeEvidence) };
+    const prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : (input.prefix ?? "");
+    const cfg = {
+      endpoint,
+      region: input.region,
+      bucket: input.bucket,
+      prefix,
+      forcePathStyle: input.forcePathStyle,
+      includeEvidence: Boolean(input.includeEvidence),
+    };
     const credsEnc = encrypt(JSON.stringify({ accessKeyId: input.accessKeyId, secretAccessKey: input.secretAccessKey }));
     // Prueba de escritura antes de guardar: así un error de credenciales se ve ahora y no al completar un sobre.
     try {
@@ -1212,7 +1349,11 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
        VALUES ($1,$2,'s3',$3,$4,$5,$6,$7, now())`,
       [id, a.tenantId, input.name, JSON.stringify(cfg), credsEnc, `${input.accessKeyId.slice(0, 4)}… @ ${new URL(endpoint).host}`, a.userId],
     );
-    await auditFromRequest(s.db, req, a, "storage.connected", { targetType: "storage_connection", targetId: id, data: { provider: "s3", name: input.name, bucket: input.bucket } });
+    await auditFromRequest(s.db, req, a, "storage.connected", {
+      targetType: "storage_connection",
+      targetId: id,
+      data: { provider: "s3", name: input.name, bucket: input.bucket },
+    });
     reply.code(201);
     return toApi(await load(a.tenantId, id));
   });
@@ -1281,13 +1422,23 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
         if (!obtained) return;
         // Google: los tokens nuevos son de la misma concesión que los de otra conexión con esa cuenta; revocarlos la
         // cortaba también (ver googleGrantShared).
-        if (st.p === "gdrive" && (await googleGrantShared(s.db, { sub: obtainedSub, label: obtainedLabel, tenantId: a.tenantId, createdBy: a.userId }, null).catch(() => true))) return;
+        if (
+          st.p === "gdrive" &&
+          (await googleGrantShared(s.db, { sub: obtainedSub, label: obtainedLabel, tenantId: a.tenantId, createdBy: a.userId }, null).catch(
+            () => true,
+          ))
+        )
+          return;
         const r = await revokeProviderToken(st.p, obtained);
         if (!r.ok) req.log.warn({ provider: st.p, err: r.error }, "no se pudo revocar el acceso obtenido para una conexión que no se guardó");
       };
       try {
         const body = await tokenRequest(st.p, { grant_type: "authorization_code", code: req.query.code, redirect_uri: redirectUri(st.p) });
-        const creds: OAuthCreds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: Date.now() + Number(body.expires_in ?? 3600) * 1000 };
+        const creds: OAuthCreds = {
+          access_token: body.access_token,
+          refresh_token: body.refresh_token,
+          expires_at: Date.now() + Number(body.expires_in ?? 3600) * 1000,
+        };
         obtained = creds;
         const label = await accountLabel(st.p, body);
         obtainedLabel = label;
@@ -1310,7 +1461,11 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
           `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label, created_by, account_sub) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [id, a.tenantId, st.p, st.n, JSON.stringify(cfg), encrypt(JSON.stringify(creds)), label, a.userId, sub],
         );
-        await auditFromRequest(s.db, req, a, "storage.connected", { targetType: "storage_connection", targetId: id, data: { provider: st.p, name: st.n } });
+        await auditFromRequest(s.db, req, a, "storage.connected", {
+          targetType: "storage_connection",
+          targetId: id,
+          data: { provider: st.p, name: st.n },
+        });
         return back(`connected=${st.p}`);
       } catch (err) {
         await revokeObtained();
@@ -1328,7 +1483,11 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     // Desactivada porque quien la conectó dejó la organización: exporta a la cuenta personal de esa persona. No se
     // reactiva; hay que conectar el almacenamiento de nuevo con una cuenta de la organización.
     if (input.active === true && r.deactivated_reason === STORAGE_CREATOR_REMOVED) {
-      throw new AppError(409, "storage_reconnect_required", "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo");
+      throw new AppError(
+        409,
+        "storage_reconnect_required",
+        "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo",
+      );
     }
     const cfgPatch: Record<string, unknown> = {};
     if (input.folder !== undefined && r.provider !== "s3") {
@@ -1336,7 +1495,8 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       cfgPatch.folderId = null; // Drive y Box: se vuelve a buscar/crear la carpeta
     }
     if (input.includeEvidence !== undefined) cfgPatch.includeEvidence = input.includeEvidence;
-    if (input.prefix !== undefined && r.provider === "s3") cfgPatch.prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix;
+    if (input.prefix !== undefined && r.provider === "s3")
+      cfgPatch.prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix;
     // La condición se vuelve a mirar en el UPDATE: si la persona deja la organización entre la lectura y la escritura
     // (deactivateMemberStorage), no se reactiva una conexión recién desactivada.
     const upd = await s.db.query(
@@ -1348,7 +1508,11 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     if (!upd.length) {
       // Sin fila actualizada: se desactivó por la baja de quien la conectó (409) o se eliminó (404, como load).
       if (await s.db.one<any>(`SELECT 1 AS x FROM storage_connections WHERE id = $1`, [r.id])) {
-        throw new AppError(409, "storage_reconnect_required", "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo");
+        throw new AppError(
+          409,
+          "storage_reconnect_required",
+          "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo",
+        );
       }
       throw notFound("Conexión");
     }
@@ -1357,7 +1521,13 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     // van) los documentos firmados: queda en la auditoría con el valor anterior y el nuevo.
     const view = (x: any) => {
       const cfg = (typeof x.config === "string" ? JSON.parse(x.config) : x.config) ?? {};
-      return { name: x.name, active: Boolean(x.active), folder: cfg.folder ?? null, prefix: cfg.prefix ?? null, includeEvidence: Boolean(cfg.includeEvidence) };
+      return {
+        name: x.name,
+        active: Boolean(x.active),
+        folder: cfg.folder ?? null,
+        prefix: cfg.prefix ?? null,
+        includeEvidence: Boolean(cfg.includeEvidence),
+      };
     };
     const diff = changedValues(view(r), view(updated));
     await auditFromRequest(s.db, req, a, "storage.updated", {
@@ -1372,9 +1542,14 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth!;
     const r = await load(a.tenantId, req.params.id);
     const del = await s.db.query(`DELETE FROM storage_connections WHERE id = $1 RETURNING id`, [r.id]);
-    await auditFromRequest(s.db, req, a, "storage.disconnected", { targetType: "storage_connection", targetId: r.id, data: { provider: r.provider, name: r.name } });
+    await auditFromRequest(s.db, req, a, "storage.disconnected", {
+      targetType: "storage_connection",
+      targetId: r.id,
+      data: { provider: r.provider, name: r.name },
+    });
     // Lo mejor posible, después de borrarla: que la app deje de tener acceso a esa cuenta en el proveedor.
-    if (del.length) await revokeStoredCreds(s.db, r.provider, r.credentials_enc, req.log, r.id, {
+    if (del.length)
+      await revokeStoredCreds(s.db, r.provider, r.credentials_enc, req.log, r.id, {
         sub: r.account_sub ?? null,
         label: r.account_label ?? null,
         tenantId: r.tenant_id,
@@ -1383,21 +1558,33 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string } }>("/v1/storage/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req) => {
-    const a = req.auth!;
-    let r = await load(a.tenantId, req.params.id);
-    try {
-      r = await withResolvedFolder(s.db, r);
-      const res = await uploadTo(r.provider, r.credentials_enc, r.config ?? {}, "calasign-connection-test.pdf", Buffer.from("%PDF-1.4\n% CalaSign: prueba de conexión\n"), "application/pdf", persistCreds(s.db, r.id));
-      await persistUpload(s.db, r.id, res, r.config?.folder);
-      await s.db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [r.id]);
-      return { ok: true, ref: res.ref, error: null };
-    } catch (err) {
-      const msg = String((err as Error).message ?? err).slice(0, 300);
-      await s.db.query(`UPDATE storage_connections SET last_error = $2 WHERE id = $1`, [r.id, msg]);
-      return { ok: false, ref: null, error: msg };
-    }
-  });
+  app.post<{ Params: { id: string } }>(
+    "/v1/storage/connections/:id/test",
+    { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } },
+    async (req) => {
+      const a = req.auth!;
+      let r = await load(a.tenantId, req.params.id);
+      try {
+        r = await withResolvedFolder(s.db, r);
+        const res = await uploadTo(
+          r.provider,
+          r.credentials_enc,
+          r.config ?? {},
+          "calasign-connection-test.pdf",
+          Buffer.from("%PDF-1.4\n% CalaSign: prueba de conexión\n"),
+          "application/pdf",
+          persistCreds(s.db, r.id),
+        );
+        await persistUpload(s.db, r.id, res, r.config?.folder);
+        await s.db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [r.id]);
+        return { ok: true, ref: res.ref, error: null };
+      } catch (err) {
+        const msg = String((err as Error).message ?? err).slice(0, 300);
+        await s.db.query(`UPDATE storage_connections SET last_error = $2 WHERE id = $1`, [r.id, msg]);
+        return { ok: false, ref: null, error: msg };
+      }
+    },
+  );
 
   app.get<{ Querystring: { limit?: string } }>("/v1/storage/exports", { preHandler: auth }, async (req) => {
     const limit = Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50));
@@ -1438,7 +1625,12 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       [x.id],
     );
     if (!upd.length) throw new AppError(409, "export_in_progress", "La exportación ya está en curso");
-    await enqueue(s.db, "platform", { kind: "export", connectionId: x.connection_id, envelopeId: x.envelope_id }, { dedupeKey: `exp:${x.connection_id}:${x.envelope_id}:${Date.now()}` });
+    await enqueue(
+      s.db,
+      "platform",
+      { kind: "export", connectionId: x.connection_id, envelopeId: x.envelope_id },
+      { dedupeKey: `exp:${x.connection_id}:${x.envelope_id}:${Date.now()}` },
+    );
     reply.code(202);
     return { queued: true };
   });

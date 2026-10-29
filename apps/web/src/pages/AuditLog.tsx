@@ -83,7 +83,9 @@ export function AuditLogPage() {
     const f = cont?.filters ?? applied;
     try {
       const day = new Date().toISOString().slice(0, 10);
-      const qs = [query(f), csvFormatParams(locale, { tz: true }).toString(), cont ? `beforeId=${encodeURIComponent(cont.beforeId)}` : ""].filter(Boolean).join("&");
+      const qs = [query(f), csvFormatParams(locale, { tz: true }).toString(), cont ? `beforeId=${encodeURIComponent(cont.beforeId)}` : ""]
+        .filter(Boolean)
+        .join("&");
       const part = cont ? cont.part + 1 : 1;
       const r = await downloadCsv(`/v1/audit-log.csv?${qs}`, part > 1 ? `auditoria-${day}-${part}.csv` : `auditoria-${day}.csv`);
       setCsvNext(r.truncated ? { filters: f, beforeId: r.nextBeforeId, part } : null);
@@ -116,7 +118,12 @@ export function AuditLogPage() {
         <p className="muted small row-wrap" style={{ alignItems: "center", gap: ".5rem" }}>
           <span>{tt("audit.csvTruncated")}</span>
           {csvNext.beforeId && (
-            <button type="button" className="btn btn-sm" disabled={downloading} onClick={() => void exportCsv({ filters: csvNext.filters, beforeId: csvNext.beforeId!, part: csvNext.part })}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={downloading}
+              onClick={() => void exportCsv({ filters: csvNext.filters, beforeId: csvNext.beforeId!, part: csvNext.part })}
+            >
               {tt("audit.exportContinue")}
             </button>
           )}
@@ -143,7 +150,9 @@ export function AuditLogPage() {
       </form>
       <ErrorBox error={error} />
       {!items ? (
-        error ? null : <Spinner />
+        error ? null : (
+          <Spinner />
+        )
       ) : items.length === 0 ? (
         <div className="empty">{tt("audit.empty")}</div>
       ) : (

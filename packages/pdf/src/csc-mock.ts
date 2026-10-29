@@ -34,14 +34,20 @@ export async function startMockCsc(o: MockCscOptions, port = 0, host = "127.0.0.
       res.end(JSON.stringify(data));
     };
     if (path === "auth/login") {
-      const [u, p] = Buffer.from(String(req.headers.authorization ?? "").replace(/^Basic /, ""), "base64").toString().split(":");
+      const [u, p] = Buffer.from(String(req.headers.authorization ?? "").replace(/^Basic /, ""), "base64")
+        .toString()
+        .split(":");
       if (u !== o.username || p !== o.password) return json(401, { error: "invalid_request", error_description: "credenciales inválidas" });
       const t = randomUUID();
       tokens.add(t);
       return json(200, { access_token: t, expires_in: 3600 });
     }
     if (path === "info") {
-      return json(200, { specs: "2.0.0.0", name: "CalaSign Mock CSC", methods: ["auth/login", "credentials/list", "credentials/info", "credentials/authorize", "signatures/signHash"] });
+      return json(200, {
+        specs: "2.0.0.0",
+        name: "CalaSign Mock CSC",
+        methods: ["auth/login", "credentials/list", "credentials/info", "credentials/authorize", "signatures/signHash"],
+      });
     }
     const tok = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
     if (!tokens.has(tok)) return json(401, { error: "invalid_token" });
@@ -77,7 +83,9 @@ export async function startMockCsc(o: MockCscOptions, port = 0, host = "127.0.0.
       const signatures = (body.hashes as string[]).map((h) =>
         ec
           ? Buffer.from(ecdsaSignDigestForTests(cred.identity.keyPem, new Uint8Array(Buffer.from(h, "base64")))).toString("base64")
-          : privateEncrypt({ key, padding: constants.RSA_PKCS1_PADDING }, Buffer.concat([DIGEST_INFO_SHA256, Buffer.from(h, "base64")])).toString("base64"),
+          : privateEncrypt({ key, padding: constants.RSA_PKCS1_PADDING }, Buffer.concat([DIGEST_INFO_SHA256, Buffer.from(h, "base64")])).toString(
+              "base64",
+            ),
       );
       return json(200, { signatures });
     }

@@ -174,10 +174,7 @@ Content-Type: application/json
 
       <H2 id="scopes">{t("auth.scopes.h")}</H2>
       <Md text={t("auth.scopes.p")} />
-      <DataTable
-        head={["Scope", t("auth.scopes.col.desc")]}
-        rows={OAUTH_SCOPES.map((s) => [<code key={s}>{s}</code>, p(`scope.${s}`)])}
-      />
+      <DataTable head={["Scope", t("auth.scopes.col.desc")]} rows={OAUTH_SCOPES.map((s) => [<code key={s}>{s}</code>, p(`scope.${s}`)])} />
 
       <H2 id="dynamic-registration">
         {t("auth.dcr.h")} <Badge tone="new">{t("ui.new")}</Badge>

@@ -186,7 +186,12 @@ function cscConfigs(): CscConfig[] {
       id: "calasign-ca",
       baseUrl: env.CALASIGN_CA_CSC_URL,
       auth: env.CALASIGN_CA_TOKEN_URL
-        ? { type: "oauth2_client", tokenUrl: env.CALASIGN_CA_TOKEN_URL, clientId: env.CALASIGN_CA_CLIENT_ID ?? "", clientSecret: env.CALASIGN_CA_CLIENT_SECRET ?? "" }
+        ? {
+            type: "oauth2_client",
+            tokenUrl: env.CALASIGN_CA_TOKEN_URL,
+            clientId: env.CALASIGN_CA_CLIENT_ID ?? "",
+            clientSecret: env.CALASIGN_CA_CLIENT_SECRET ?? "",
+          }
         : { type: "basic", username: env.CALASIGN_CA_CLIENT_ID ?? "", password: env.CALASIGN_CA_CLIENT_SECRET ?? "" },
       level: "advanced",
       fetcher: guardedFetch,

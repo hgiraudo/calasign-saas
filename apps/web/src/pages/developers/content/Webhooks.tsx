@@ -125,10 +125,18 @@ export function WebhooksPage() {
         tabs={apiTabs({
           method: "POST",
           path: "/v1/webhooks",
-          body: { url: "https://api.tuempresa.com/webhooks/calasign", description: "Producción", events: ["envelope.completed", "envelope.declined", "recipient.signed"] },
+          body: {
+            url: "https://api.tuempresa.com/webhooks/calasign",
+            description: "Producción",
+            events: ["envelope.completed", "envelope.declined", "recipient.signed"],
+          },
           extra: [
-            sdkPy(`r = cs.webhooks.create("https://api.tuempresa.com/webhooks/calasign", events=["envelope.completed"])\nsecret = r["secret"]  # whsec_… ${t("wh.setup.once")}`),
-            sdkNode(`const { webhook, secret } = await cs.webhooks.create({ url: "https://api.tuempresa.com/webhooks/calasign", events: ["envelope.completed"] });`),
+            sdkPy(
+              `r = cs.webhooks.create("https://api.tuempresa.com/webhooks/calasign", events=["envelope.completed"])\nsecret = r["secret"]  # whsec_… ${t("wh.setup.once")}`,
+            ),
+            sdkNode(
+              `const { webhook, secret } = await cs.webhooks.create({ url: "https://api.tuempresa.com/webhooks/calasign", events: ["envelope.completed"] });`,
+            ),
           ],
         })}
       />
@@ -172,7 +180,10 @@ export function WebhooksPage() {
       <Md text={t("wh.retries.p")} />
       <DataTable
         head={[t("wh.col.attempt"), t("wh.col.wait")]}
-        rows={[["1", t("wh.retries.immediate")], ...DELAYS.map((d, i) => [String(i + 2), d < 60 ? `${d} s` : `${Math.round((d / 60) * 10) / 10} min`])]}
+        rows={[
+          ["1", t("wh.retries.immediate")],
+          ...DELAYS.map((d, i) => [String(i + 2), d < 60 ? `${d} s` : `${Math.round((d / 60) * 10) / 10} min`]),
+        ]}
       />
       <Md text={t("wh.retries.after")} />
 

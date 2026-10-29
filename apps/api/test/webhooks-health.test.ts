@@ -20,13 +20,13 @@ vi.mock("../src/notifications/channels", async (orig) => ({
   }),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
 let wh: typeof import("../src/modules/webhooks");
-let config: typeof import("../src/config")["config"];
+let config: (typeof import("../src/config"))["config"];
 let server: http.Server;
 let base = "";
 let status = 200;
@@ -88,22 +88,42 @@ async function org(keyRole = "admin") {
   const tenant = util.uuidv7();
   const user = util.uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,'Ana','scrypt$x','en')`, [user, `ana-${tenant.slice(-8)}@x.test`]);
+  await db.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,'Ana','scrypt$x','en')`, [
+    user,
+    `ana-${tenant.slice(-8)}@x.test`,
+  ]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'owner')`, [tenant, user]);
   const key = `cs_test_${util.randomToken(12)}`;
   const keyId = util.uuidv7();
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1, $2, 'k', 'cs_test', $3, $4)`, [keyId, tenant, util.sha256Hex(key), keyRole]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1, $2, 'k', 'cs_test', $3, $4)`, [
+    keyId,
+    tenant,
+    util.sha256Hex(key),
+    keyRole,
+  ]);
   const env = util.uuidv7();
   await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Contrato', 'sent')`, [env, tenant]);
   return { tenant, user, keyId, env, auth: { authorization: `Bearer ${key}` } };
 }
 
-async function endpoint(tenant: string, extra: { apiKey?: string | null; oauthClient?: string | null; createdBy?: string | null; active?: boolean } = {}) {
+async function endpoint(
+  tenant: string,
+  extra: { apiKey?: string | null; oauthClient?: string | null; createdBy?: string | null; active?: boolean } = {},
+) {
   const id = util.uuidv7();
   await db.query(
     `INSERT INTO webhook_endpoints (id, tenant_id, url, secret_enc, secret_prefix, active, created_by, created_by_api_key, oauth_client_id)
      VALUES ($1,$2,$3,$4,'whsec_x',$5,$6,$7,$8)`,
-    [id, tenant, `${base}/hook?token=secreto`, util.encrypt("whsec_x"), extra.active ?? true, extra.createdBy ?? null, extra.apiKey ?? null, extra.oauthClient ?? null],
+    [
+      id,
+      tenant,
+      `${base}/hook?token=secreto`,
+      util.encrypt("whsec_x"),
+      extra.active ?? true,
+      extra.createdBy ?? null,
+      extra.apiKey ?? null,
+      extra.oauthClient ?? null,
+    ],
   );
   return id;
 }
@@ -177,7 +197,10 @@ describe("desactivación automática", () => {
     const d = await delivery(o.tenant, id);
     status = 410;
     await expect(wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: d }, { attempts: 1 })).resolves.toBeUndefined();
-    expect(await db.one<any>(`SELECT status, next_retry_at FROM webhook_deliveries WHERE id = $1`, [d])).toMatchObject({ status: "failed", next_retry_at: null });
+    expect(await db.one<any>(`SELECT status, next_retry_at FROM webhook_deliveries WHERE id = $1`, [d])).toMatchObject({
+      status: "failed",
+      next_retry_at: null,
+    });
     const e = await ep(id);
     expect(e).toMatchObject({ active: true, consecutive_failures: 1 });
     expect(await runNotices(o.tenant)).toBe(0);
@@ -188,7 +211,10 @@ describe("desactivación automática", () => {
     const id = await endpoint(o.tenant);
     const d1 = await delivery(o.tenant, id);
     await wh.webhookJobGaveUp({ db, log }, { kind: "deliver", deliveryId: d1 }, "worker caído");
-    expect(await db.one<any>(`SELECT status, last_error FROM webhook_deliveries WHERE id = $1`, [d1])).toEqual({ status: "failed", last_error: "worker caído" });
+    expect(await db.one<any>(`SELECT status, last_error FROM webhook_deliveries WHERE id = $1`, [d1])).toEqual({
+      status: "failed",
+      last_error: "worker caído",
+    });
     expect((await ep(id)).consecutive_failures).toBe(1);
     // Idempotente: otra llamada (ya failed) no vuelve a contar.
     await wh.webhookJobGaveUp({ db, log }, { kind: "deliver", deliveryId: d1 }, "worker caído");
@@ -215,7 +241,8 @@ describe("desactivación automática", () => {
     const o = await org();
     const id = await endpoint(o.tenant);
     status = 500;
-    for (let i = 0; i < 50; i++) await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
+    for (let i = 0; i < 50; i++)
+      await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
     expect(await ep(id)).toMatchObject({ active: true, consecutive_failures: 50 });
     await db.query(`UPDATE webhook_endpoints SET failing_since = now() - interval '15 minutes' WHERE id = $1`, [id]);
     await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
@@ -239,7 +266,8 @@ describe("desactivación automática", () => {
       await expect(wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: first }, { attempts: 1 })).rejects.toThrow();
       expect((await ep(id)).consecutive_failures).toBe(0);
       // Último intento (8): falla definitiva.
-      for (let i = 0; i < 2; i++) await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
+      for (let i = 0; i < 2; i++)
+        await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
       expect((await ep(id)).consecutive_failures).toBe(2);
       // Un reintento manual fallido tampoco cuenta.
       await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id), manual: true }, { attempts: 1 });
@@ -252,7 +280,8 @@ describe("desactivación automática", () => {
       expect(e.failing_since).toBeNull();
       expect(e.last_success_at).not.toBeNull();
       status = 500;
-      for (let i = 0; i < 3; i++) await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
+      for (let i = 0; i < 3; i++)
+        await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
       e = await ep(id);
       expect(e.active).toBe(false);
       expect(wh.toEndpoint(e).deactivatedReason).toBe("failing");
@@ -307,30 +336,32 @@ describe("desactivación automática", () => {
     const o = await org("member");
     const lost = await endpoint(o.tenant, { apiKey: o.keyId });
     const adminKey = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'k2','cs_test',$3,'admin')`, [adminKey, o.tenant, util.sha256Hex(adminKey)]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'k2','cs_test',$3,'admin')`, [
+      adminKey,
+      o.tenant,
+      util.sha256Hex(adminKey),
+    ]);
     const kept = await endpoint(o.tenant, { apiKey: adminKey });
     await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
     expect(wh.toEndpoint(await ep(lost)).deactivatedReason).toBe("permission_lost");
     expect((await ep(kept)).active).toBe(true);
-    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'webhook.deactivated' AND target_id = $2`, [o.tenant, lost]);
+    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'webhook.deactivated' AND target_id = $2`, [
+      o.tenant,
+      lost,
+    ]);
     expect(audit.data).toMatchObject({ reason: "permission_lost", missing: ["webhooks:manage", "envelopes:view_all"] });
 
     // OAuth de un usuario: los permisos del usuario recortados a los scopes de sus tokens vigentes.
     const client = util.uuidv7();
-    await db.query(`INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'App','{authorization_code}','{webhooks:manage,envelopes:read}')`, [
-      client,
-      o.tenant,
-      `cid-${client.slice(-8)}`,
-    ]);
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'App','{authorization_code}','{webhooks:manage,envelopes:read}')`,
+      [client, o.tenant, `cid-${client.slice(-8)}`],
+    );
     const token = (scopes: string[]) =>
-      db.query(`INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, scopes, family_id, expires_at) VALUES ($1,$2,'refresh',$3,$4,$5,$6,$1, now() + interval '30 days')`, [
-        util.uuidv7(),
-        util.randomToken(),
-        client,
-        o.tenant,
-        o.user,
-        scopes,
-      ]);
+      db.query(
+        `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, scopes, family_id, expires_at) VALUES ($1,$2,'refresh',$3,$4,$5,$6,$1, now() + interval '30 days')`,
+        [util.uuidv7(), util.randomToken(), client, o.tenant, o.user, scopes],
+      );
     await token(["webhooks:manage", "envelopes:read"]);
     const oauthEp = await endpoint(o.tenant, { oauthClient: client, createdBy: o.user });
     await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
@@ -345,11 +376,10 @@ describe("desactivación automática", () => {
   it("refresh tokens ya usados no cuentan como autorización vigente", async () => {
     const o = await org();
     const client = util.uuidv7();
-    await db.query(`INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'App','{authorization_code}','{webhooks:manage,envelopes:read}')`, [
-      client,
-      o.tenant,
-      `cid-${client.slice(-8)}`,
-    ]);
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'App','{authorization_code}','{webhooks:manage,envelopes:read}')`,
+      [client, o.tenant, `cid-${client.slice(-8)}`],
+    );
     const token = (scopes: string[], used: boolean) =>
       db.query(
         `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, scopes, family_id, expires_at, used_at)
@@ -370,13 +400,17 @@ describe("desactivación automática", () => {
   it("client_credentials: la key de servicio se recorta a los scopes vigentes de la app", async () => {
     const o = await org();
     const client = util.uuidv7();
-    await db.query(`INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'Svc','{client_credentials}','{webhooks:manage,envelopes:read}')`, [
-      client,
-      o.tenant,
-      `cid-${client.slice(-8)}`,
-    ]);
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'Svc','{client_credentials}','{webhooks:manage,envelopes:read}')`,
+      [client, o.tenant, `cid-${client.slice(-8)}`],
+    );
     const svcKey = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, oauth_client_id) VALUES ($1,$2,'svc','oauth',$3,'admin',$4)`, [svcKey, o.tenant, util.sha256Hex(svcKey), client]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, oauth_client_id) VALUES ($1,$2,'svc','oauth',$3,'admin',$4)`, [
+      svcKey,
+      o.tenant,
+      util.sha256Hex(svcKey),
+      client,
+    ]);
     await db.query(`UPDATE oauth_clients SET service_api_key_id = $2 WHERE id = $1`, [client, svcKey]);
     const id = await endpoint(o.tenant, { apiKey: svcKey });
     await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
@@ -461,7 +495,9 @@ describe("rutas", () => {
     // Borrando uno, se puede crear.
     const one = (await db.one<any>(`SELECT id FROM webhook_endpoints WHERE tenant_id = $1 LIMIT 1`, [o.tenant]))!.id;
     expect((await app.inject({ method: "DELETE", url: `/v1/webhooks/${one}`, headers: o.auth })).statusCode).toBe(204);
-    expect((await app.inject({ method: "POST", url: "/v1/webhooks", headers: o.auth, payload: { url: "https://example.com/h" } })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: "/v1/webhooks", headers: o.auth, payload: { url: "https://example.com/h" } })).statusCode).toBe(
+      201,
+    );
   });
 
   it("reactivar uno desactivado por fallas limpia el motivo y la racha", async () => {
@@ -492,7 +528,9 @@ describe("mismo evento en webhooks y GET /v1/events", () => {
     const o = await org();
     const id = await endpoint(o.tenant);
     // Un rechazo produce dos eventos públicos (recipient.declined y envelope.declined), cada uno con su id.
-    const { seq } = await db.tx((t) => appendEvent(t, { tenantId: o.tenant, envelopeId: o.env, type: "recipient.declined", actor: { type: "system" }, data: { reason: "no" } }));
+    const { seq } = await db.tx((t) =>
+      appendEvent(t, { tenantId: o.tenant, envelopeId: o.env, type: "recipient.declined", actor: { type: "system" }, data: { reason: "no" } }),
+    );
     await new Promise((r) => setTimeout(r, 20));
     for (const type of ["recipient.declined", "envelope.declined"]) {
       await wh.handleWebhookJob({ db, log }, { kind: "fanout", tenantId: o.tenant, envelopeId: o.env, seq, type, recipientId: null, reason: "no" });
@@ -502,7 +540,12 @@ describe("mismo evento en webhooks y GET /v1/events", () => {
     const a: any = { tenantId: o.tenant, userId: null, apiKeyId: o.keyId, actor: { type: "api_key", id: o.keyId } };
     a.access = await loadAccess(db, a);
     const read = (types: string[]) =>
-      readEvents({ db, blobs: null as any }, a, { after: null, since: new Date(Date.now() - 3600_000).toISOString(), types, envelopeId: o.env, all: false }, 100);
+      readEvents(
+        { db, blobs: null as any },
+        a,
+        { after: null, since: new Date(Date.now() - 3600_000).toISOString(), types, envelopeId: o.env, all: false },
+        100,
+      );
     const all = await read([]);
     expect(all.items).toHaveLength(2);
     for (const d of dels) {
@@ -526,7 +569,10 @@ describe("mismo evento en webhooks y GET /v1/events", () => {
     const o = await org();
     const id = await endpoint(o.tenant);
     const before = Date.now();
-    await wh.handleWebhookJob({ db, log }, { kind: "fanout", tenantId: o.tenant, envelopeId: o.env, seq: 999, type: "envelope.sent", recipientId: null });
+    await wh.handleWebhookJob(
+      { db, log },
+      { kind: "fanout", tenantId: o.tenant, envelopeId: o.env, seq: 999, type: "envelope.sent", recipientId: null },
+    );
     const d = await db.one<any>(`SELECT payload FROM webhook_deliveries WHERE endpoint_id = $1`, [id]);
     expect(Date.parse(d!.payload.createdAt)).toBeGreaterThanOrEqual(before);
   });
@@ -536,7 +582,11 @@ describe("reintento manual y credencial revocada", () => {
   it("el reintento revisa antes la credencial de origen: 409 y el endpoint queda desactivado", async () => {
     const o = await org();
     const key2 = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'zap','cs_test',$3,'admin')`, [key2, o.tenant, util.sha256Hex(key2)]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'zap','cs_test',$3,'admin')`, [
+      key2,
+      o.tenant,
+      util.sha256Hex(key2),
+    ]);
     const id = await endpoint(o.tenant, { apiKey: key2 });
     const d = await delivery(o.tenant, id);
     await db.query(`UPDATE webhook_deliveries SET status = 'failed' WHERE id = $1`, [d]);
@@ -550,13 +600,20 @@ describe("reintento manual y credencial revocada", () => {
   it("una entrega manual ya encolada no sale si se revocó la credencial (el endpoint seguía activo)", async () => {
     const o = await org();
     const key2 = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'zap','cs_test',$3,'admin')`, [key2, o.tenant, util.sha256Hex(key2)]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'zap','cs_test',$3,'admin')`, [
+      key2,
+      o.tenant,
+      util.sha256Hex(key2),
+    ]);
     const id = await endpoint(o.tenant, { apiKey: key2 });
     const d = await delivery(o.tenant, id);
     await db.query(`UPDATE api_keys SET revoked_at = now() WHERE id = $1`, [key2]);
     await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: d, manual: true }, { attempts: 1 });
     expect(hits).toBe(0);
-    expect(await db.one(`SELECT status, last_error FROM webhook_deliveries WHERE id = $1`, [d])).toMatchObject({ status: "failed", last_error: "endpoint desactivado" });
+    expect(await db.one(`SELECT status, last_error FROM webhook_deliveries WHERE id = $1`, [d])).toMatchObject({
+      status: "failed",
+      last_error: "endpoint desactivado",
+    });
     // Una prueba manual sobre un endpoint pausado a mano (ya inactivo) sí sale, como antes.
     const paused = await endpoint(o.tenant, { active: false });
     await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, paused), manual: true }, { attempts: 1 });
@@ -567,18 +624,34 @@ describe("reintento manual y credencial revocada", () => {
 describe("auditoría de webhooks", () => {
   it("registra solo el host de la URL al crear, y el host anterior y el nuevo al cambiarla", async () => {
     const o = await org();
-    const c = await app.inject({ method: "POST", url: "/v1/webhooks", headers: o.auth, payload: { url: "https://hooks.example.com/in?token=s3cr3t" } });
+    const c = await app.inject({
+      method: "POST",
+      url: "/v1/webhooks",
+      headers: o.auth,
+      payload: { url: "https://hooks.example.com/in?token=s3cr3t" },
+    });
     expect(c.statusCode).toBe(201);
     const whId = c.json().webhook.id;
     const created = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'webhook.created'`, [o.tenant]);
     expect(created!.data).toEqual({ host: "hooks.example.com" });
     expect(JSON.stringify(created!.data)).not.toContain("s3cr3t");
-    const p = await app.inject({ method: "PATCH", url: `/v1/webhooks/${whId}`, headers: o.auth, payload: { url: "https://other.example.net/in?token=n3w" } });
+    const p = await app.inject({
+      method: "PATCH",
+      url: `/v1/webhooks/${whId}`,
+      headers: o.auth,
+      payload: { url: "https://other.example.net/in?token=n3w" },
+    });
     expect(p.statusCode).toBe(200);
     // Solo la descripción: sin hosts.
     await app.inject({ method: "PATCH", url: `/v1/webhooks/${whId}`, headers: o.auth, payload: { description: "x" } });
-    const upd = await db.query<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'webhook.updated' ORDER BY occurred_at, id`, [o.tenant]);
-    expect(upd.map((r) => r.data)).toEqual([{ fields: ["url"], fromHost: "hooks.example.com", toHost: "other.example.net" }, { fields: ["description"] }]);
+    const upd = await db.query<any>(
+      `SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'webhook.updated' ORDER BY occurred_at, id`,
+      [o.tenant],
+    );
+    expect(upd.map((r) => r.data)).toEqual([
+      { fields: ["url"], fromHost: "hooks.example.com", toHost: "other.example.net" },
+      { fields: ["description"] },
+    ]);
     expect(JSON.stringify(upd)).not.toContain("n3w");
   });
 });
@@ -625,7 +698,10 @@ describe("límite de pedidos y esquema Bearer", () => {
     const rl = { max: 10, timeWindow: "1 minute" };
     valid.set("cs_live_def", "tenant-a");
     expect((await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl })).key).toBe("203.0.113.9");
-    expect(await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, bearerAuthRoute: true })).toEqual({ key: "tenant:tenant-a", tenantId: "tenant-a" });
+    expect(await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, bearerAuthRoute: true })).toEqual({
+      key: "tenant:tenant-a",
+      tenantId: "tenant-a",
+    });
     expect((await id("203.0.113.11", "Bearer cs_live_def", { rateLimit: rl, bearerAuthRoute: true })).key).toBe("tenant:tenant-a");
     expect((await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, rateLimitByCredential: true })).key).toBe("tenant:tenant-a");
     // En el límite global, cada credencial sigue con su cupo.
@@ -656,7 +732,14 @@ describe("límite de pedidos y esquema Bearer", () => {
       ip: "203.0.113.50",
       cookies: {},
     });
-    const failing = { one: async () => { throw new Error("base caída"); }, query: async () => { throw new Error("base caída"); } } as any;
+    const failing = {
+      one: async () => {
+        throw new Error("base caída");
+      },
+      query: async () => {
+        throw new Error("base caída");
+      },
+    } as any;
     await expect(authenticate({ db: failing, blobs: {} as any })(req(true) as any, {} as any)).rejects.toThrow("base caída");
     expect(await key()).toMatch(/^cred:/);
     const empty = { one: async () => null, query: async () => [] } as any;
@@ -668,7 +751,13 @@ describe("límite de pedidos y esquema Bearer", () => {
   it("POST /v1/auth/login: un Bearer inventado distinto en cada pedido no evita el límite por IP", async () => {
     const ip = "198.51.100.21";
     const login = () =>
-      app.inject({ method: "POST", url: "/v1/auth/login", headers: { authorization: `Bearer cs_live_${util.randomToken(12)}` }, payload: { email: "nadie@x.test", password: "x" }, remoteAddress: ip });
+      app.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        headers: { authorization: `Bearer cs_live_${util.randomToken(12)}` },
+        payload: { email: "nadie@x.test", password: "x" },
+        remoteAddress: ip,
+      });
     for (let i = 0; i < 10; i++) expect((await login()).statusCode).not.toBe(429);
     const over = await login();
     expect(over.statusCode).toBe(429);
@@ -679,7 +768,8 @@ describe("límite de pedidos y esquema Bearer", () => {
   it("POST /v1/auth/login: ni una key válida abre otro cupo en una ruta pública", async () => {
     const o = await org();
     const ip = "198.51.100.23";
-    const login = (h: Record<string, string>) => app.inject({ method: "POST", url: "/v1/auth/login", headers: h, payload: { email: "nadie@x.test", password: "x" }, remoteAddress: ip });
+    const login = (h: Record<string, string>) =>
+      app.inject({ method: "POST", url: "/v1/auth/login", headers: h, payload: { email: "nadie@x.test", password: "x" }, remoteAddress: ip });
     for (let i = 0; i < 10; i++) expect((await login({})).statusCode).not.toBe(429);
     expect((await login(o.auth)).statusCode).toBe(429);
   });
@@ -716,7 +806,14 @@ describe("límite de pedidos y esquema Bearer", () => {
       // /mcp con un plan sin API responde 402 antes de tomar la conexión (con hijack no salen los encabezados del
       // límite); /v1/xml/sign necesita el plan con API para llegar al límite (autentica antes).
       await db.query(`UPDATE tenants SET billing_plan = $2 WHERE id = ANY($1::uuid[])`, [[a.tenant, b.tenant], url === "/mcp" ? "free" : plan]);
-      const post = (h: Record<string, string>) => app.inject({ method: "POST", url, headers: { ...h, "content-type": "application/json", accept: "application/json, text/event-stream" }, payload: {}, remoteAddress: ip });
+      const post = (h: Record<string, string>) =>
+        app.inject({
+          method: "POST",
+          url,
+          headers: { ...h, "content-type": "application/json", accept: "application/json, text/event-stream" },
+          payload: {},
+          remoteAddress: ip,
+        });
       const ra = await post(a.auth);
       const rb = await post(b.auth);
       const max = Number(ra.headers["x-ratelimit-limit"]);
@@ -725,8 +822,18 @@ describe("límite de pedidos y esquema Bearer", () => {
       expect(remaining(rb)).toBe(max - 1);
       // Otra key de la organización A (otra IP): mismo cupo, no uno nuevo.
       const key2 = `cs_test_${util.randomToken(12)}`;
-      await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1, $2, 'k2', 'cs_test', $3, 'admin')`, [util.uuidv7(), a.tenant, util.sha256Hex(key2)]);
-      const ra2 = await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${key2}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, payload: {}, remoteAddress: "198.51.100.26" });
+      await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1, $2, 'k2', 'cs_test', $3, 'admin')`, [
+        util.uuidv7(),
+        a.tenant,
+        util.sha256Hex(key2),
+      ]);
+      const ra2 = await app.inject({
+        method: "POST",
+        url,
+        headers: { authorization: `Bearer ${key2}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        payload: {},
+        remoteAddress: "198.51.100.26",
+      });
       expect(remaining(ra2)).toBe(max - 2);
       if (url !== "/mcp") continue; // /v1/xml/sign autentica antes del límite: sin credencial válida responde 401 sin contar
       // Sin credencial válida, el cupo de la IP.
@@ -753,8 +860,13 @@ describe("límite de pedidos y esquema Bearer", () => {
     const o = await org();
     const id = await endpoint(o.tenant);
     const key2 = `cs_test_${util.randomToken(12)}`;
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'k2','cs_test',$3,'admin')`, [util.uuidv7(), o.tenant, util.sha256Hex(key2)]);
-    const send = (authorization: string) => app.inject({ method: "POST", url: `/v1/webhooks/${id}/test`, headers: { authorization }, remoteAddress: "198.51.100.7" });
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'k2','cs_test',$3,'admin')`, [
+      util.uuidv7(),
+      o.tenant,
+      util.sha256Hex(key2),
+    ]);
+    const send = (authorization: string) =>
+      app.inject({ method: "POST", url: `/v1/webhooks/${id}/test`, headers: { authorization }, remoteAddress: "198.51.100.7" });
     for (let i = 0; i < 10; i++) expect((await send(o.auth.authorization)).statusCode).not.toBe(429);
     const over = await send(o.auth.authorization);
     expect(over.statusCode).toBe(429);

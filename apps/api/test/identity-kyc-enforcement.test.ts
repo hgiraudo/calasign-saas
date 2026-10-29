@@ -17,9 +17,9 @@ process.env.TRUORA_API_KEY = "truora_test_key";
 process.env.TRUORA_FLOW_ID = "IPFtest";
 process.env.TRUORA_WEBHOOK_SECRET = "truora_whsec";
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
-type Blobs = ReturnType<typeof import("../src/infra/storage")["createBlobStore"]>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
+type Blobs = ReturnType<(typeof import("../src/infra/storage"))["createBlobStore"]>;
 let db: Db;
 let app: App;
 let blobs: Blobs;
@@ -39,7 +39,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = util.uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name, retention_days) VALUES ($1, $2, 'T', 30)`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [util.uuidv7(), tenant, util.sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    util.uuidv7(),
+    tenant,
+    util.sha256Hex(KEY),
+  ]);
   blobs = createBlobStore();
   app = await buildApp({ db, blobs, logger: false });
   await app.ready();
@@ -51,7 +55,10 @@ beforeAll(async () => {
       fetchCalls.push(url);
       if (url === "https://veriff.test/v1/sessions") {
         const id = `vf_${++n}_${Date.now()}`;
-        return new Response(JSON.stringify({ verification: { id, url: `https://veriff.test/go/${id}` } }), { status: 201, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ verification: { id, url: `https://veriff.test/go/${id}` } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response(JSON.stringify({ verification: null }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -64,7 +71,15 @@ afterAll(async () => {
   await db?.close();
 });
 
-type Opts = { provider?: string; level?: string; name?: string; idDoc?: string | null; expiresAt?: string | null; authMethod?: string; status?: string };
+type Opts = {
+  provider?: string;
+  level?: string;
+  name?: string;
+  idDoc?: string | null;
+  expiresAt?: string | null;
+  authMethod?: string;
+  status?: string;
+};
 
 async function setup(o: Opts = {}) {
   const envelope = util.uuidv7();
@@ -128,7 +143,13 @@ const truoraProcess = (accountId: string, processId: string, o: { face?: boolean
       details: { document_details: { name: "Ana", last_name: "Pérez", document_number: "123", document_type: "national-id", country: "AR" } },
     },
     ...(o.face
-      ? [{ validation_type: "face-recognition", validation_status: "success", details: { face_recognition_validations: { confidence_score: 0.95, similarity_status: "success" } } }]
+      ? [
+          {
+            validation_type: "face-recognition",
+            validation_status: "success",
+            details: { face_recognition_validations: { confidence_score: 0.95, similarity_status: "success" } },
+          },
+        ]
       : []),
   ],
 });
@@ -143,7 +164,8 @@ async function pendingVerification(
   const id = util.uuidv7();
   // integration_level como lo guarda /identity/start (la integración en ese momento); null = fila anterior a la columna.
   const { integrationLevelToStore } = await import("../src/modules/identity/providers");
-  const integration = o.integrationLevel !== undefined ? o.integrationLevel : integrationLevelToStore(provider as any, (o.level ?? "document") as any);
+  const integration =
+    o.integrationLevel !== undefined ? o.integrationLevel : integrationLevelToStore(provider as any, (o.level ?? "document") as any);
   await db.query(
     `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, created_at, updated_at, integration_level)
      VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8, now() - $9::interval, now() - $9::interval, $10)`,
@@ -169,7 +191,12 @@ function png(seed: number) {
   ihdr[8] = 8;
   ihdr[9] = 2;
   const idat = Buffer.alloc(3000, seed);
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", idat), chunk("IEND", Buffer.alloc(0))]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", idat),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 function upload(token: string, kind: string, seed: number) {
@@ -179,7 +206,12 @@ function upload(token: string, kind: string, seed: number) {
     png(seed),
     Buffer.from(`\r\n--${b}--\r\n`),
   ]);
-  return app.inject({ method: "POST", url: `/v1/signing/${token}/identity/captures/${kind}`, payload, headers: { "content-type": `multipart/form-data; boundary=${b}` } });
+  return app.inject({
+    method: "POST",
+    url: `/v1/signing/${token}/identity/captures/${kind}`,
+    payload,
+    headers: { "content-type": `multipart/form-data; boundary=${b}` },
+  });
 }
 
 describe("nivel exigido con proveedores externos", () => {
@@ -193,12 +225,16 @@ describe("nivel exigido con proveedores externos", () => {
     expect(warns.join("\n")).toContain("VERIFF_INTEGRATION_LEVEL");
     const { applyIdentityFlags } = await import("../src/modules/identity/kyc");
     const x = await setup({ provider: "veriff", level: "document_selfie_liveness" });
-    const err = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } }]).catch((e) => e);
+    const err = await applyIdentityFlags(db, x.envelope, [
+      { id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } },
+    ]).catch((e) => e);
     expect(err).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
     expect(String(err.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie_liveness");
     expect(String(err.message)).toContain("no está definida");
     // document_selfie (el flujo estándar) tampoco: sin la variable no se infiere la coincidencia facial.
-    const err2 = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie" } }]).catch((e) => e);
+    const err2 = await applyIdentityFlags(db, x.envelope, [
+      { id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie" } },
+    ]).catch((e) => e);
     expect(err2).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
     expect(String(err2.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie");
     // document sí.
@@ -258,57 +294,61 @@ describe("nivel exigido con proveedores externos", () => {
     const prev = config.identity.veriffIntegrationLevel;
     (config.identity as any).veriffIntegrationLevel = "document_selfie";
     try {
-    // Integración document_selfie (declarada): la aprobación sin faceMatch cuenta como coincidencia facial.
-    const a = await setup({ provider: "veriff", level: "document_selfie" });
-    expect((await signing(a.token, "/identity/start", "POST")).statusCode).toBe(200);
-    const va = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [a.recipient]);
-    expect(va.integration_level).toBe("document_selfie");
-    // Bajar la variable después de iniciar no afecta a la verificación en curso (usa el nivel guardado).
-    (config.identity as any).veriffIntegrationLevel = "document";
-    const wh = await veriffHook({ id: va.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
-    expect(wh.statusCode).toBe(200);
-    expect((await verification(va.id)).status).toBe("verified");
-    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_verified'`, [a.envelope]);
-    expect(ev.data.inferredFromIntegration).toEqual(["faceMatched"]);
-    // El certificado lo muestra como informado por la integración (sin puntaje).
-    const { identityForCertificate } = await import("../src/modules/identity/kyc");
-    const cert = (await identityForCertificate(db, [await recipientRow(a.recipient)])).get(a.recipient);
-    expect(cert).toMatchObject({ faceMatchScore: null, faceMatched: true, inferred: ["faceMatched"] });
-    (config.identity as any).veriffIntegrationLevel = "document_selfie";
+      // Integración document_selfie (declarada): la aprobación sin faceMatch cuenta como coincidencia facial.
+      const a = await setup({ provider: "veriff", level: "document_selfie" });
+      expect((await signing(a.token, "/identity/start", "POST")).statusCode).toBe(200);
+      const va = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [a.recipient]);
+      expect(va.integration_level).toBe("document_selfie");
+      // Bajar la variable después de iniciar no afecta a la verificación en curso (usa el nivel guardado).
+      (config.identity as any).veriffIntegrationLevel = "document";
+      const wh = await veriffHook({ id: va.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
+      expect(wh.statusCode).toBe(200);
+      expect((await verification(va.id)).status).toBe("verified");
+      const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_verified'`, [a.envelope]);
+      expect(ev.data.inferredFromIntegration).toEqual(["faceMatched"]);
+      // El certificado lo muestra como informado por la integración (sin puntaje).
+      const { identityForCertificate } = await import("../src/modules/identity/kyc");
+      const cert = (await identityForCertificate(db, [await recipientRow(a.recipient)])).get(a.recipient);
+      expect(cert).toMatchObject({ faceMatchScore: null, faceMatched: true, inferred: ["faceMatched"] });
+      (config.identity as any).veriffIntegrationLevel = "document_selfie";
 
-    // Puntaje explícito bajo el umbral: falla del firmante (face_mismatch), consume un intento.
-    const b = await setup({ provider: "veriff", level: "document_selfie" });
-    await signing(b.token, "/identity/start", "POST");
-    const vb = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [b.recipient]);
-    await veriffHook({ id: vb.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, faceMatch: { similarity: 0.4 } });
-    expect(await verification(vb.id)).toMatchObject({ status: "failed", failure_reason: "face_mismatch" });
-    expect((await signing(b.token, "/identity")).json().identity.attemptsLeft).toBe(2);
+      // Puntaje explícito bajo el umbral: falla del firmante (face_mismatch), consume un intento.
+      const b = await setup({ provider: "veriff", level: "document_selfie" });
+      await signing(b.token, "/identity/start", "POST");
+      const vb = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [b.recipient]);
+      await veriffHook({ id: vb.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, faceMatch: { similarity: 0.4 } });
+      expect(await verification(vb.id)).toMatchObject({ status: "failed", failure_reason: "face_mismatch" });
+      expect((await signing(b.token, "/identity")).json().identity.attemptsLeft).toBe(2);
 
-    // Un nivel por encima de la integración: no se inicia (503, sin abrir una sesión paga) ni se puede pedir al enviar.
-    const c = await setup({ provider: "veriff", level: "document_selfie_liveness" });
-    fetchCalls = [];
-    const st = await signing(c.token, "/identity/start", "POST");
-    expect(st.statusCode).toBe(503);
-    expect(st.json().error.code).toBe("identity_provider_unavailable");
-    expect(fetchCalls).toEqual([]);
-    const { applyIdentityFlags } = await import("../src/modules/identity/kyc");
-    await expect(applyIdentityFlags(db, c.envelope, [{ id: c.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } }])).rejects.toMatchObject({
-      code: "identity_provider_unavailable",
-    });
+      // Un nivel por encima de la integración: no se inicia (503, sin abrir una sesión paga) ni se puede pedir al enviar.
+      const c = await setup({ provider: "veriff", level: "document_selfie_liveness" });
+      fetchCalls = [];
+      const st = await signing(c.token, "/identity/start", "POST");
+      expect(st.statusCode).toBe(503);
+      expect(st.json().error.code).toBe("identity_provider_unavailable");
+      expect(fetchCalls).toEqual([]);
+      const { applyIdentityFlags } = await import("../src/modules/identity/kyc");
+      await expect(
+        applyIdentityFlags(db, c.envelope, [
+          { id: c.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } },
+        ]),
+      ).rejects.toMatchObject({
+        code: "identity_provider_unavailable",
+      });
 
-    // Con la integración declarada en document_selfie_liveness, la prueba de vida también se infiere; liveness false gana.
-    (config.identity as any).veriffIntegrationLevel = "document_selfie_liveness";
-    {
-      expect((await signing(c.token, "/identity/start", "POST")).statusCode).toBe(200);
-      const vc = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [c.recipient]);
-      await veriffHook({ id: vc.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
-      expect((await verification(vc.id)).status).toBe("verified");
-      const d = await setup({ provider: "veriff", level: "document_selfie_liveness" });
-      await signing(d.token, "/identity/start", "POST");
-      const vd = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [d.recipient]);
-      await veriffHook({ id: vd.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, liveness: false });
-      expect(await verification(vd.id)).toMatchObject({ status: "failed", failure_reason: "liveness_failed" });
-    }
+      // Con la integración declarada en document_selfie_liveness, la prueba de vida también se infiere; liveness false gana.
+      (config.identity as any).veriffIntegrationLevel = "document_selfie_liveness";
+      {
+        expect((await signing(c.token, "/identity/start", "POST")).statusCode).toBe(200);
+        const vc = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [c.recipient]);
+        await veriffHook({ id: vc.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
+        expect((await verification(vc.id)).status).toBe("verified");
+        const d = await setup({ provider: "veriff", level: "document_selfie_liveness" });
+        await signing(d.token, "/identity/start", "POST");
+        const vd = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [d.recipient]);
+        await veriffHook({ id: vd.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, liveness: false });
+        expect(await verification(vd.id)).toMatchObject({ status: "failed", failure_reason: "liveness_failed" });
+      }
     } finally {
       (config.identity as any).veriffIntegrationLevel = prev;
     }
@@ -318,7 +358,16 @@ describe("nivel exigido con proveedores externos", () => {
     const { recipient, envelope, token } = await setup({ provider: "truora", level: "document_selfie_liveness" });
     const v = await pendingVerification(recipient, envelope, "truora", `acc-live-${recipient}`, { level: "document_selfie_liveness" });
     const body = truoraJwt({ events: [{ object: truoraProcess(`acc-live-${recipient}`, "IDPlive", { face: true }) }] });
-    expect((await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: body, headers: { "content-type": "text/plain" } })).statusCode).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/integrations/identity/truora/webhook",
+          payload: body,
+          headers: { "content-type": "text/plain" },
+        })
+      ).statusCode,
+    ).toBe(200);
     expect(await verification(v)).toMatchObject({ status: "failed", failure_reason: "level_not_met" });
     const ses = (await signing(token, "/identity")).json().identity;
     expect(ses.attemptsLeft).toBe(3);
@@ -329,7 +378,9 @@ describe("nivel exigido con proveedores externos", () => {
     const again = await signing(token, "/identity/start", "POST");
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe("identity_level_not_supported");
-    expect((await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/identity/reset`, headers: auth })).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/identity/reset`, headers: auth })).statusCode,
+    ).toBe(200);
   });
 
   it("Truora con un flujo propio del nivel: la aprobación cumple el nivel salvo un dato contrario explícito", async () => {
@@ -338,7 +389,12 @@ describe("nivel exigido con proveedores externos", () => {
       const a = await setup({ provider: "truora", level: "document_selfie_liveness" });
       const va = await pendingVerification(a.recipient, a.envelope, "truora", `acc-flow-${a.recipient}`, { level: "document_selfie_liveness" });
       const okBody = truoraJwt({ events: [{ object: truoraProcess(`acc-flow-${a.recipient}`, "IDPflow", { face: true }) }] });
-      await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: okBody, headers: { "content-type": "text/plain" } });
+      await app.inject({
+        method: "POST",
+        url: "/v1/integrations/identity/truora/webhook",
+        payload: okBody,
+        headers: { "content-type": "text/plain" },
+      });
       expect((await verification(va)).status).toBe("verified");
 
       const b = await setup({ provider: "truora", level: "document_selfie_liveness" });
@@ -346,7 +402,12 @@ describe("nivel exigido con proveedores externos", () => {
       const proc = truoraProcess(`acc-flow-${b.recipient}`, "IDPflow2", { face: true });
       (proc.validations[1] as any).details.face_recognition_validations.passive_liveness_status = "failure";
       const badBody = truoraJwt({ events: [{ object: proc }] });
-      await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: badBody, headers: { "content-type": "text/plain" } });
+      await app.inject({
+        method: "POST",
+        url: "/v1/integrations/identity/truora/webhook",
+        payload: badBody,
+        headers: { "content-type": "text/plain" },
+      });
       expect(await verification(vb)).toMatchObject({ status: "failed", failure_reason: "liveness_failed" });
     } finally {
       delete process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS;
@@ -363,7 +424,9 @@ describe("nivel exigido con proveedores externos", () => {
       expect(providerReady("truora", "document")).toBe(true);
       expect(providerReady("truora", "document_selfie")).toBe(false);
       const { recipient, envelope, token } = await setup({ provider: "truora", level: "document_selfie" });
-      const err = await applyIdentityFlags(db, envelope, [{ id: recipient, role: "signer", idVerification: { provider: "truora", level: "document_selfie" } }]).catch((e) => e);
+      const err = await applyIdentityFlags(db, envelope, [
+        { id: recipient, role: "signer", idVerification: { provider: "truora", level: "document_selfie" } },
+      ]).catch((e) => e);
       expect(err).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
       expect(String(err.message)).toMatch(/TRUORA_FLOW_ID_DOCUMENT_SELFIE/);
       const st = await signing(token, "/identity/start", "POST");
@@ -401,7 +464,12 @@ describe("Truora", () => {
     const body = truoraJwt({
       events: [{ object: truoraProcess(`acc-a-${a.recipient}`, "IDPaaa") }, { object: truoraProcess(`acc-b-${b.recipient}`, "IDPbbb") }],
     });
-    const wh = await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: body, headers: { "content-type": "text/plain" } });
+    const wh = await app.inject({
+      method: "POST",
+      url: "/v1/integrations/identity/truora/webhook",
+      payload: body,
+      headers: { "content-type": "text/plain" },
+    });
     expect(wh.statusCode).toBe(200);
     expect((await verification(va)).status).toBe("verified");
     expect((await verification(vb)).status).toBe("verified");
@@ -511,7 +579,11 @@ describe("sobre cerrado o vencido", () => {
     expect(voided.statusCode).toBe(200);
     const up = await upload(token, "document_front", 3);
     expect([409, 410]).toContain(up.statusCode);
-    expect(await db.one(`SELECT 1 FROM identity_captures ic JOIN identity_verifications iv ON iv.id = ic.verification_id WHERE iv.envelope_id = $1`, [envelope])).toBeNull();
+    expect(
+      await db.one(`SELECT 1 FROM identity_captures ic JOIN identity_verifications iv ON iv.id = ic.verification_id WHERE iv.envelope_id = $1`, [
+        envelope,
+      ]),
+    ).toBeNull();
   });
 
   it("un resultado que llega con el sobre vencido (sin marcar) se cancela sin sumar eventos", async () => {
@@ -530,12 +602,14 @@ describe("sobre cerrado o vencido", () => {
     const fileId = util.uuidv7();
     const key = `tenants/${tenant}/envelopes/${envelope}/identity/${fileId}.bin`;
     await blobs.put(key, new Uint8Array([1, 2, 3]), "application/octet-stream");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'identity',$3,'image/png+aesgcm',3,'x')`, [
-      fileId,
-      tenant,
-      key,
-    ]);
-    await db.query(`INSERT INTO identity_captures (id, tenant_id, verification_id, kind, file_id, sha256) VALUES ($1,$2,$3,'document_front',$4,'h')`, [util.uuidv7(), tenant, v, fileId]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'identity',$3,'image/png+aesgcm',3,'x')`,
+      [fileId, tenant, key],
+    );
+    await db.query(
+      `INSERT INTO identity_captures (id, tenant_id, verification_id, kind, file_id, sha256) VALUES ($1,$2,$3,'document_front',$4,'h')`,
+      [util.uuidv7(), tenant, v, fileId],
+    );
     await db.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), purged_at = now() WHERE id = $1`, [envelope]);
     await purgeExpiredEnvelopes({ db, blobs, log: { info() {}, warn() {}, error() {} } } as any, { tenantId: tenant, ignoreAge: true });
     expect((await db.one<any>(`SELECT purged_at FROM files WHERE id = $1`, [fileId])).purged_at).not.toBeNull();
@@ -589,21 +663,18 @@ describe("corrección del número de documento", () => {
     // Un sobre completo (documento y campo de firma): la corrección lo controla.
     const file = util.uuidv7();
     const doc = util.uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'x')`, [file, tenant, `k/${file}`]);
-    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`, [
-      doc,
-      tenant,
-      envelope,
-      file,
-      JSON.stringify([{ width: 612, height: 792 }]),
-    ]);
-    await db.query(`INSERT INTO fields (id, tenant_id, envelope_id, document_id, recipient_id, type, page, x, y, width, height) VALUES ($1,$2,$3,$4,$5,'signature',1,0.1,0.1,0.2,0.05)`, [
-      util.uuidv7(),
-      tenant,
-      envelope,
-      doc,
-      recipient,
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'x')`,
+      [file, tenant, `k/${file}`],
+    );
+    await db.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`,
+      [doc, tenant, envelope, file, JSON.stringify([{ width: 612, height: 792 }])],
+    );
+    await db.query(
+      `INSERT INTO fields (id, tenant_id, envelope_id, document_id, recipient_id, type, page, x, y, width, height) VALUES ($1,$2,$3,$4,$5,'signature',1,0.1,0.1,0.2,0.05)`,
+      [util.uuidv7(), tenant, envelope, doc, recipient],
+    );
     const v = await pendingVerification(recipient, envelope, "mock", null, { status: "verified" });
     await db.query(`UPDATE recipients SET identity_status = 'verified', identity_verified_at = now() WHERE id = $1`, [recipient]);
     const same = await app.inject({
@@ -631,13 +702,21 @@ describe("corrección del número de documento", () => {
 describe("confirmación en persona", () => {
   it("compara el número de documento normalizado (mayúsculas y separadores)", async () => {
     const { recipient, envelope, token } = await setup({ provider: "mock", authMethod: "in_person", idDoc: "AB123456" });
-    await db.query(`UPDATE recipients SET id_verification_provider = NULL, id_verification_level = NULL, identity_status = NULL WHERE id = $1`, [recipient]);
-    const cookie = util.randomToken();
-    await db.query(`INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person','127.0.0.1', now() + interval '1 hour')`, [
-      util.sha256Hex(cookie),
+    await db.query(`UPDATE recipients SET id_verification_provider = NULL, id_verification_level = NULL, identity_status = NULL WHERE id = $1`, [
       recipient,
     ]);
-    const res = await signing(token, "/in-person/confirm", "POST", { confirmed: true, idDocumentNumber: "ab-123.456" }, { cookie: `cs_signer=${cookie}` });
+    const cookie = util.randomToken();
+    await db.query(
+      `INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person','127.0.0.1', now() + interval '1 hour')`,
+      [util.sha256Hex(cookie), recipient],
+    );
+    const res = await signing(
+      token,
+      "/in-person/confirm",
+      "POST",
+      { confirmed: true, idDocumentNumber: "ab-123.456" },
+      { cookie: `cs_signer=${cookie}` },
+    );
     expect(res.statusCode).toBe(200);
     const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_confirmed'`, [envelope]);
     expect(ev.data.idDocumentMatches).toBe(true);
@@ -713,7 +792,12 @@ describe("sobres con un nivel que el proveedor no puede hacer (de antes de las r
   it("reinicio: sin cambio, 409 identity_level_not_supported; con un nivel posible, cambia el nivel y se puede iniciar", async () => {
     const x = await setup({ provider: "veriff", level: "document_selfie" });
     const reset = (payload?: unknown) =>
-      app.inject({ method: "POST", url: `/v1/envelopes/${x.envelope}/recipients/${x.recipient}/identity/reset`, headers: auth, ...(payload ? { payload: payload as any } : {}) });
+      app.inject({
+        method: "POST",
+        url: `/v1/envelopes/${x.envelope}/recipients/${x.recipient}/identity/reset`,
+        headers: auth,
+        ...(payload ? { payload: payload as any } : {}),
+      });
     const same = await reset();
     expect(same.statusCode).toBe(409);
     expect(same.json().error.code).toBe("identity_level_not_supported");
@@ -727,7 +811,11 @@ describe("sobres con un nivel que el proveedor no puede hacer (de antes de las r
     const ok = await reset({ level: "document" });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().unavailableReason).toBeNull();
-    expect(await recipientRow(x.recipient)).toMatchObject({ id_verification_provider: "veriff", id_verification_level: "document", identity_status: "pending" });
+    expect(await recipientRow(x.recipient)).toMatchObject({
+      id_verification_provider: "veriff",
+      id_verification_level: "document",
+      identity_status: "pending",
+    });
     const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_reset'`, [x.envelope]);
     expect(ev.data).toMatchObject({ previous: { provider: "veriff", level: "document_selfie" }, provider: "veriff", level: "document" });
     expect((await signing(x.token, "/identity/start", "POST")).statusCode).toBe(200);
@@ -735,6 +823,8 @@ describe("sobres con un nivel que el proveedor no puede hacer (de antes de las r
     const mock = await reset({ provider: "mock" });
     expect(mock.statusCode).toBe(200);
     expect((await recipientRow(x.recipient)).id_verification_provider).toBe("mock");
-    expect((await db.query<any>(`SELECT status FROM identity_verifications WHERE recipient_id = $1`, [x.recipient])).map((v) => v.status)).toEqual(["canceled"]);
+    expect((await db.query<any>(`SELECT status FROM identity_verifications WHERE recipient_id = $1`, [x.recipient])).map((v) => v.status)).toEqual([
+      "canceled",
+    ]);
   });
 });

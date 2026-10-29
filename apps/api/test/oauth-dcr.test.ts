@@ -28,7 +28,10 @@ describe("registro dinámico", () => {
   });
 
   it("acepta loopback http y rechaza http público, esquemas propios y fragmentos", () => {
-    expect(mod.parseDcrMetadata({ client_name: "CLI", redirect_uris: ["http://127.0.0.1:33418/callback", "http://localhost/cb", "http://[::1]:9/x"] }).redirectUris).toHaveLength(3);
+    expect(
+      mod.parseDcrMetadata({ client_name: "CLI", redirect_uris: ["http://127.0.0.1:33418/callback", "http://localhost/cb", "http://[::1]:9/x"] })
+        .redirectUris,
+    ).toHaveLength(3);
     expect(err(() => mod.parseDcrMetadata({ client_name: "x", redirect_uris: ["http://example.com/cb"] }))).toBe("invalid_redirect_uri");
     expect(err(() => mod.parseDcrMetadata({ client_name: "x", redirect_uris: ["com.example.app:/cb"] }))).toBe("invalid_redirect_uri");
     expect(err(() => mod.parseDcrMetadata({ client_name: "x", redirect_uris: ["javascript:alert(1)"] }))).toBe("invalid_redirect_uri");
@@ -48,7 +51,12 @@ describe("registro dinámico", () => {
     expect(err(() => mod.parseDcrMetadata({ ...base, client_name: "a".repeat(101) }))).toBe("invalid_client_metadata");
     expect(err(() => mod.parseDcrMetadata({ redirect_uris: base.redirect_uris }))).toBe("invalid_client_metadata");
     expect(err(() => mod.parseDcrMetadata({ ...base, logo_uri: "http://a.example/logo.png" }))).toBe("invalid_client_metadata");
-    const m = mod.parseDcrMetadata({ ...base, client_name: "  Mi\napp ", token_endpoint_auth_method: "client_secret_basic", scope: "envelopes:read offline_access" });
+    const m = mod.parseDcrMetadata({
+      ...base,
+      client_name: "  Mi\napp ",
+      token_endpoint_auth_method: "client_secret_basic",
+      scope: "envelopes:read offline_access",
+    });
     expect(m.clientName).toBe("Mi app");
     expect(m.scopes).toEqual(["envelopes:read", "offline_access"]);
   });

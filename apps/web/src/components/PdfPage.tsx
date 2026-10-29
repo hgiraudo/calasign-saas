@@ -22,7 +22,9 @@ const MAX_CANVAS_PIXELS = 16_000_000;
  * documentos cortos (que no liberan por distancia) en un móvil agotaban la memoria de canvas igual que uno largo.
  */
 const CANVAS_BUDGET =
-  typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches ? 60_000_000 : 150_000_000;
+  typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches
+    ? 60_000_000
+    : 150_000_000;
 
 interface CanvasSlot {
   /** Píxeles del canvas dibujado (0: liberado). */

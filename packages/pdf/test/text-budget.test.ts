@@ -76,7 +76,16 @@ describe("leer el texto de un PDF con tope", () => {
     const comp = deflateSync(Buffer.alloc(w * w, 0x80), { level: 1 });
     const img = doc.context.register(
       PDFRawStream.of(
-        doc.context.obj({ Type: "XObject", Subtype: "Image", Width: w, Height: w, BitsPerComponent: 8, ColorSpace: "DeviceGray", Filter: "FlateDecode", Length: comp.length }) as PDFDict,
+        doc.context.obj({
+          Type: "XObject",
+          Subtype: "Image",
+          Width: w,
+          Height: w,
+          BitsPerComponent: 8,
+          ColorSpace: "DeviceGray",
+          Filter: "FlateDecode",
+          Length: comp.length,
+        }) as PDFDict,
         new Uint8Array(comp),
       ),
     );
@@ -130,13 +139,21 @@ describe("leer el texto de un PDF con tope", () => {
     const formData = Buffer.from("BT /F1 12 Tf (Clausula) Tj ET");
     const form = doc.context.register(
       PDFRawStream.of(
-        doc.context.obj({ Type: "XObject", Subtype: "Form", BBox: [0, 0, 100, 100], Resources: { Font: { F1: fontRef } }, Length: formData.length }) as PDFDict,
+        doc.context.obj({
+          Type: "XObject",
+          Subtype: "Form",
+          BBox: [0, 0, 100, 100],
+          Resources: { Font: { F1: fontRef } },
+          Length: formData.length,
+        }) as PDFDict,
         new Uint8Array(formData),
       ),
     );
     page.node.Resources()!.set(PDFName.of("XObject"), doc.context.obj({ Fm: form }));
     const content = deflateSync(Buffer.from("/Fm Do ".repeat(5000)));
-    const ref = doc.context.register(PDFRawStream.of(doc.context.obj({ Filter: "FlateDecode", Length: content.length }) as PDFDict, new Uint8Array(content)));
+    const ref = doc.context.register(
+      PDFRawStream.of(doc.context.obj({ Filter: "FlateDecode", Length: content.length }) as PDFDict, new Uint8Array(content)),
+    );
     const arr = doc.context.obj([]) as any;
     arr.push(page.node.get(PDFName.of("Contents")));
     arr.push(ref);

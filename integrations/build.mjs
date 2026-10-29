@@ -104,7 +104,10 @@ function checkSkill() {
   if (!m) throw new Error("SKILL.md sin frontmatter YAML");
   // Claves de primer nivel permitidas fuera de Claude Code (claude.ai / API de Skills).
   const allowed = new Set(["name", "description", "license", "compatibility", "metadata", "allowed-tools"]);
-  const keys = m[1].split("\n").filter((l) => /^[a-z-]+:/.test(l)).map((l) => l.split(":")[0]);
+  const keys = m[1]
+    .split("\n")
+    .filter((l) => /^[a-z-]+:/.test(l))
+    .map((l) => l.split(":")[0]);
   for (const k of keys) if (!allowed.has(k)) throw new Error(`SKILL.md: clave de frontmatter no permitida: ${k}`);
   const name = /^name:\s*(.+)$/m.exec(m[1])?.[1].trim();
   const description = /^description:\s*(.+)$/m.exec(m[1])?.[1].trim();
@@ -164,7 +167,10 @@ async function mcpbEntries() {
     { name: "manifest.json", data: load(join(HERE, "mcpb/manifest.json")) },
     { name: "icon.png", data: readFileSync(join(HERE, "assets/icon-512.png")) },
     { name: "server/index.mjs", data: Buffer.from(code) },
-    { name: "README.md", data: Buffer.from(`# CalaSign para Claude Desktop\n\nProxy local (stdio) al servidor MCP ${BASE_URL}/mcp. Versión ${VERSION}.\n`) },
+    {
+      name: "README.md",
+      data: Buffer.from(`# CalaSign para Claude Desktop\n\nProxy local (stdio) al servidor MCP ${BASE_URL}/mcp. Versión ${VERSION}.\n`),
+    },
   ];
 }
 
@@ -251,8 +257,16 @@ async function main() {
 
   // 5. Office
   for (const e of await officeFiles()) write(`office/${e.name}`, e.data);
-  artifacts.push({ path: "/integrations/office/manifest.xml", url: `${BASE_URL}/integrations/office/manifest.xml`, description: "Complemento de Word (manifiesto XML)" });
-  artifacts.push({ path: "/integrations/office/manifest-outlook.xml", url: `${BASE_URL}/integrations/office/manifest-outlook.xml`, description: "Complemento de Outlook (manifiesto XML)" });
+  artifacts.push({
+    path: "/integrations/office/manifest.xml",
+    url: `${BASE_URL}/integrations/office/manifest.xml`,
+    description: "Complemento de Word (manifiesto XML)",
+  });
+  artifacts.push({
+    path: "/integrations/office/manifest-outlook.xml",
+    url: `${BASE_URL}/integrations/office/manifest-outlook.xml`,
+    description: "Complemento de Outlook (manifiesto XML)",
+  });
 
   // Ejemplos y guías.
   write("gemini-api/example.py", load(join(HERE, "gemini-api/example.py")));

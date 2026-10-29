@@ -36,20 +36,68 @@ function makeP12(kind: "rsa" | "ec" | "rsa-legacy", withCa = false): { bytes: Ui
   const f = (n: string) => join(dir, n);
   const key = kind === "ec" ? ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256"] : ["-newkey", "rsa:2048"];
   if (withCa) {
-    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", f("ca.key"), "-out", f("ca.crt"), "-subj", "/CN=Test CA", "-days", "2", "-addext", "basicConstraints=critical,CA:TRUE"], { stdio: "ignore" });
-    execFileSync("openssl", ["req", ...key, "-nodes", "-keyout", f("leaf.key"), "-out", f("leaf.csr"), "-subj", "/CN=Titular/serialNumber=PNOPE-12345678"], { stdio: "ignore" });
-    execFileSync("openssl", ["x509", "-req", "-in", f("leaf.csr"), "-CA", f("ca.crt"), "-CAkey", f("ca.key"), "-CAcreateserial", "-out", f("leaf.crt"), "-days", "2"], { stdio: "ignore" });
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        f("ca.key"),
+        "-out",
+        f("ca.crt"),
+        "-subj",
+        "/CN=Test CA",
+        "-days",
+        "2",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+      ],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "openssl",
+      ["req", ...key, "-nodes", "-keyout", f("leaf.key"), "-out", f("leaf.csr"), "-subj", "/CN=Titular/serialNumber=PNOPE-12345678"],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "openssl",
+      ["x509", "-req", "-in", f("leaf.csr"), "-CA", f("ca.crt"), "-CAkey", f("ca.key"), "-CAcreateserial", "-out", f("leaf.crt"), "-days", "2"],
+      { stdio: "ignore" },
+    );
   } else {
-    execFileSync("openssl", ["req", "-x509", ...key, "-nodes", "-keyout", f("leaf.key"), "-out", f("leaf.crt"), "-subj", "/CN=Titular", "-days", "2"], { stdio: "ignore" });
+    execFileSync(
+      "openssl",
+      ["req", "-x509", ...key, "-nodes", "-keyout", f("leaf.key"), "-out", f("leaf.crt"), "-subj", "/CN=Titular", "-days", "2"],
+      { stdio: "ignore" },
+    );
   }
-  const args = ["pkcs12", "-export", ...(kind === "rsa-legacy" ? ["-legacy"] : []), "-inkey", f("leaf.key"), "-in", f("leaf.crt"), ...(withCa ? ["-certfile", f("ca.crt")] : []), "-out", f("c.p12"), "-passout", "pass:clave-secreta"];
+  const args = [
+    "pkcs12",
+    "-export",
+    ...(kind === "rsa-legacy" ? ["-legacy"] : []),
+    "-inkey",
+    f("leaf.key"),
+    "-in",
+    f("leaf.crt"),
+    ...(withCa ? ["-certfile", f("ca.crt")] : []),
+    "-out",
+    f("c.p12"),
+    "-passout",
+    "pass:clave-secreta",
+  ];
   execFileSync("openssl", args, { stdio: "ignore" });
   return { bytes: new Uint8Array(readFileSync(f("c.p12"))), leafPem: readFileSync(f("leaf.crt"), "utf8") };
 }
 
 describe("deep link y cliente", () => {
   it("interpreta el link del navegador y los códigos sueltos", () => {
-    expect(parseDeepLink("calasign-firmador://sign?api=https%3A%2F%2Fdev.calasign.com&code=ABCDE-FGHJK")).toEqual({ api: "https://dev.calasign.com", code: "ABCDE-FGHJK" });
+    expect(parseDeepLink("calasign-firmador://sign?api=https%3A%2F%2Fdev.calasign.com&code=ABCDE-FGHJK")).toEqual({
+      api: "https://dev.calasign.com",
+      code: "ABCDE-FGHJK",
+    });
     expect(parseDeepLink("abcde-fghjk")).toEqual({ api: null, code: "ABCDE-FGHJK" });
     expect(parseDeepLink("calasign-firmador://sign?api=javascript:alert(1)&code=X")).toBeNull();
     expect(parseDeepLink("hola")).toBeNull();
@@ -62,7 +110,11 @@ describe("deep link y cliente", () => {
 
 describe("solo firma atributos de CMS", () => {
   const A = forge.asn1;
-  const attr = (oid: string, value: forge.asn1.Asn1) => A.create(A.Class.UNIVERSAL, A.Type.SEQUENCE, true, [A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer(oid).getBytes()), A.create(A.Class.UNIVERSAL, A.Type.SET, true, [value])]);
+  const attr = (oid: string, value: forge.asn1.Asn1) =>
+    A.create(A.Class.UNIVERSAL, A.Type.SEQUENCE, true, [
+      A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer(oid).getBytes()),
+      A.create(A.Class.UNIVERSAL, A.Type.SET, true, [value]),
+    ]);
   const pack = (attrs: forge.asn1.Asn1[]) => {
     const der = Buffer.from(A.toDer(A.create(A.Class.UNIVERSAL, A.Type.SET, true, attrs)).getBytes(), "binary");
     return { dataToSign: der.toString("base64"), digestToSign: createHash("sha256").update(der).digest("base64") };
@@ -74,7 +126,9 @@ describe("solo firma atributos de CMS", () => {
   });
   it("rechaza hashes arbitrarios, atributos desconocidos o un hash que no corresponde", () => {
     const random = Buffer.from("cualquier cosa que no es CMS");
-    expect(() => assertSignedAttributes({ dataToSign: random.toString("base64"), digestToSign: createHash("sha256").update(random).digest("base64") })).toThrow();
+    expect(() =>
+      assertSignedAttributes({ dataToSign: random.toString("base64"), digestToSign: createHash("sha256").update(random).digest("base64") }),
+    ).toThrow();
     expect(() => assertSignedAttributes(pack([ct]))).toThrow(/obligatorios/);
     expect(() => assertSignedAttributes(pack([ct, md, attr("1.2.3.4", A.create(A.Class.UNIVERSAL, A.Type.NULL, false, ""))]))).toThrow(/no esperado/);
     expect(() => assertSignedAttributes({ ...pack([ct, md]), digestToSign: Buffer.alloc(32).toString("base64") })).toThrow(/no corresponde/);
@@ -100,7 +154,16 @@ describe("almacén de Windows (PowerShell)", () => {
     const src = new WindowsStoreSource(async (s) => {
       calls.push(s);
       return s.includes("Get-ChildItem")
-        ? JSON.stringify([{ thumbprint: "B".repeat(40), subject: "CN=Juan Perez, SERIALNUMBER=PNOPE-12345678", issuer: "CN=RENIEC", notAfter: "2030-01-01T00:00:00Z", friendly: "", chain: [der] }])
+        ? JSON.stringify([
+            {
+              thumbprint: "B".repeat(40),
+              subject: "CN=Juan Perez, SERIALNUMBER=PNOPE-12345678",
+              issuer: "CN=RENIEC",
+              notAfter: "2030-01-01T00:00:00Z",
+              friendly: "",
+              chain: [der],
+            },
+          ])
         : Buffer.from([1, 2, 3]).toString("base64");
     });
     const [c] = await src.list();
@@ -118,7 +181,11 @@ describe.skipIf(!hasOpenssl)("archivo .p12", () => {
       const { key, chainDer } = openP12(bytes, "clave-secreta");
       expect(new X509Certificate(Buffer.from(chainDer[0])).toString().trim()).toBe(new X509Certificate(leafPem).toString().trim());
       const data = new Uint8Array(Buffer.from("atributos firmados"));
-      const sig = signWithKey(key, { data, digest: createHash("sha256").update(data).digest(), algorithm: kind === "ec" ? "ECDSA" : "RSASSA-PKCS1-v1_5" });
+      const sig = signWithKey(key, {
+        data,
+        digest: createHash("sha256").update(data).digest(),
+        algorithm: kind === "ec" ? "ECDSA" : "RSASSA-PKCS1-v1_5",
+      });
       const pub = new X509Certificate(Buffer.from(chainDer[0])).publicKey;
       expect(cryptoVerify("sha256", Buffer.from(data), kind === "ec" ? { key: pub, dsaEncoding: "der" } : pub, Buffer.from(sig))).toBe(true);
     });
@@ -183,7 +250,10 @@ describe("vínculo con el documento (assertPreparedMatchesDocument)", () => {
   const sha = (b: Buffer) => createHash("sha256").update(b).digest();
   const attrsWithDigest = (digest: Buffer) => {
     const attr = (oid: string, value: forge.asn1.Asn1) =>
-      A.create(A.Class.UNIVERSAL, A.Type.SEQUENCE, true, [A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer(oid).getBytes()), A.create(A.Class.UNIVERSAL, A.Type.SET, true, [value])]);
+      A.create(A.Class.UNIVERSAL, A.Type.SEQUENCE, true, [
+        A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer(oid).getBytes()),
+        A.create(A.Class.UNIVERSAL, A.Type.SET, true, [value]),
+      ]);
     const ct = attr("1.2.840.113549.1.9.3", A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer("1.2.840.113549.1.7.1").getBytes()));
     const md = attr("1.2.840.113549.1.9.4", A.create(A.Class.UNIVERSAL, A.Type.OCTETSTRING, false, digest.toString("binary")));
     return new Uint8Array(Buffer.from(A.toDer(A.create(A.Class.UNIVERSAL, A.Type.SET, true, [ct, md])).getBytes(), "binary"));
@@ -208,33 +278,50 @@ describe("vínculo con el documento (assertPreparedMatchesDocument)", () => {
 
   it("acepta cuando el documento, el ByteRange y el messageDigest coinciden", () => {
     const { pdf, covered } = prepare(working);
-    expect(() => assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) })).not.toThrow();
+    expect(() =>
+      assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) }),
+    ).not.toThrow();
   });
   it("rechaza un messageDigest que no corresponde al documento", () => {
     const { pdf } = prepare(working);
     expect(() =>
-      assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(sha(Buffer.from("otro documento"))) }),
+      assertPreparedMatchesDocument({
+        announcedSha256: announced,
+        workingPdf: working,
+        preparedPdf: pdf,
+        signedAttrsDer: attrsWithDigest(sha(Buffer.from("otro documento"))),
+      }),
     ).toThrow(/no corresponden al documento/);
   });
   it("rechaza un PDF preparado sobre otro documento", () => {
     const otro = Buffer.from(working.toString("latin1").replace("Catalog", "Catalgo"), "latin1");
     const { pdf, covered } = prepare(otro);
-    expect(() => assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) })).toThrow(
-      /no conserva intacto/,
-    );
+    expect(() =>
+      assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) }),
+    ).toThrow(/no conserva intacto/);
   });
   it("rechaza un documento descargado distinto del anunciado", () => {
     const { pdf, covered } = prepare(working);
     expect(() =>
-      assertPreparedMatchesDocument({ announcedSha256: "0".repeat(64), workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) }),
+      assertPreparedMatchesDocument({
+        announcedSha256: "0".repeat(64),
+        workingPdf: working,
+        preparedPdf: pdf,
+        signedAttrsDer: attrsWithDigest(covered),
+      }),
     ).toThrow(/no es el que anunció/);
   });
   it("rechaza un ByteRange que deja bytes sin cubrir", () => {
     const { pdf, covered } = prepare(working);
     const extra = Buffer.concat([pdf, Buffer.from("\n% bytes agregados fuera del ByteRange", "latin1")]);
-    expect(() => assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: extra, signedAttrsDer: attrsWithDigest(covered) })).toThrow(
-      /no cubre el documento completo/,
-    );
+    expect(() =>
+      assertPreparedMatchesDocument({
+        announcedSha256: announced,
+        workingPdf: working,
+        preparedPdf: extra,
+        signedAttrsDer: attrsWithDigest(covered),
+      }),
+    ).toThrow(/no cubre el documento completo/);
   });
 });
 
@@ -253,7 +340,8 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     return doc.save({ useObjectStreams: false });
   }
   const prep = async (pdf: Uint8Array) =>
-    (await pdfmod.prepareExternalSignature(pdf, chain, { fieldName: "FirmaCertificado1", reason: "Prueba", name: "Titular", location: "CalaSign" })).preparedPdf;
+    (await pdfmod.prepareExternalSignature(pdf, chain, { fieldName: "FirmaCertificado1", reason: "Prueba", name: "Titular", location: "CalaSign" }))
+      .preparedPdf;
 
   it("acepta la preparación legítima (firma + widget invisible enganchados)", async () => {
     const working = await base();
@@ -277,7 +365,10 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     const off = prepared.length + 1;
     return Buffer.concat([
       prepared,
-      Buffer.from(`\nxref\n${xrefBody}trailer\n<< /Size 99 /Root ${rootOf(prepared)} /Prev ${lastStartxref(prepared)} >>\nstartxref\n${off}\n%%EOF\n`, "latin1"),
+      Buffer.from(
+        `\nxref\n${xrefBody}trailer\n<< /Size 99 /Root ${rootOf(prepared)} /Prev ${lastStartxref(prepared)} >>\nstartxref\n${off}\n%%EOF\n`,
+        "latin1",
+      ),
     ]);
   }
 
@@ -341,7 +432,10 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     const original = Buffer.from(await doc.save({ useObjectStreams: false }));
     const u = await pdfmod.IncrementalUpdate.open(original);
     const page = u.doc.getPages()[0];
-    const fontRef = page.node.Resources()!.lookup(PDFName.of("Font"), (await import("pdf-lib")).PDFDict).entries()[0];
+    const fontRef = page.node
+      .Resources()!
+      .lookup(PDFName.of("Font"), (await import("pdf-lib")).PDFDict)
+      .entries()[0];
     page.node.set(PDFName.of("Contents"), u.add(u.context.flateStream(`BT /${fontRef[0].decodeText()} 14 Tf 50 780 Td (Monto a pagar: 100) Tj ET`)));
     u.touch(page.ref);
     return { original, working: Buffer.from(await u.serialize()) };
@@ -383,7 +477,9 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     await expect(assertOnlySignatureAdded(working, Buffer.from(prepared.slice(0, working.length) + withAA, "latin1"))).rejects.toThrow(/No se firma/);
     const withRef = tail.replace("/Filter /Adobe.PPKLite", "/Filter /Adobe.PPKLite /Reference [ << /TransformMethod /DocMDP >> ]");
     expect(withRef).not.toBe(tail);
-    await expect(assertOnlySignatureAdded(working, Buffer.from(prepared.slice(0, working.length) + withRef, "latin1"))).rejects.toThrow(/No se firma/);
+    await expect(assertOnlySignatureAdded(working, Buffer.from(prepared.slice(0, working.length) + withRef, "latin1"))).rejects.toThrow(
+      /No se firma/,
+    );
   });
 
   it("rechaza una revisión que cambia la raíz del documento", async () => {

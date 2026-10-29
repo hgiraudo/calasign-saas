@@ -8,8 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-stale-panels-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 const KEY = "cs_test_stale_panels_key";
@@ -25,7 +25,11 @@ beforeAll(async () => {
   await migrate(db);
   const tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -40,15 +44,26 @@ async function newEnvelope() {
   const d = r.json();
   return { id: d.envelope.id as string, updatedAt: d.envelope.updatedAt as string };
 }
-const envUpdatedAt = async (id: string) => (await app.inject({ method: "GET", url: `/v1/envelopes/${id}`, headers: auth })).json().envelope.updatedAt as string;
+const envUpdatedAt = async (id: string) =>
+  (await app.inject({ method: "GET", url: `/v1/envelopes/${id}`, headers: auth })).json().envelope.updatedAt as string;
 
 describe("sello y asistencia de IA con X-Expected-Updated-At", () => {
   it("seal-options: 409 si el sobre cambió; si no, devuelve el updatedAt nuevo del sobre", async () => {
     const e = await newEnvelope();
-    const bad = await app.inject({ method: "PUT", url: `/v1/envelopes/${e.id}/seal-options`, headers: { ...auth, "x-expected-updated-at": stale }, payload: { signatureLevel: "advanced" } });
+    const bad = await app.inject({
+      method: "PUT",
+      url: `/v1/envelopes/${e.id}/seal-options`,
+      headers: { ...auth, "x-expected-updated-at": stale },
+      payload: { signatureLevel: "advanced" },
+    });
     expect(bad.statusCode).toBe(409);
     expect(bad.json().error.code).toBe("version_changed");
-    const ok = await app.inject({ method: "PUT", url: `/v1/envelopes/${e.id}/seal-options`, headers: { ...auth, "x-expected-updated-at": e.updatedAt }, payload: { signatureLevel: "advanced" } });
+    const ok = await app.inject({
+      method: "PUT",
+      url: `/v1/envelopes/${e.id}/seal-options`,
+      headers: { ...auth, "x-expected-updated-at": e.updatedAt },
+      payload: { signatureLevel: "advanced" },
+    });
     expect(ok.statusCode).toBe(200);
     const body = ok.json();
     expect(body.signatureLevel).toBe("advanced");
@@ -61,10 +76,20 @@ describe("sello y asistencia de IA con X-Expected-Updated-At", () => {
 
   it("ai/settings: 409 si el sobre cambió; si no, devuelve el updatedAt nuevo del sobre", async () => {
     const e = await newEnvelope();
-    const bad = await app.inject({ method: "PATCH", url: `/v1/envelopes/${e.id}/ai/settings`, headers: { ...auth, "x-expected-updated-at": stale }, payload: { signerAssist: false } });
+    const bad = await app.inject({
+      method: "PATCH",
+      url: `/v1/envelopes/${e.id}/ai/settings`,
+      headers: { ...auth, "x-expected-updated-at": stale },
+      payload: { signerAssist: false },
+    });
     expect(bad.statusCode).toBe(409);
     expect(bad.json().error.code).toBe("version_changed");
-    const ok = await app.inject({ method: "PATCH", url: `/v1/envelopes/${e.id}/ai/settings`, headers: { ...auth, "x-expected-updated-at": e.updatedAt }, payload: { signerAssist: false } });
+    const ok = await app.inject({
+      method: "PATCH",
+      url: `/v1/envelopes/${e.id}/ai/settings`,
+      headers: { ...auth, "x-expected-updated-at": e.updatedAt },
+      payload: { signerAssist: false },
+    });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().envelopeUpdatedAt > e.updatedAt).toBe(true);
     expect(ok.json().envelopeUpdatedAt).toBe(await envUpdatedAt(e.id));
@@ -77,14 +102,29 @@ describe("visibilidad de la plantilla con X-Expected-Updated-At", () => {
     expect(c.statusCode).toBe(201);
     const tpl = c.json().template;
     const url = `/v1/templates/${tpl.id}/shares`;
-    const bad = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": stale }, payload: { groupIds: [], visibility: "restricted" } });
+    const bad = await app.inject({
+      method: "PUT",
+      url,
+      headers: { ...auth, "x-expected-updated-at": stale },
+      payload: { groupIds: [], visibility: "restricted" },
+    });
     expect(bad.statusCode).toBe(409);
     expect(bad.json().error.code).toBe("version_changed");
-    const ok = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": tpl.updatedAt }, payload: { groupIds: [], visibility: "restricted" } });
+    const ok = await app.inject({
+      method: "PUT",
+      url,
+      headers: { ...auth, "x-expected-updated-at": tpl.updatedAt },
+      payload: { groupIds: [], visibility: "restricted" },
+    });
     expect(ok.statusCode).toBe(200);
     const after = ok.json().templateUpdatedAt as string;
     expect(after > tpl.updatedAt).toBe(true);
-    const same = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": after }, payload: { groupIds: [], visibility: "restricted" } });
+    const same = await app.inject({
+      method: "PUT",
+      url,
+      headers: { ...auth, "x-expected-updated-at": after },
+      payload: { groupIds: [], visibility: "restricted" },
+    });
     expect(same.statusCode).toBe(200);
     expect(same.json().templateUpdatedAt).toBe(after);
   });
@@ -93,14 +133,24 @@ describe("visibilidad de la plantilla con X-Expected-Updated-At", () => {
 describe("grupos de la plantilla: 404/409 antes que invalid_group", () => {
   it("plantilla inexistente → 404; versión vieja → 409 (aunque el grupo no exista)", async () => {
     const ghostGroup = "00000000-0000-4000-8000-000000000001";
-    const missing = await app.inject({ method: "PUT", url: `/v1/templates/00000000-0000-4000-8000-000000000002/shares`, headers: auth, payload: { groupIds: [ghostGroup] } });
+    const missing = await app.inject({
+      method: "PUT",
+      url: `/v1/templates/00000000-0000-4000-8000-000000000002/shares`,
+      headers: auth,
+      payload: { groupIds: [ghostGroup] },
+    });
     expect(missing.statusCode).toBe(404);
     const c = await app.inject({ method: "POST", url: "/v1/templates", headers: auth, payload: { name: "Plantilla grupos" } });
     const tpl = c.json().template;
     const url = `/v1/templates/${tpl.id}/shares`;
     const bad = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": stale }, payload: { groupIds: [ghostGroup] } });
     expect(bad.json().error.code).toBe("version_changed");
-    const inv = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": tpl.updatedAt }, payload: { groupIds: [ghostGroup] } });
+    const inv = await app.inject({
+      method: "PUT",
+      url,
+      headers: { ...auth, "x-expected-updated-at": tpl.updatedAt },
+      payload: { groupIds: [ghostGroup] },
+    });
     expect(inv.statusCode).toBe(400);
     expect(inv.json().error.code).toBe("invalid_group");
     // Sin cambio de visibilidad devuelve la versión leída con FOR UPDATE (la misma).
@@ -125,11 +175,19 @@ describe("OpenAPI de los guardados laterales", () => {
 describe("enviar con X-Expected-Updated-At", () => {
   it("409 version_changed si el borrador cambió; sin encabezado no se controla", async () => {
     const e = await newEnvelope();
-    const bad = await app.inject({ method: "POST", url: `/v1/envelopes/${e.id}/send`, headers: { ...auth, "x-expected-updated-at": stale, "idempotency-key": "k-stale" } });
+    const bad = await app.inject({
+      method: "POST",
+      url: `/v1/envelopes/${e.id}/send`,
+      headers: { ...auth, "x-expected-updated-at": stale, "idempotency-key": "k-stale" },
+    });
     expect(bad.statusCode).toBe(409);
     expect(bad.json().error.code).toBe("version_changed");
     // La clave se liberó y el encabezado no entra en su hash: la misma clave con la versión actual no es idempotency_mismatch.
-    const cur = await app.inject({ method: "POST", url: `/v1/envelopes/${e.id}/send`, headers: { ...auth, "x-expected-updated-at": e.updatedAt, "idempotency-key": "k-stale" } });
+    const cur = await app.inject({
+      method: "POST",
+      url: `/v1/envelopes/${e.id}/send`,
+      headers: { ...auth, "x-expected-updated-at": e.updatedAt, "idempotency-key": "k-stale" },
+    });
     expect(cur.json().error.code).toBe("envelope_incomplete");
     const free = await app.inject({ method: "POST", url: `/v1/envelopes/${e.id}/send`, headers: auth });
     expect(free.json().error.code).toBe("envelope_incomplete");

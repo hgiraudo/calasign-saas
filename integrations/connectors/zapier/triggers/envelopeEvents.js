@@ -60,7 +60,9 @@ const SAMPLE = {
   recipient_name: null,
   recipient_email: null,
   reason: null,
-  recipients: [{ id: "0190a000-0000-7000-8000-0000000000a1", name: "Ana Pérez", email: "ana@example.com", role: "signer", status: "signed", routingOrder: 1 }],
+  recipients: [
+    { id: "0190a000-0000-7000-8000-0000000000a1", name: "Ana Pérez", email: "ana@example.com", role: "signer", status: "signed", routingOrder: 1 },
+  ],
 };
 
 function withPdf(z, row) {
@@ -130,10 +132,39 @@ function hookTrigger({ key, noun, label, description, events }) {
 }
 
 module.exports = [
-  hookTrigger({ key: "envelope_completed", noun: "Envelope", label: "Envelope Completed", description: "Triggers when every recipient has signed and the signed PDF is ready.", events: ["envelope.completed"] }),
-  hookTrigger({ key: "envelope_sent", noun: "Envelope", label: "Envelope Sent", description: "Triggers when an envelope is sent for signature.", events: ["envelope.sent"] }),
-  hookTrigger({ key: "envelope_declined", noun: "Envelope", label: "Envelope Declined", description: "Triggers when a recipient declines to sign an envelope.", events: ["envelope.declined"] }),
-  hookTrigger({ key: "recipient_signed", noun: "Recipient", label: "Recipient Signed", description: "Triggers when a recipient signs an envelope.", events: ["recipient.signed"] }),
-  hookTrigger({ key: "envelope_event", noun: "Event", label: "New Envelope Event", description: "Triggers on the envelope and recipient events you choose." }),
+  hookTrigger({
+    key: "envelope_completed",
+    noun: "Envelope",
+    label: "Envelope Completed",
+    description: "Triggers when every recipient has signed and the signed PDF is ready.",
+    events: ["envelope.completed"],
+  }),
+  hookTrigger({
+    key: "envelope_sent",
+    noun: "Envelope",
+    label: "Envelope Sent",
+    description: "Triggers when an envelope is sent for signature.",
+    events: ["envelope.sent"],
+  }),
+  hookTrigger({
+    key: "envelope_declined",
+    noun: "Envelope",
+    label: "Envelope Declined",
+    description: "Triggers when a recipient declines to sign an envelope.",
+    events: ["envelope.declined"],
+  }),
+  hookTrigger({
+    key: "recipient_signed",
+    noun: "Recipient",
+    label: "Recipient Signed",
+    description: "Triggers when a recipient signs an envelope.",
+    events: ["recipient.signed"],
+  }),
+  hookTrigger({
+    key: "envelope_event",
+    noun: "Event",
+    label: "New Envelope Event",
+    description: "Triggers on the envelope and recipient events you choose.",
+  }),
 ];
 module.exports.ALL_EVENTS = ALL_EVENTS;

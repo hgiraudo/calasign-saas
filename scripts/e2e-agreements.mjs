@@ -12,7 +12,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
 const tempDirs = [];
 process.on("exit", () => {
@@ -20,7 +19,12 @@ process.on("exit", () => {
 });
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -172,7 +176,11 @@ step("alta de cuenta");
 
 // ───────────────────────────── Documentos ─────────────────────────────
 
-await api("POST", "/v1/clauses", { slug: "confidencialidad", title: "Confidencialidad", body: "## Confidencialidad\nLas partes guardan **reserva** sobre la información de {{empresa}}." });
+await api("POST", "/v1/clauses", {
+  slug: "confidencialidad",
+  title: "Confidencialidad",
+  body: "## Confidencialidad\nLas partes guardan **reserva** sobre la información de {{empresa}}.",
+});
 await api("POST", "/v1/clauses", { slug: "confidencialidad", title: "x", body: "y" }, { expect: 409 });
 await api("POST", "/v1/clauses", { slug: "rota", title: "Rota", body: "{{#if a}}sin cierre" }, { expect: 400 });
 
@@ -223,15 +231,35 @@ assert(pdfRes.status === 200 && pdfRes.headers.get("content-type") === "applicat
 const txt = pdfText(Buffer.from(await pdfRes.arrayBuffer()));
 assert(txt.includes(cliente) && txt.includes("persona humana") && !txt.includes("persona jurídica"), "variables y condicional en el PDF");
 assert(txt.includes("30. Consultoría módulo 30") && txt.includes("3000,00 US$"), "tabla repetida con formato de moneda");
-assert(txt.includes("contrato de largo plazo") && txt.includes("Confidencialidad") && txt.includes("Firma — Cliente"), "condicional en línea, cláusula y marcas");
+assert(
+  txt.includes("contrato de largo plazo") && txt.includes("Confidencialidad") && txt.includes("Firma — Cliente"),
+  "condicional en línea, cláusula y marcas",
+);
 step("plantilla con variables, condicionales, tabla repetida (30 filas), cláusula y marcas → PDF verificado con pdftotext");
 
-await api("POST", `/v1/document-templates/${tpl.id}/generate`, { data: { empresa: "X" }, recipients: [{ role: "Cliente", name: "a", email: "a@example.com" }] }, { expect: 422 });
-await api("POST", `/v1/document-templates/${tpl.id}/generate`, { data, recipients: [{ role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` }] }, { expect: 422 });
 await api(
   "POST",
   `/v1/document-templates/${tpl.id}/generate`,
-  { data, recipients: [{ role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` }, { role: "Empresa", name: "Ana", email: me.user.email }, { role: "Testigo", name: "T", email: "t@example.com" }] },
+  { data: { empresa: "X" }, recipients: [{ role: "Cliente", name: "a", email: "a@example.com" }] },
+  { expect: 422 },
+);
+await api(
+  "POST",
+  `/v1/document-templates/${tpl.id}/generate`,
+  { data, recipients: [{ role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` }] },
+  { expect: 422 },
+);
+await api(
+  "POST",
+  `/v1/document-templates/${tpl.id}/generate`,
+  {
+    data,
+    recipients: [
+      { role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` },
+      { role: "Empresa", name: "Ana", email: me.user.email },
+      { role: "Testigo", name: "T", email: "t@example.com" },
+    ],
+  },
   { expect: 422 },
 );
 {
@@ -239,10 +267,20 @@ await api(
   const dup = await api(
     "POST",
     `/v1/document-templates/${tpl.id}/generate`,
-    { data, recipients: [{ role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` }, { role: "cliente", name: "Otro", email: `otro+${stamp}@example.com` }, { role: "Empresa", name: "Ana", email: me.user.email }] },
+    {
+      data,
+      recipients: [
+        { role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` },
+        { role: "cliente", name: "Otro", email: `otro+${stamp}@example.com` },
+        { role: "Empresa", name: "Ana", email: me.user.email },
+      ],
+    },
     { expect: 422 },
   );
-  assert(dup?.error?.code === "duplicate_roles" || dup?.code === "duplicate_roles", `rol repetido → duplicate_roles (${JSON.stringify(dup).slice(0, 200)})`);
+  assert(
+    dup?.error?.code === "duplicate_roles" || dup?.code === "duplicate_roles",
+    `rol repetido → duplicate_roles (${JSON.stringify(dup).slice(0, 200)})`,
+  );
   // Una copia con el mismo nombre de rol que un firmante no se queda con sus campos de firma.
   const ccSame = await api("POST", `/v1/document-templates/${tpl.id}/generate`, {
     data,
@@ -254,7 +292,10 @@ await api(
   });
   const ccDet = await api("GET", `/v1/envelopes/${ccSame.envelopeId}`);
   const ccRec = ccDet.recipients.find((r) => r.role === "cc");
-  assert(ccSame.status === "sent" && ccRec && !ccDet.fields.some((f) => f.recipientId === ccRec.id), "la copia con el mismo rol no recibe campos y el sobre se envía");
+  assert(
+    ccSame.status === "sent" && ccRec && !ccDet.fields.some((f) => f.recipientId === ccRec.id),
+    "la copia con el mismo rol no recibe campos y el sobre se envía",
+  );
   await api("POST", `/v1/envelopes/${ccSame.envelopeId}/void`, { reason: "prueba" }, { raw: true });
 }
 const gen = await api("POST", `/v1/document-templates/${tpl.id}/generate`, {
@@ -267,9 +308,15 @@ const gen = await api("POST", `/v1/document-templates/${tpl.id}/generate`, {
 });
 assert(gen.status === "sent" && gen.pages >= 2, `sobre generado y enviado (${gen.status}, ${gen.pages} páginas)`);
 const det = await api("GET", `/v1/envelopes/${gen.envelopeId}`);
-const types = det.fields.map((f) => f.type).sort().join(",");
+const types = det.fields
+  .map((f) => f.type)
+  .sort()
+  .join(",");
 assert(types === "date_signed,date_signed,signature,signature", `campos en las marcas: ${types}`);
-assert(det.envelope.metadata.agreement.value === 1525.5 && det.envelope.metadata.agreement.expiryDate === data.vencimiento, "metadatos para el repositorio");
+assert(
+  det.envelope.metadata.agreement.value === 1525.5 && det.envelope.metadata.agreement.expiryDate === data.vencimiento,
+  "metadatos para el repositorio",
+);
 step("generar: faltantes → 422, roles sin firmante o sin espacio de firma → 422; sobre con 4 campos ubicados en las marcas");
 
 await sign(await signLink(`jose+${stamp}@example.com`, cliente, gen.envelopeId));
@@ -279,14 +326,26 @@ step("sobre generado firmado por las dos partes y completado");
 
 // ───────────────────────────── Repositorio ─────────────────────────────
 
-const ag = await waitFor(async () => (await api("GET", `/v1/agreements?q=${encodeURIComponent("jose nandu")}`)).items[0], "acuerdo en el repositorio");
+const ag = await waitFor(
+  async () => (await api("GET", `/v1/agreements?q=${encodeURIComponent("jose nandu")}`)).items[0],
+  "acuerdo en el repositorio",
+);
 assert(ag.envelopeId === gen.envelopeId && ag.title === `Servicios para ${cliente}`, `título del mapeo: ${ag.title}`);
-assert(ag.value === 1525.5 && ag.currency === "USD" && ag.expiryDate === data.vencimiento && ag.tags.includes("servicios"), "valor, moneda, vencimiento y etiquetas");
+assert(
+  ag.value === 1525.5 && ag.currency === "USD" && ag.expiryDate === data.vencimiento && ag.tags.includes("servicios"),
+  "valor, moneda, vencimiento y etiquetas",
+);
 assert(ag.counterparties.length === 2 && ag.signatures >= 1, "contrapartes (sin la copia) y firmas del PDF");
 const byText = await api("GET", `/v1/agreements?q=${encodeURIComponent("consultoria modulo")}`);
-assert(byText.items.some((x) => x.id === ag.id) && byText.items[0].excerpt?.includes("«"), "búsqueda en el texto del PDF, sin acentos, con fragmento");
+assert(
+  byText.items.some((x) => x.id === ag.id) && byText.items[0].excerpt?.includes("«"),
+  "búsqueda en el texto del PDF, sin acentos, con fragmento",
+);
 const byStem = await api("GET", `/v1/agreements?q=${encodeURIComponent("confidencial")}`);
-assert(byStem.items.some((x) => x.id === ag.id), "búsqueda con raíz (confidencial → confidencialidad)");
+assert(
+  byStem.items.some((x) => x.id === ag.id),
+  "búsqueda con raíz (confidencial → confidencialidad)",
+);
 step("ingesta automática: título/valor/vencimiento desde la plantilla; búsqueda sin acentos y por raíz en el texto del PDF");
 
 await api("POST", "/v1/agreement-fields", { key: "region", label: "Región", type: "select", options: ["Caribe", "Andina"] });
@@ -300,7 +359,18 @@ assert(upd.metadata.region === "Andina" && upd.tags.length === 2 && upd.noticeDa
 const soon = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10);
 const extTitle = `Acuerdo de distribución Ñuñoa ${stamp}`;
 const fd = new FormData();
-fd.append("meta", JSON.stringify({ title: extTitle, counterparties: [{ name: "Distribuidora Caribe SRL", email: "legal@caribe.example" }], expiryDate: soon, value: 9000, currency: "DOP", tags: ["distribucion"], metadata: { region: "Caribe" } }));
+fd.append(
+  "meta",
+  JSON.stringify({
+    title: extTitle,
+    counterparties: [{ name: "Distribuidora Caribe SRL", email: "legal@caribe.example" }],
+    expiryDate: soon,
+    value: 9000,
+    currency: "DOP",
+    tags: ["distribucion"],
+    metadata: { region: "Caribe" },
+  }),
+);
 fd.append("file", new Blob([tinyPdf(`Contrato de distribucion exclusiva ${stamp}`)], { type: "application/pdf" }), "distribucion.pdf");
 const ext = await api("POST", "/v1/agreements/upload", fd);
 assert(ext.source === "external" && ext.sha256.length === 64 && ext.signatures === 0, "acuerdo externo con hash");
@@ -325,10 +395,16 @@ assert(viaView.total === 1 && viaView.items[0].id === ext.id, "vista guardada");
 // en la URL quita ese filtro de la vista.
 const view2 = await api("POST", "/v1/agreement-views", { name: "Caribe oro", filters: { fields: { region: "Caribe", tier: "Oro" } } });
 assert((await api("GET", `/v1/agreements?viewId=${view2.id}`)).total === 0, "vista con todos sus filtros");
-assert((await api("GET", `/v1/agreements?viewId=${view2.id}&f.region=Andina`)).total === 0, "un campo de la URL no borra los otros campos de la vista");
+assert(
+  (await api("GET", `/v1/agreements?viewId=${view2.id}&f.region=Andina`)).total === 0,
+  "un campo de la URL no borra los otros campos de la vista",
+);
 const clearedField = await api("GET", `/v1/agreements?viewId=${view2.id}&f.tier=`);
 assert(clearedField.total === 1 && clearedField.items[0].id === ext.id, "f.tier= vacío quita ese campo de la vista");
-const view3 = await api("POST", "/v1/agreement-views", { name: "Caribe terminados", filters: { status: "terminated", fields: { region: "Caribe" } } });
+const view3 = await api("POST", "/v1/agreement-views", {
+  name: "Caribe terminados",
+  filters: { status: "terminated", fields: { region: "Caribe" } },
+});
 assert((await api("GET", `/v1/agreements?viewId=${view3.id}`)).total === 0, "vista con estado");
 const clearedStatus = await api("GET", `/v1/agreements?viewId=${view3.id}&status=`);
 assert(clearedStatus.total === 1 && clearedStatus.items[0].id === ext.id, "status= vacío quita el estado de la vista");
@@ -369,7 +445,8 @@ step("aviso de vencimiento al responsable (una vez por fecha de vencimiento)");
 
 const altaTpl = await api("POST", "/v1/document-templates", {
   name: `Alta de cliente ${stamp}`,
-  source: "# Alta de cliente\nCliente: **{{cliente.nombre}}** ({{cliente.email}})\nPlazo: {{cliente.plazo}} meses\n{{firma:Cliente}}    {{firma:Empresa}}",
+  source:
+    "# Alta de cliente\nCliente: **{{cliente.nombre}}** ({{cliente.email}})\nPlazo: {{cliente.plazo}} meses\n{{firma:Cliente}}    {{firma:Empresa}}",
   agreementMapping: { title: "Alta {{cliente.nombre}}" },
 });
 const ids = Array.from({ length: 7 }, () => randomUUID());
@@ -377,21 +454,55 @@ const wfInput = {
   name: `Alta de clientes ${stamp}`,
   publicStart: true,
   steps: [
-    { id: ids[0], name: "Datos del cliente", type: "collect_data", config: { title: "Tus datos", target: "cliente", fields: [
-      { key: "nombre", label: "Nombre", type: "text", required: true },
-      { key: "email", label: "Correo", type: "email", required: true },
-      { key: "plazo", label: "Plazo (meses)", type: "number", required: true },
-      { key: "inicio", label: "Inicio", type: "date", required: false },
-    ] } },
+    {
+      id: ids[0],
+      name: "Datos del cliente",
+      type: "collect_data",
+      config: {
+        title: "Tus datos",
+        target: "cliente",
+        fields: [
+          { key: "nombre", label: "Nombre", type: "text", required: true },
+          { key: "email", label: "Correo", type: "email", required: true },
+          { key: "plazo", label: "Plazo (meses)", type: "number", required: true },
+          { key: "inicio", label: "Inicio", type: "date", required: false },
+        ],
+      },
+    },
     { id: ids[1], name: "Aprobación comercial", type: "approval", config: { approverUserId: me.user.id, message: "Revisá el alta" } },
     { id: ids[2], name: "Generar contrato", type: "generate_document", config: { documentTemplateId: altaTpl.id, output: "contrato" } },
-    { id: ids[3], name: "Enviar a firmar", type: "send_for_signature", config: { document: "contrato", envelopeKey: "firma", subject: "Alta de {{cliente.nombre}}", recipients: [
-      { role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" },
-      { role: "Empresa", name: "Ana Gómez", email: me.user.email },
-    ] } },
+    {
+      id: ids[3],
+      name: "Enviar a firmar",
+      type: "send_for_signature",
+      config: {
+        document: "contrato",
+        envelopeKey: "firma",
+        subject: "Alta de {{cliente.nombre}}",
+        recipients: [
+          { role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" },
+          { role: "Empresa", name: "Ana Gómez", email: me.user.email },
+        ],
+      },
+    },
     { id: ids[4], name: "Esperar firmas", type: "wait_for_completion", config: { envelopeKey: "firma" } },
-    { id: ids[5], name: "Avisar al CRM", type: "http_request", config: { url: RECEIVER, method: "POST", bodyTemplate: '{"nombre": {{cliente.nombre}}, "plazo": {{cliente.plazo}}, "sobre": {{envelopes.firma.envelopeId}}}', saveAs: "crm" } },
-    { id: ids[6], name: "Repositorio", type: "update_repository", config: { envelopeKey: "firma", tags: ["workflow"], metadata: { origen: "workflow {{cliente.plazo}}m" } } },
+    {
+      id: ids[5],
+      name: "Avisar al CRM",
+      type: "http_request",
+      config: {
+        url: RECEIVER,
+        method: "POST",
+        bodyTemplate: '{"nombre": {{cliente.nombre}}, "plazo": {{cliente.plazo}}, "sobre": {{envelopes.firma.envelopeId}}}',
+        saveAs: "crm",
+      },
+    },
+    {
+      id: ids[6],
+      name: "Repositorio",
+      type: "update_repository",
+      config: { envelopeKey: "firma", tags: ["workflow"], metadata: { origen: "workflow {{cliente.plazo}}m" } },
+    },
   ],
 };
 await api("POST", "/v1/workflows", { ...wfInput, steps: [wfInput.steps[3]] }, { expect: 400 }); // envía un documento que no se generó
@@ -406,43 +517,87 @@ let pv = await api("GET", `/v1/public/workflow-runs/${started.token}`, null, { a
 assert(pv.status === "waiting" && pv.step?.fields.length === 4, "el run espera los datos");
 await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "x" } }, { anon: true, expect: 400 });
 // 31/02 no existe: se rechaza en el formulario (antes pasaba y el repositorio fallaba al guardarla como date).
-await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "x", email: "x@example.com", plazo: "1", inicio: "31/02/2027" } }, { anon: true, expect: 400 });
+await api(
+  "POST",
+  `/v1/public/workflow-runs/${started.token}/steps/0`,
+  { values: { nombre: "x", email: "x@example.com", plazo: "1", inicio: "31/02/2027" } },
+  { anon: true, expect: 400 },
+);
 // Tiempo mínimo de llenado del formulario público (public-intake.ts MIN_FILL_MS): un envío inmediato es de un bot.
 await sleep(2600);
 const wfClient = `María Gonçalves ${stamp}`;
 const wfEmail = `maria+${stamp}@example.com`;
-pv = await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: wfClient, email: wfEmail.toUpperCase(), plazo: "18" } }, { anon: true });
+pv = await api(
+  "POST",
+  `/v1/public/workflow-runs/${started.token}/steps/0`,
+  { values: { nombre: wfClient, email: wfEmail.toUpperCase(), plazo: "18" } },
+  { anon: true },
+);
 assert(pv.status === "waiting" && pv.step === null, "datos recibidos; espera la aprobación");
-await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "otra", email: "o@x.com", plazo: "1" } }, { anon: true, expect: 409 });
+await api(
+  "POST",
+  `/v1/public/workflow-runs/${started.token}/steps/0`,
+  { values: { nombre: "otra", email: "o@x.com", plazo: "1" } },
+  { anon: true, expect: 409 },
+);
 await mail((x) => x.subject.includes("Aprobación pendiente") && x.link?.includes(`/app/workflow-runs/${pv.runId}`), "pedido de aprobación");
 let run = await api("GET", `/v1/workflow-runs/${pv.runId}`);
 assert(run.steps[1].status === "waiting" && run.steps[1].canDecide, "aprobación pendiente para la aprobadora");
 run = await api("POST", `/v1/workflow-runs/${pv.runId}/steps/1/decision`, { approve: true, comment: "OK" });
-assert(run.status === "waiting" && run.steps[2].status === "completed" && run.steps[3].status === "completed" && run.steps[4].status === "waiting", `generó, envió y espera la firma (${run.status})`);
+assert(
+  run.status === "waiting" && run.steps[2].status === "completed" && run.steps[3].status === "completed" && run.steps[4].status === "waiting",
+  `generó, envió y espera la firma (${run.status})`,
+);
 pv = await api("GET", `/v1/public/workflow-runs/${started.token}`, null, { anon: true });
 assert(pv.signingUrl?.includes("/s/"), "quien completó el formulario recibe su link de firma");
 const envId = run.context.envelopes.firma.envelopeId;
 await sign(pv.signingUrl.split("/s/")[1]);
 await sign(await signLink(me.user.email, `Alta de ${wfClient}`));
-run = await waitFor(async () => {
-  const r = await api("GET", `/v1/workflow-runs/${pv.runId}`);
-  return r.status === "completed" || r.status === "failed" ? r : null;
-}, "workflow completado", 90);
+run = await waitFor(
+  async () => {
+    const r = await api("GET", `/v1/workflow-runs/${pv.runId}`);
+    return r.status === "completed" || r.status === "failed" ? r : null;
+  },
+  "workflow completado",
+  90,
+);
 assert(run.status === "completed", `workflow: ${run.status} ${JSON.stringify(run.steps.map((x) => [x.name, x.status, x.error]))}`);
-assert(run.steps[5].attempts === 2 && received.length === 2, `HTTP reintentado tras un 500 (${run.steps[5].attempts} intentos, ${received.length} pedidos)`);
+assert(
+  run.steps[5].attempts === 2 && received.length === 2,
+  `HTTP reintentado tras un 500 (${run.steps[5].attempts} intentos, ${received.length} pedidos)`,
+);
 const hook = received[1];
 const sig = /t=(\d+),v1=([0-9a-f]+)/.exec(hook.headers["calasign-signature"]);
-assert(sig && createHmac("sha256", wf.signingSecret).update(`${sig[1]}.${hook.body}`).digest("hex") === sig[2], "llamada firmada con el secreto del workflow");
-assert(JSON.parse(hook.body).nombre === wfClient && JSON.parse(hook.body).sobre === envId && JSON.parse(hook.body).plazo === 18, "cuerpo con variables como valores JSON");
+assert(
+  sig && createHmac("sha256", wf.signingSecret).update(`${sig[1]}.${hook.body}`).digest("hex") === sig[2],
+  "llamada firmada con el secreto del workflow",
+);
+assert(
+  JSON.parse(hook.body).nombre === wfClient && JSON.parse(hook.body).sobre === envId && JSON.parse(hook.body).plazo === 18,
+  "cuerpo con variables como valores JSON",
+);
 assert(run.context.http.crm.crmId === "CRM-778", "respuesta guardada en el contexto");
-const wfAg = await waitFor(async () => (await api("GET", `/v1/agreements?q=${encodeURIComponent(wfClient.normalize("NFD").replace(/[̀-ͯ]/g, ""))}`)).items[0], "acuerdo del workflow");
-assert(wfAg.tags.includes("workflow") && wfAg.metadata.origen === "workflow 18m" && wfAg.title === `Alta ${wfClient}`, "repositorio actualizado por el workflow");
-step("workflow: link público → datos (validados) → aprobación → contrato → firma (link para quien completó) → espera → HTTP firmado con reintento → repositorio");
+const wfAg = await waitFor(
+  async () => (await api("GET", `/v1/agreements?q=${encodeURIComponent(wfClient.normalize("NFD").replace(/[̀-ͯ]/g, ""))}`)).items[0],
+  "acuerdo del workflow",
+);
+assert(
+  wfAg.tags.includes("workflow") && wfAg.metadata.origen === "workflow 18m" && wfAg.title === `Alta ${wfClient}`,
+  "repositorio actualizado por el workflow",
+);
+step(
+  "workflow: link público → datos (validados) → aprobación → contrato → firma (link para quien completó) → espera → HTTP firmado con reintento → repositorio",
+);
 
 // Un visitante que tipea el correo del firmante fijo de la empresa no recibe el link de la empresa.
 const st2 = await api("POST", `/v1/public/workflows/${slug}/start`, {}, { anon: true });
 await sleep(2600);
-let pv2 = await api("POST", `/v1/public/workflow-runs/${st2.token}/steps/0`, { values: { nombre: `Intruso ${stamp}`, email: me.user.email, plazo: "1" } }, { anon: true });
+let pv2 = await api(
+  "POST",
+  `/v1/public/workflow-runs/${st2.token}/steps/0`,
+  { values: { nombre: `Intruso ${stamp}`, email: me.user.email, plazo: "1" } },
+  { anon: true },
+);
 let run2 = await api("POST", `/v1/workflow-runs/${pv2.runId}/steps/1/decision`, { approve: true });
 assert(run2.steps[3].status === "completed", `el sobre del segundo run se envió (${run2.steps[3].status})`);
 pv2 = await api("GET", `/v1/public/workflow-runs/${st2.token}`, null, { anon: true });
@@ -450,7 +605,10 @@ assert(!pv2.signingUrl, "con el correo del firmante fijo no se entrega ningún l
 await api("POST", `/v1/workflow-runs/${pv2.runId}/cancel`, {}).catch(() => {});
 step("workflow público: el correo de un firmante fijo no da acceso a su link");
 
-const wf2 = await api("POST", "/v1/workflows", { name: `Solo aprobación ${stamp}`, steps: [{ id: randomUUID(), name: "Aprobar", type: "approval", config: { approverUserId: me.user.id } }] });
+const wf2 = await api("POST", "/v1/workflows", {
+  name: `Solo aprobación ${stamp}`,
+  steps: [{ id: randomUUID(), name: "Aprobar", type: "approval", config: { approverUserId: me.user.id } }],
+});
 let r2 = await api("POST", `/v1/workflows/${wf2.id}/runs`, { data: { x: 1 } });
 assert(r2.status === "waiting", "run por API esperando aprobación");
 r2 = await api("POST", `/v1/workflow-runs/${r2.id}/steps/0/decision`, { approve: false, comment: "No" });
@@ -471,7 +629,10 @@ step("workflow por API: rechazo y cancelación");
   assert(!listed.items.some((x) => x.id === pv.runId), "el run público no aparece en la lista de la key");
   // La ejecución que inicia la propia key sí es suya: la ve, la lista y la cancela.
   const own = await api("POST", `/v1/workflows/${wf2.id}/runs`, { data: {} }, asKey);
-  assert((await api("GET", "/v1/workflow-runs", null, asKey)).items.some((x) => x.id === own.id), "la key ve su propio run");
+  assert(
+    (await api("GET", "/v1/workflow-runs", null, asKey)).items.some((x) => x.id === own.id),
+    "la key ve su propio run",
+  );
   const cancelled = await api("POST", `/v1/workflow-runs/${own.id}/cancel`, {}, asKey);
   assert(cancelled.status === "cancelled", "la key cancela su propio run");
   step("workflow: una API key de miembro solo ve y cancela sus propias ejecuciones (no las del link público)");
@@ -483,22 +644,46 @@ step("workflow por API: rechazo y cancelación");
   const key = await api("POST", "/v1/api-keys", { name: `wf público ${stamp}`, role: "admin" });
   const asKey = { anon: true, headers: { authorization: `Bearer ${key.secret}` } };
   const kIds = Array.from({ length: 3 }, () => randomUUID());
-  const kwf = await api("POST", "/v1/workflows", {
-    name: `Público por key ${stamp}`,
-    publicStart: true,
-    steps: [
-      { id: kIds[0], name: "Datos", type: "collect_data", config: { title: "Datos", target: "cliente", fields: [
-        { key: "nombre", label: "Nombre", type: "text", required: true },
-        { key: "email", label: "Correo", type: "email", required: true },
-        { key: "plazo", label: "Plazo", type: "number", required: true },
-      ] } },
-      { id: kIds[1], name: "Contrato", type: "generate_document", config: { documentTemplateId: altaTpl.id, output: "contrato" } },
-      { id: kIds[2], name: "Firmar", type: "send_for_signature", config: { document: "contrato", envelopeKey: "firma", subject: "Key {{cliente.nombre}}", recipients: [
-        { role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" },
-        { role: "Empresa", name: "Ana Gómez", email: me.user.email },
-      ] } },
-    ],
-  }, asKey);
+  const kwf = await api(
+    "POST",
+    "/v1/workflows",
+    {
+      name: `Público por key ${stamp}`,
+      publicStart: true,
+      steps: [
+        {
+          id: kIds[0],
+          name: "Datos",
+          type: "collect_data",
+          config: {
+            title: "Datos",
+            target: "cliente",
+            fields: [
+              { key: "nombre", label: "Nombre", type: "text", required: true },
+              { key: "email", label: "Correo", type: "email", required: true },
+              { key: "plazo", label: "Plazo", type: "number", required: true },
+            ],
+          },
+        },
+        { id: kIds[1], name: "Contrato", type: "generate_document", config: { documentTemplateId: altaTpl.id, output: "contrato" } },
+        {
+          id: kIds[2],
+          name: "Firmar",
+          type: "send_for_signature",
+          config: {
+            document: "contrato",
+            envelopeKey: "firma",
+            subject: "Key {{cliente.nombre}}",
+            recipients: [
+              { role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" },
+              { role: "Empresa", name: "Ana Gómez", email: me.user.email },
+            ],
+          },
+        },
+      ],
+    },
+    asKey,
+  );
   const kslug = kwf.publicUrl.split("/wf/")[1];
   const values = { nombre: `Key ${stamp}`, email: `key+${stamp}@example.com`, plazo: "6" };
   const s1 = await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true });
@@ -513,15 +698,24 @@ step("workflow por API: rechazo y cancelación");
   await api("GET", `/v1/public/workflows/${kslug}`, null, { anon: true, expect: 404 });
   await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true, expect: 404 });
   // Otro correo: el mismo correo desde la misma IP en minutos se deduplica (form_recent_submission).
-  const v2 = await api("POST", `/v1/public/workflow-runs/${s2.token}/steps/0`, { values: { ...values, email: `key2+${stamp}@example.com` } }, { anon: true });
+  const v2 = await api(
+    "POST",
+    `/v1/public/workflow-runs/${s2.token}/steps/0`,
+    { values: { ...values, email: `key2+${stamp}@example.com` } },
+    { anon: true },
+  );
   const kr2 = await api("GET", `/v1/workflow-runs/${v2.runId}`);
-  assert(kr2.status === "failed" && !kr2.context.envelopes.firma && /revocada/.test(kr2.steps[2].error ?? ""), `con la key revocada no se envía (${kr2.status})`);
+  assert(
+    kr2.status === "failed" && !kr2.context.envelopes.firma && /revocada/.test(kr2.steps[2].error ?? ""),
+    `con la key revocada no se envía (${kr2.status})`,
+  );
   step("workflow público de una API key: sobres a su nombre; revocada, el link no se ofrece y los runs en curso no envían");
 }
 
 // ───────────────────────────── Negociación ─────────────────────────────
 
-const negSrc = "# Propuesta comercial\nCliente: {{cliente.nombre}}\nPlazo: {{plazo}} meses. Precio mensual: {{precio | money:USD}}.\n{{clausula:confidencialidad}}\n{{firma:Cliente}}    {{firma:Empresa}}";
+const negSrc =
+  "# Propuesta comercial\nCliente: {{cliente.nombre}}\nPlazo: {{plazo}} meses. Precio mensual: {{precio | money:USD}}.\n{{clausula:confidencialidad}}\n{{firma:Cliente}}    {{firma:Empresa}}";
 const negTpl = await api("POST", "/v1/document-templates", { name: `Propuesta ${stamp}`, source: negSrc });
 const negClient = `Lucía Pereira ${stamp}`;
 const neg = await api("POST", "/v1/negotiations", {
@@ -534,14 +728,32 @@ const neg = await api("POST", "/v1/negotiations", {
 assert(neg.negotiation.currentVersion === 1 && neg.text.includes("Plazo: 12 meses"), "negociación creada (versión 1)");
 const nlink = (await mail((x) => x.link?.includes("/n/") && x.text.includes(negClient), "invitación a negociar")).link.split("/n/")[1];
 let pview = await api("GET", `/v1/public/negotiations/${nlink}`, null, { anon: true });
-assert(pview.me.name === negClient && pview.variables.map((v) => v.path).join() === "plazo,precio", "vista de la contraparte con variables negociables");
+assert(
+  pview.me.name === negClient && pview.variables.map((v) => v.path).join() === "plazo,precio",
+  "vista de la contraparte con variables negociables",
+);
 const quote = "Precio mensual";
 const start = pview.text.indexOf(quote);
-pview = await api("POST", `/v1/public/negotiations/${nlink}/comments`, { body: "¿Incluye soporte?", quote, start, end: start + quote.length }, { anon: true });
+pview = await api(
+  "POST",
+  `/v1/public/negotiations/${nlink}/comments`,
+  { body: "¿Incluye soporte?", quote, start, end: start + quote.length },
+  { anon: true },
+);
 assert(pview.comments.length === 1 && pview.comments[0].quote === quote, "comentario anclado al texto");
-await api("POST", `/v1/public/negotiations/${nlink}/proposals`, { kind: "variable", key: "cliente.nombre", newValue: "Otro" }, { anon: true, expect: 400 });
+await api(
+  "POST",
+  `/v1/public/negotiations/${nlink}/proposals`,
+  { kind: "variable", key: "cliente.nombre", newValue: "Otro" },
+  { anon: true, expect: 400 },
+);
 await api("POST", `/v1/public/negotiations/${nlink}/proposals`, { kind: "variable", key: "plazo", newValue: "12" }, { anon: true, expect: 400 });
-pview = await api("POST", `/v1/public/negotiations/${nlink}/proposals`, { kind: "variable", key: "plazo", newValue: "24", comment: "Preferimos 2 años" }, { anon: true });
+pview = await api(
+  "POST",
+  `/v1/public/negotiations/${nlink}/proposals`,
+  { kind: "variable", key: "plazo", newValue: "24", comment: "Preferimos 2 años" },
+  { anon: true },
+);
 pview = await api(
   "POST",
   `/v1/public/negotiations/${nlink}/proposals`,
@@ -553,9 +765,15 @@ assert(props.length === 2 && props.every((p) => p.status === "pending"), "dos pr
 await api("POST", `/v1/negotiations/${neg.negotiation.id}/accept`, {}, { expect: 409 });
 let sview = await api("POST", `/v1/negotiations/${neg.negotiation.id}/proposals/${props[0].id}/decision`, { accept: true });
 sview = await api("POST", `/v1/negotiations/${neg.negotiation.id}/proposals/${props[1].id}/decision`, { accept: false });
-assert(sview.negotiation.currentVersion === 2 && sview.text.includes("Plazo: 24 meses") && sview.text.includes("reserva"), "propuesta aceptada → versión 2; la rechazada no cambia la cláusula");
+assert(
+  sview.negotiation.currentVersion === 2 && sview.text.includes("Plazo: 24 meses") && sview.text.includes("reserva"),
+  "propuesta aceptada → versión 2; la rechazada no cambia la cláusula",
+);
 const diff = await api("GET", `/v1/public/negotiations/${nlink}/diff?from=1&to=2`, null, { anon: true });
-assert(diff.parts.some((p) => p.op === "del" && p.text.includes("12")) && diff.parts.some((p) => p.op === "ins" && p.text.includes("24")), "diff entre versiones");
+assert(
+  diff.parts.some((p) => p.op === "del" && p.text.includes("12")) && diff.parts.some((p) => p.op === "ins" && p.text.includes("24")),
+  "diff entre versiones",
+);
 await mail((x) => x.subject.includes("Nueva versión") && x.text.includes(negClient), "aviso de nueva versión");
 // Una cláusula editada con sintaxis inválida es 400 (antes 500) y no crea versión.
 await api("PATCH", `/v1/negotiations/${neg.negotiation.id}`, { clauseOverrides: { confidencialidad: "{{#if x}}sin cierre" } }, { expect: 400 });
@@ -563,12 +781,19 @@ assert((await api("GET", `/v1/negotiations/${neg.negotiation.id}`)).negotiation.
 const acc = await api("POST", `/v1/negotiations/${neg.negotiation.id}/accept`, { subject: "Propuesta final" });
 assert(acc.negotiation.status === "accepted" && acc.envelope.status === "sent", "aceptada: sobre enviado");
 const accEnv = await api("GET", `/v1/envelopes/${acc.envelope.id}`);
-assert(accEnv.recipients.length === 2 && accEnv.recipients.some((r) => r.email === me.user.email), "firman la contraparte y la remitente (rol sin contraparte)");
+assert(
+  accEnv.recipients.length === 2 && accEnv.recipients.some((r) => r.email === me.user.email),
+  "firman la contraparte y la remitente (rol sin contraparte)",
+);
 await api("POST", `/v1/negotiations/${neg.negotiation.id}/accept`, {}, { expect: 409 });
 await api("POST", `/v1/public/negotiations/${nlink}/comments`, { body: "tarde" }, { anon: true, expect: 409 });
 const docx = new FormData();
 docx.append("meta", JSON.stringify({ title: "Word", participants: [{ name: "X", email: "x@example.com" }] }));
-docx.append("file", new Blob([Buffer.from("PK..")], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), "borrador.docx");
+docx.append(
+  "file",
+  new Blob([Buffer.from("PK..")], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+  "borrador.docx",
+);
 await api("POST", "/v1/negotiations/upload", docx, { expect: 415 });
 step("negociación: comentario anclado, propuestas aceptada/rechazada, versiones con diff, aceptar → sobre; Word → 415");
 

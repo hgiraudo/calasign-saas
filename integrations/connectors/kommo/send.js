@@ -14,8 +14,10 @@ var CalaSignKommo = (function () {
       retry: "Reintentar",
       noRecords: "Kommo no indicó ningún lead. Abrí el widget desde la ficha o la lista de leads.",
       noMappings: "No hay mapeos activos de Kommo para leads. Crealos en CalaSign → Ajustes → CRM y ERP.",
-      noAccount: "Kommo no indicó desde qué cuenta se abrió el widget, así que no se ofrecen mapeos (podrían ser de otra cuenta). Volvé a abrirlo desde Kommo o actualizá el widget.",
-      accountUnknown: "Hay conexiones de Kommo sin su cuenta guardada: sus mapeos no aparecen. Probá la conexión en CalaSign → Ajustes → CRM y ERP para habilitarla.",
+      noAccount:
+        "Kommo no indicó desde qué cuenta se abrió el widget, así que no se ofrecen mapeos (podrían ser de otra cuenta). Volvé a abrirlo desde Kommo o actualizá el widget.",
+      accountUnknown:
+        "Hay conexiones de Kommo sin su cuenta guardada: sus mapeos no aparecen. Probá la conexión en CalaSign → Ajustes → CRM y ERP para habilitarla.",
       mapping: "Mapeo (plantilla)",
       sendNow: "Enviar ya (si no, queda en borrador para revisarlo)",
       records: "Leads",
@@ -25,7 +27,8 @@ var CalaSignKommo = (function () {
       open: "Ver en CalaSign",
       failed: "No se pudo",
       settings: "Ajustes de CRM",
-      truncated: "Kommo mandó {total} leads y se envían como máximo 20 por vez: {n} quedan SIN enviar. Después, volvé a abrir el widget con los restantes.",
+      truncated:
+        "Kommo mandó {total} leads y se envían como máximo 20 por vez: {n} quedan SIN enviar. Después, volvé a abrir el widget con los restantes.",
     },
     en: {
       title: "Send for signature with CalaSign",
@@ -35,8 +38,10 @@ var CalaSignKommo = (function () {
       retry: "Retry",
       noRecords: "Kommo did not pass any lead. Open the widget from a lead card or the leads list.",
       noMappings: "There are no active Kommo mappings for leads. Create one in CalaSign → Settings → CRM and ERP.",
-      noAccount: "Kommo did not say which account the widget was opened from, so no mappings are offered (they could belong to another account). Open it again from Kommo or update the widget.",
-      accountUnknown: "Some Kommo connections have no stored account: their mappings are not shown. Test the connection in CalaSign → Settings → CRM and ERP to enable it.",
+      noAccount:
+        "Kommo did not say which account the widget was opened from, so no mappings are offered (they could belong to another account). Open it again from Kommo or update the widget.",
+      accountUnknown:
+        "Some Kommo connections have no stored account: their mappings are not shown. Test the connection in CalaSign → Settings → CRM and ERP to enable it.",
       mapping: "Mapping (template)",
       sendNow: "Send now (otherwise it stays as a draft to review)",
       records: "Leads",
@@ -46,7 +51,8 @@ var CalaSignKommo = (function () {
       open: "Open in CalaSign",
       failed: "Failed",
       settings: "CRM settings",
-      truncated: "Kommo passed {total} leads and at most 20 are sent at a time: {n} will NOT be sent. Afterwards, open the widget again with the remaining ones.",
+      truncated:
+        "Kommo passed {total} leads and at most 20 are sent at a time: {n} will NOT be sent. Afterwards, open the widget again with the remaining ones.",
     },
     pt: {
       title: "Enviar para assinatura com CalaSign",
@@ -56,8 +62,10 @@ var CalaSignKommo = (function () {
       retry: "Tentar de novo",
       noRecords: "O Kommo não informou nenhum lead. Abra o widget a partir da ficha ou da lista de leads.",
       noMappings: "Não há mapeamentos ativos do Kommo para leads. Crie um em CalaSign → Configurações → CRM e ERP.",
-      noAccount: "O Kommo não informou de qual conta o widget foi aberto, então nenhum mapeamento é oferecido (poderiam ser de outra conta). Abra-o de novo a partir do Kommo ou atualize o widget.",
-      accountUnknown: "Há conexões do Kommo sem a conta salva: os mapeamentos delas não aparecem. Teste a conexão em CalaSign → Configurações → CRM e ERP para habilitá-la.",
+      noAccount:
+        "O Kommo não informou de qual conta o widget foi aberto, então nenhum mapeamento é oferecido (poderiam ser de outra conta). Abra-o de novo a partir do Kommo ou atualize o widget.",
+      accountUnknown:
+        "Há conexões do Kommo sem a conta salva: os mapeamentos delas não aparecem. Teste a conexão em CalaSign → Configurações → CRM e ERP para habilitá-la.",
       mapping: "Mapeamento (modelo)",
       sendNow: "Enviar agora (senão fica como rascunho para revisar)",
       records: "Leads",
@@ -67,7 +75,8 @@ var CalaSignKommo = (function () {
       open: "Ver no CalaSign",
       failed: "Falhou",
       settings: "Configurações de CRM",
-      truncated: "O Kommo enviou {total} leads e no máximo 20 são enviados por vez: {n} NÃO serão enviados. Depois, abra o widget de novo com os restantes.",
+      truncated:
+        "O Kommo enviou {total} leads e no máximo 20 são enviados por vez: {n} NÃO serão enviados. Depois, abra o widget de novo com os restantes.",
     },
   };
 
@@ -92,7 +101,13 @@ var CalaSignKommo = (function () {
     var company = q.get("companyId") || "";
     // total: los leads elegidos en Kommo cuando el widget pasó solo los primeros 200 (por el largo de la URL).
     var total = Math.max(ids.length, /^\d{1,6}$/.test(q.get("total") || "") ? Number(q.get("total")) : 0);
-    return { ids: ids.slice(0, 20), truncated: total > 20, total: total, skipped: Math.max(0, total - 20), companyId: /^\d{1,18}$/.test(company) ? company : null };
+    return {
+      ids: ids.slice(0, 20),
+      truncated: total > 20,
+      total: total,
+      skipped: Math.max(0, total - 20),
+      companyId: /^\d{1,18}$/.test(company) ? company : null,
+    };
   }
 
   /** Mapeos activos de leads (objectType deal) con plantilla. */
@@ -138,7 +153,10 @@ var CalaSignKommo = (function () {
       return fetchImpl(base + path, {
         method: method,
         credentials: "include",
-        headers: Object.assign(body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" }, extraHeaders || {}),
+        headers: Object.assign(
+          body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
+          extraHeaders || {},
+        ),
         body: body ? JSON.stringify(body) : undefined,
       }).then(function (res) {
         return res.text().then(function (text) {
@@ -167,7 +185,12 @@ var CalaSignKommo = (function () {
     var chain = Promise.resolve();
     ids.forEach(function (id) {
       chain = chain.then(function () {
-        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send }, runId ? { "Idempotency-Key": idempotencyKey(companyId, mappingId, id, runId) } : null).then(
+        return api(
+          "POST",
+          "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send",
+          companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send },
+          runId ? { "Idempotency-Key": idempotencyKey(companyId, mappingId, id, runId) } : null,
+        ).then(
           function (r) {
             out.push({ id: id, ok: true, envelopeId: r.envelopeId, status: r.status });
           },
@@ -242,12 +265,18 @@ var CalaSignKommo = (function () {
         if (r.state === "login") {
           var retry = el(doc, "button", { type: "button", text: T.retry });
           retry.addEventListener("click", start);
-          render([head(), el(doc, "p", { text: T.login }), el(doc, "p", {}, [el(doc, "a", { href: base + "/login", target: "_blank", rel: "noopener", text: T.loginLink })]), retry]);
+          render([
+            head(),
+            el(doc, "p", { text: T.login }),
+            el(doc, "p", {}, [el(doc, "a", { href: base + "/login", target: "_blank", rel: "noopener", text: T.loginLink })]),
+            retry,
+          ]);
           return;
         }
         if (r.state === "error") {
           var parts = [head(), el(doc, "p", { class: "error", text: r.key ? T[r.key] : r.message })];
-          if (r.key === "noMappings" || r.key === "accountUnknown") parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
+          if (r.key === "noMappings" || r.key === "accountUnknown")
+            parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
           render(parts);
           return;
         }
@@ -281,7 +310,13 @@ var CalaSignKommo = (function () {
         select,
         el(doc, "label", { class: "check" }, [sendNow, doc.createTextNode(" " + T.sendNow)]),
         // Tope de 20 por vez: se avisa cuántos quedan afuera (antes se cortaba sin decir nada).
-        params.skipped ? el(doc, "p", { class: "error", role: "alert", text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)) }) : null,
+        params.skipped
+          ? el(doc, "p", {
+              class: "error",
+              role: "alert",
+              text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)),
+            })
+          : null,
         el(doc, "p", { class: "muted", text: T.records + ": " + params.ids.join(", ") }),
         accountUnknown ? el(doc, "p", { class: "muted", role: "status", text: T.accountUnknown }) : null,
         btn,
@@ -294,7 +329,10 @@ var CalaSignKommo = (function () {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));
-            if (o.ok) li.appendChild(el(doc, "a", { href: base + "/app/envelopes/" + encodeURIComponent(o.envelopeId), target: "_blank", rel: "noopener", text: T.open }));
+            if (o.ok)
+              li.appendChild(
+                el(doc, "a", { href: base + "/app/envelopes/" + encodeURIComponent(o.envelopeId), target: "_blank", rel: "noopener", text: T.open }),
+              );
             results.appendChild(li);
           });
           pending = out
@@ -316,6 +354,16 @@ var CalaSignKommo = (function () {
 
   if (typeof window !== "undefined" && window.document && window.document.getElementById("app")) mount(window);
 
-  return { parseParams: parseParams, eligibleMappings: eligibleMappings, apiFactory: apiFactory, sendAll: sendAll, load: load, lang: lang, idempotencyKey: idempotencyKey, runIdFor: runIdFor, TEXT: TEXT };
+  return {
+    parseParams: parseParams,
+    eligibleMappings: eligibleMappings,
+    apiFactory: apiFactory,
+    sendAll: sendAll,
+    load: load,
+    lang: lang,
+    idempotencyKey: idempotencyKey,
+    runIdFor: runIdFor,
+    TEXT: TEXT,
+  };
 })();
 if (typeof module !== "undefined") module.exports = CalaSignKommo;

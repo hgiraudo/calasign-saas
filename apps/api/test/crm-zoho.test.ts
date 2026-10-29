@@ -36,7 +36,10 @@ function fakeFetch(respond: (c: Call) => { status?: number; json?: unknown }) {
     const c: Call = { url: String(input), method: init.method ?? "GET", headers: init.headers ?? {}, body: init.body };
     calls.push(c);
     const r = respond(c);
-    return new Response(r.json === undefined ? null : JSON.stringify(r.json), { status: r.status ?? 200, headers: { "content-type": "application/json" } });
+    return new Response(r.json === undefined ? null : JSON.stringify(r.json), {
+      status: r.status ?? 200,
+      headers: { "content-type": "application/json" },
+    });
   }) as typeof fetch;
   return calls;
 }
@@ -65,10 +68,24 @@ describe("Zoho: centros de datos", () => {
   });
 
   it("solo acepta accounts-server y api_domain de Zoho por https", () => {
-    for (const ok of ["https://accounts.zoho.com", "https://accounts.zoho.eu/", "https://accounts.zoho.in", "https://accounts.zoho.com.au", "https://accounts.zohocloud.ca", "https://accounts.zoho.jp"]) {
+    for (const ok of [
+      "https://accounts.zoho.com",
+      "https://accounts.zoho.eu/",
+      "https://accounts.zoho.in",
+      "https://accounts.zoho.com.au",
+      "https://accounts.zohocloud.ca",
+      "https://accounts.zoho.jp",
+    ]) {
       expect(validateZohoAccounts(ok)).toBe(ok.replace(/\/$/, ""));
     }
-    for (const bad of ["http://accounts.zoho.eu", "https://accounts.zoho.com.evil.test", "https://evil.test/accounts.zoho.com", "https://accounts.zoho.com:8443", "https://xaccounts.zoho.com", "no es url"]) {
+    for (const bad of [
+      "http://accounts.zoho.eu",
+      "https://accounts.zoho.com.evil.test",
+      "https://evil.test/accounts.zoho.com",
+      "https://accounts.zoho.com:8443",
+      "https://xaccounts.zoho.com",
+      "no es url",
+    ]) {
       expect(() => validateZohoAccounts(bad), bad).toThrow();
     }
     expect(validateZohoApiDomain("https://www.zohoapis.com")).toBe("https://www.zohoapis.com");
@@ -120,7 +137,8 @@ describe("Zoho: OAuth", () => {
         token = "at-2";
         return { json: { access_token: "at-2", api_domain: API, expires_in: 3600 } };
       }
-      if (c.headers.authorization !== `Zoho-oauthtoken ${token}` || token === "at-1") return { status: 401, json: { code: "INVALID_TOKEN", message: "invalid oauth token", status: "error" } };
+      if (c.headers.authorization !== `Zoho-oauthtoken ${token}` || token === "at-1")
+        return { status: 401, json: { code: "INVALID_TOKEN", message: "invalid oauth token", status: "error" } };
       return { json: { org: [{ id: "org1", company_name: "ACME" }] } };
     });
     const c = conn();
@@ -150,10 +168,19 @@ describe("Zoho: OAuth", () => {
 describe("Zoho: registros", () => {
   it("Deal: contacto principal (Contact_Name) + roles de contacto, sin duplicar", async () => {
     const calls = fakeFetch((c) => {
-      if (c.url === `${API}/crm/v7/Deals/z1`) return { json: { data: [{ id: "z1", Deal_Name: "Renovación", Amount: 10, Contact_Name: { id: "c1", name: "Ana" } }] } };
-      if (c.url === `${API}/crm/v7/Contacts/c1`) return { json: { data: [{ id: "c1", First_Name: "Ana", Last_Name: "Pérez", Email: "ana@x.co", Phone: "+57 300 111 2233" }] } };
+      if (c.url === `${API}/crm/v7/Deals/z1`)
+        return { json: { data: [{ id: "z1", Deal_Name: "Renovación", Amount: 10, Contact_Name: { id: "c1", name: "Ana" } }] } };
+      if (c.url === `${API}/crm/v7/Contacts/c1`)
+        return { json: { data: [{ id: "c1", First_Name: "Ana", Last_Name: "Pérez", Email: "ana@x.co", Phone: "+57 300 111 2233" }] } };
       if (c.url.startsWith(`${API}/crm/v7/Deals/z1/Contact_Roles`))
-        return { json: { data: [{ id: "c1", Full_Name: "Ana Pérez", Contact_Role: { name: "Decision Maker" } }, { id: "c2", Full_Name: "Luis", Email: "luis@x.co", Mobile: "3001", Contact_Role: { name: "Legal" } }] } };
+        return {
+          json: {
+            data: [
+              { id: "c1", Full_Name: "Ana Pérez", Contact_Role: { name: "Decision Maker" } },
+              { id: "c2", Full_Name: "Luis", Email: "luis@x.co", Mobile: "3001", Contact_Role: { name: "Legal" } },
+            ],
+          },
+        };
       return { status: 404, json: {} };
     });
     const r = await fetchRecord(conn(), "deal", "z1", []);
@@ -194,7 +221,9 @@ describe("Zoho: registros", () => {
 
   it("write-back: PUT con trigger vacío; un error de Zoho en data[0] se informa", async () => {
     const calls = fakeFetch((c) =>
-      JSON.parse(String(c.body)).data[0].Malo ? { status: 202, json: { data: [{ code: "INVALID_DATA", message: "invalid data", status: "error", details: { api_name: "Malo" } }] } } : { json: { data: [{ status: "success", code: "SUCCESS" }] } },
+      JSON.parse(String(c.body)).data[0].Malo
+        ? { status: 202, json: { data: [{ code: "INVALID_DATA", message: "invalid data", status: "error", details: { api_name: "Malo" } }] } }
+        : { json: { data: [{ status: "success", code: "SUCCESS" }] } },
     );
     await writeStatus(conn(), "deal", "z1", "CalaSign_Status", "Firmado");
     expect(calls[0].method).toBe("PUT");
@@ -207,10 +236,20 @@ describe("Zoho: registros", () => {
     let noteOk = true;
     const calls = fakeFetch((c) => {
       if (c.url.endsWith("/Attachments")) return { json: { data: [{ status: "success", details: { id: "att9" } }] } };
-      if (c.url.endsWith("/Notes")) return noteOk ? { status: 201, json: { data: [{ status: "success", details: { id: "n9" } }] } } : { status: 400, json: { code: "INVALID_MODULE" } };
+      if (c.url.endsWith("/Notes"))
+        return noteOk
+          ? { status: 201, json: { data: [{ status: "success", details: { id: "n9" } }] } }
+          : { status: 400, json: { code: "INVALID_MODULE" } };
       return { status: 404 };
     });
-    const a = { fileName: "Contrato.pdf", pdf: new TextEncoder().encode("%PDF-1.4"), subject: "Contrato", envelopeId: "e1", sha256: "ab".repeat(32), url: "https://app/x" };
+    const a = {
+      fileName: "Contrato.pdf",
+      pdf: new TextEncoder().encode("%PDF-1.4"),
+      subject: "Contrato",
+      envelopeId: "e1",
+      sha256: "ab".repeat(32),
+      url: "https://app/x",
+    };
     expect(await attachSigned(conn(), "deal", "z1", a)).toBe("attachment:att9 note:n9");
     expect(calls[0].url).toBe(`${API}/crm/v7/Deals/z1/Attachments`);
     expect(calls[0].body).toBeInstanceOf(FormData);

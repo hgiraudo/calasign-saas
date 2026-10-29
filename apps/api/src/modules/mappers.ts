@@ -61,9 +61,16 @@ export const toRecipient = (r: any): Recipient => ({
   inPersonHost: r.in_person_host_user_id ? { id: r.in_person_host_user_id, name: r.in_person_host_name ?? "" } : null,
   identity: toRecipientIdentity(r),
   signatureType: r.signature_type ?? "electronic",
-  certificateRequirements: r.signature_type === "certificate" ? normalizeRequirements(r.certificate_requirements, Boolean(r.id_document_number)) : null,
+  certificateRequirements:
+    r.signature_type === "certificate" ? normalizeRequirements(r.certificate_requirements, Boolean(r.id_document_number)) : null,
   certificateSignature: r.cert_sig_status
-    ? { status: r.cert_sig_status, position: r.cert_sig_position, signedAt: iso(r.cert_sig_signed_at), commonName: r.cert_sig_cn ?? null, issuer: r.cert_sig_issuer ?? null }
+    ? {
+        status: r.cert_sig_status,
+        position: r.cert_sig_position,
+        signedAt: iso(r.cert_sig_signed_at),
+        commonName: r.cert_sig_cn ?? null,
+        issuer: r.cert_sig_issuer ?? null,
+      }
     : null,
 });
 

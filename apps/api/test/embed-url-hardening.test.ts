@@ -8,8 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-embed-url-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant = "";
@@ -26,7 +26,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name, embed_frame_ancestors) VALUES ($1, $2, 'T', $3)`, [tenant, `t-${tenant.slice(-8)}`, [ORIGIN]]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -47,7 +51,17 @@ async function setup(o: Opts = {}) {
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, access_token_hash, access_token_enc, embedded, auth_method,
        id_verification_provider, identity_status)
      VALUES ($1,$2,$3,'signer','Ana','ana@x.test','sent',$4,$5,$6,$7,$8,$9)`,
-    [recipient, tenant, envelope, sha256Hex(token), encrypt(token), o.embedded ?? false, o.authMethod ?? "link", o.kyc ? "mock" : null, o.kyc ?? null],
+    [
+      recipient,
+      tenant,
+      envelope,
+      sha256Hex(token),
+      encrypt(token),
+      o.embedded ?? false,
+      o.authMethod ?? "link",
+      o.kyc ? "mock" : null,
+      o.kyc ?? null,
+    ],
   );
   return { envelope, recipient, token };
 }

@@ -46,7 +46,11 @@ interface Deps {
 
 const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_warning", "certificate_request"];
 
-const waParam = (v: string) => (v ?? "").replace(/[\r\n\t]+/g, " ").replace(/ {4,}/g, "   ").trim() || "-";
+const waParam = (v: string) =>
+  (v ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/ {4,}/g, "   ")
+    .trim() || "-";
 
 /**
  * Texto para Telegram: sin el pie de la plataforma y dentro del tope de 4096 caracteres de Telegram.
@@ -133,7 +137,10 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
           return;
         }
         // Último intento: el sobre no puede quedar en 'finalizing' sin que nadie se entere.
-        if (isLastAttempt(job, err)) await finalizeGaveUp(d, p, err).catch((e) => d.log.error({ err: String(e), envelopeId: p.envelopeId }, "no se pudo registrar el fallo de finalización"));
+        if (isLastAttempt(job, err))
+          await finalizeGaveUp(d, p, err).catch((e) =>
+            d.log.error({ err: String(e), envelopeId: p.envelopeId }, "no se pudo registrar el fallo de finalización"),
+          );
         throw err;
       }
     },
@@ -160,11 +167,21 @@ export function signerReplyTo(
 
 async function notify(
   d: Deps,
-  p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string; userId?: string; tokenEnc?: string; reason?: string },
+  p: {
+    kind: TemplateKind;
+    envelopeId: string;
+    tenantId: string;
+    recipientId?: string;
+    declinedBy?: string;
+    userId?: string;
+    tokenEnc?: string;
+    reason?: string;
+  },
   jobId?: number,
 ) {
   if (p.kind === "password_reset") return notifyPasswordReset(d, p);
-  if (isSecurityNoticeKind(p.kind)) return notifySecurityNotice(d, p as unknown as { kind: SecurityNoticeKind; userId?: string; at?: string; network?: string | null });
+  if (isSecurityNoticeKind(p.kind))
+    return notifySecurityNotice(d, p as unknown as { kind: SecurityNoticeKind; userId?: string; at?: string; network?: string | null });
   // Alerta de renovación detectada con IA (ai/sweep.ts): al remitente, no a un destinatario.
   if ((p.kind as string) === "ai_renewal_alert") return notifyAiRenewalAlert(d, p as { envelopeId: string; tenantId: string; date?: string }, jobId);
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
@@ -190,10 +207,10 @@ async function notify(
   const base = {
     // Quien dejó la organización ya no habla en su nombre: los recordatorios y avisos salen con el de la marca u organización.
     senderName: (sender?.is_member ? sender.name : null) ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
-    organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
+    organizationName: rebrands(wl) || e.brand_id ? wl.name : (org?.name ?? ""),
     subject: e.subject,
     declinedBy: decliner?.name ?? null,
-    reason: p.kind === "voided" ? e.void_reason : decliner?.decline_reason ?? null,
+    reason: p.kind === "voided" ? e.void_reason : (decliner?.decline_reason ?? null),
     // finalize_failed por un documento que no se puede sellar (InvalidPdfError: finalizeGaveUp pone su código en
     // `reason`): reintentar no lo resuelve.
     unsealableCode: p.kind === "finalize_failed" && p.reason ? p.reason : null,
@@ -216,7 +233,17 @@ async function notify(
             )
           : [];
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    return notifyStaff(d, e, p.kind, to, (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand(p.kind, u.locale ?? e.locale)), link, () => e.locale, from, jobId);
+    return notifyStaff(
+      d,
+      e,
+      p.kind,
+      to,
+      (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand(p.kind, u.locale ?? e.locale)),
+      link,
+      () => e.locale,
+      from,
+      jobId,
+    );
   }
 
   // Finalización fallida: a propietarios y administradores de la organización, y al remitente.
@@ -228,7 +255,18 @@ async function notify(
       [e.tenant_id, e.created_by],
     );
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    return notifyStaff(d, e, p.kind, to, (u) => render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand("finalize_failed", u.locale ?? e.locale)), link, (u) => u.locale ?? e.locale, from, jobId);
+    return notifyStaff(
+      d,
+      e,
+      p.kind,
+      to,
+      (u) =>
+        render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand("finalize_failed", u.locale ?? e.locale)),
+      link,
+      (u) => u.locale ?? e.locale,
+      from,
+      jobId,
+    );
   }
 
   const r = await d.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [p.recipientId]);
@@ -264,18 +302,30 @@ async function notify(
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc && !unverified ? decrypt(r.access_token_enc) : null;
   const link = token && LINK_KINDS.includes(p.kind) ? `${wl.baseUrl}/s/${token}` : null;
-  const m0 = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand(p.kind, locale));
+  const m0 = render(
+    p.kind,
+    locale,
+    { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link },
+    mailBrand(p.kind, locale),
+  );
   const unverifiedNote = `${UNVERIFIED_COMPLETED_TEXT[normLocale(locale)]}\n\n${UNVERIFIED_COPY_NOTE[normLocale(locale)]}`;
   const m = unverified
-    ? { ...m0, text: `${m0.text}\n\n${unverifiedNote}`, html: withHtmlNote(withHtmlNote(m0.html, UNVERIFIED_COMPLETED_TEXT[normLocale(locale)]), UNVERIFIED_COPY_NOTE[normLocale(locale)]) }
+    ? {
+        ...m0,
+        text: `${m0.text}\n\n${unverifiedNote}`,
+        html: withHtmlNote(withHtmlNote(m0.html, UNVERIFIED_COMPLETED_TEXT[normLocale(locale)]), UNVERIFIED_COPY_NOTE[normLocale(locale)]),
+      }
     : m0;
 
   // Sin repetidos: los esquemas aceptan ["email","email",…] (también al delegar, desde el link público) y cada repetición
   // era un envío más del mismo aviso al mismo destino.
-  const channels: ("email" | "whatsapp" | "telegram")[] = unverified ? ["email"] : [...new Set<"email" | "whatsapp" | "telegram">(r.channels ?? ["email"])];
+  const channels: ("email" | "whatsapp" | "telegram")[] = unverified
+    ? ["email"]
+    : [...new Set<"email" | "whatsapp" | "telegram">(r.channels ?? ["email"])];
   // Telegram sin vincular: el correo invita a activarlo desde la página de firma (que genera un link t.me de un solo
   // uso). El token de firma no viaja a Telegram.
-  const tgHint = link && channels.includes("telegram") && !r.telegram_chat_id && config.telegram.botUsername ? TELEGRAM_HINT[normLocale(locale)] : null;
+  const tgHint =
+    link && channels.includes("telegram") && !r.telegram_chat_id && config.telegram.botUsername ? TELEGRAM_HINT[normLocale(locale)] : null;
   const errors: { text: string; transient: boolean }[] = [];
   let delivered = 0;
 
@@ -299,7 +349,10 @@ async function notify(
         channel,
         to,
         subject: m.subject,
-        text: channel === "telegram" ? telegramText(m.subject, m.text, m.platformFooter) : m.text + (channel === "email" && tgHint ? `\n\n${tgHint} ${link}` : ""),
+        text:
+          channel === "telegram"
+            ? telegramText(m.subject, m.text, m.platformFooter)
+            : m.text + (channel === "email" && tgHint ? `\n\n${tgHint} ${link}` : ""),
         // El aviso para vincular Telegram también en la versión HTML (casi todos los clientes muestran esa).
         html: channel === "email" && tgHint && link ? withHtmlHint(m.html, tgHint, link) : m.html,
         link,
@@ -347,7 +400,10 @@ async function notify(
   // (notifications.status = 'failed') y en el log, y el job termina.
   if (errors.some((x) => x.transient)) throw new Error(`no se pudo notificar: ${errors.map((x) => x.text).join("; ")}`);
   if (errors.length) {
-    d.log.warn({ envelopeId: e.id, recipientId: r.id, kind: p.kind, errors: errors.map((x) => x.text) }, "aviso con canales fallidos por errores permanentes: no se reintenta");
+    d.log.warn(
+      { envelopeId: e.id, recipientId: r.id, kind: p.kind, errors: errors.map((x) => x.text) },
+      "aviso con canales fallidos por errores permanentes: no se reintenta",
+    );
     return;
   }
   // Ningún canal posible (p. ej. solo Telegram sin vincular y sin otro canal para el link): que quede a la vista.
@@ -368,7 +424,12 @@ async function notifyStaff(
   message: (u: { name: string; locale: string | null }) => { subject: string; text: string; html: string },
   link: string,
   localeOf: (u: { locale: string | null }) => string,
-  from: { from?: string | null; replyTo?: string | null; dkim?: { domainName: string; keySelector: string; privateKey: string } | null; fallbackFrom?: string | null } = {},
+  from: {
+    from?: string | null;
+    replyTo?: string | null;
+    dkim?: { domainName: string; keySelector: string; privateKey: string } | null;
+    fallbackFrom?: string | null;
+  } = {},
   jobId?: number,
 ) {
   const errors: { error: string; transient: boolean }[] = [];
@@ -388,7 +449,8 @@ async function notifyStaff(
     else delivered++;
   }
   // Como notify(): solo se reintenta por errores del momento (con todos permanentes, reintentar no los arregla).
-  if (delivered === 0 && errors.some((x) => x.transient)) throw new Error(`no se pudo notificar (${errors.length}): ${errors.map((x) => x.error).join("; ")}`);
+  if (delivered === 0 && errors.some((x) => x.transient))
+    throw new Error(`no se pudo notificar (${errors.length}): ${errors.map((x) => x.error).join("; ")}`);
   if (errors.length) d.log.warn({ envelopeId: e.id, kind, errors: errors.map((x) => x.error) }, "avisos al equipo con fallos");
 }
 
@@ -540,7 +602,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     certificate: {
       envelopeId: e.id,
       subject: e.subject,
-      organizationName: e.brand_id || rebrands(wl) ? wl.name : org?.name ?? "",
+      organizationName: e.brand_id || rebrands(wl) ? wl.name : (org?.name ?? ""),
       senderName: sender?.name ?? org?.name ?? "",
       senderEmail: sender?.email ?? null,
       createdAt: new Date(e.created_at).toISOString(),
@@ -554,7 +616,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
         type: x.type,
         occurredAt: new Date(x.occurred_at).toISOString(),
         // Marca blanca: las acciones del sistema figuran con el nombre del producto de la marca.
-        actor: rebrands(wl) ? brandize(x.actor_label ?? x.actor_type, wl) : x.actor_label ?? x.actor_type,
+        actor: rebrands(wl) ? brandize(x.actor_label ?? x.actor_type, wl) : (x.actor_label ?? x.actor_type),
         ip: x.ip,
       })),
       chainHead,
@@ -583,8 +645,20 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   }
   const sealOnce = (tsaUrl: string | null) =>
     certStage.kind === "seal"
-      ? addCadesSignatureIncremental(certStage.workingPdf, provider, { fieldName: "SelloIntegridad", reason: `Sello de integridad ${productLabel(wl)}`, name: productLabel(wl), location: "Cloud", tsaUrl })
-      : finalizeEnvelopePdf(input, { provider, tsaUrl, reason: `Sello de integridad ${productLabel(wl)}`, signerName: productLabel(wl), contactInfo: wl.links.supportUrl ?? wl.baseUrl });
+      ? addCadesSignatureIncremental(certStage.workingPdf, provider, {
+          fieldName: "SelloIntegridad",
+          reason: `Sello de integridad ${productLabel(wl)}`,
+          name: productLabel(wl),
+          location: "Cloud",
+          tsaUrl,
+        })
+      : finalizeEnvelopePdf(input, {
+          provider,
+          tsaUrl,
+          reason: `Sello de integridad ${productLabel(wl)}`,
+          signerName: productLabel(wl),
+          contactInfo: wl.links.supportUrl ?? wl.baseUrl,
+        });
 
   let timestamped = Boolean(config.seal.tsaUrl);
   let tsaError: string | null = null;
@@ -611,48 +685,52 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const sha = sha256Hex(pdf);
   await d.blobs.put(key, pdf, "application/pdf");
 
-  const completed = await d.db.tx(async (t) => {
-    const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-    if (cur?.status !== "finalizing") return false;
-    await t.query(
-      // chain_head: el hash final impreso en el certificado de este PDF (la verificación pública lo usa sin parsearlo).
-      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5,$6)`,
-      [fileId, e.tenant_id, key, pdf.length, sha, /^[0-9a-f]{64}$/.test(chainHead) ? chainHead : null],
-    );
-    await t.query(
-      `UPDATE envelopes SET status = 'completed', completed_at = $2, signed_file_id = $3, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`,
-      [e.id, completedAt, fileId],
-    );
-    await t.query(`UPDATE recipients SET status = 'completed' WHERE envelope_id = $1 AND role = 'cc'`, [e.id]);
-    await appendEvent(t, {
-      tenantId: e.tenant_id,
-      envelopeId: e.id,
-      type: "envelope.completed",
-      actor: SYSTEM,
-      data: {
-        signedSha256: sha,
-        certificateChainHead: chainHead,
-        seal: {
-          provider: provider.id,
-          format: evidence.format,
-          tsa: timestamped ? config.seal.tsaUrl : null,
-          tsaError,
-          ltv: evidence.ltv ? { ocsps: evidence.ltv.ocsps, crls: evidence.ltv.crls, certs: evidence.ltv.certs, missingRevocation: evidence.ltv.missingRevocation } : null,
-          ltvError: evidence.ltvError,
-          companySeal: evidence.companySeal,
-          signatureLevel: evPlan.signatureLevel,
+  const completed = await d.db
+    .tx(async (t) => {
+      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      if (cur?.status !== "finalizing") return false;
+      await t.query(
+        // chain_head: el hash final impreso en el certificado de este PDF (la verificación pública lo usa sin parsearlo).
+        `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5,$6)`,
+        [fileId, e.tenant_id, key, pdf.length, sha, /^[0-9a-f]{64}$/.test(chainHead) ? chainHead : null],
+      );
+      await t.query(
+        `UPDATE envelopes SET status = 'completed', completed_at = $2, signed_file_id = $3, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`,
+        [e.id, completedAt, fileId],
+      );
+      await t.query(`UPDATE recipients SET status = 'completed' WHERE envelope_id = $1 AND role = 'cc'`, [e.id]);
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "envelope.completed",
+        actor: SYSTEM,
+        data: {
+          signedSha256: sha,
+          certificateChainHead: chainHead,
+          seal: {
+            provider: provider.id,
+            format: evidence.format,
+            tsa: timestamped ? config.seal.tsaUrl : null,
+            tsaError,
+            ltv: evidence.ltv
+              ? { ocsps: evidence.ltv.ocsps, crls: evidence.ltv.crls, certs: evidence.ltv.certs, missingRevocation: evidence.ltv.missingRevocation }
+              : null,
+            ltvError: evidence.ltvError,
+            companySeal: evidence.companySeal,
+            signatureLevel: evPlan.signatureLevel,
+          },
         },
-      },
+      });
+      for (const r of recips.filter((x) => x.status !== "delegated" && x.status !== "reassigned"))
+        await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+      await enqueue(t, "notify", { kind: "sender_completed", envelopeId: e.id, tenantId: e.tenant_id });
+      return true;
+    })
+    .catch(async (err) => {
+      // Sin fila en `files` el PDF sellado recién subido no lo referencia nada (la retención nunca lo vería).
+      await d.blobs.delete(key).catch(() => {});
+      throw err;
     });
-    for (const r of recips.filter((x) => x.status !== "delegated" && x.status !== "reassigned"))
-      await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
-    await enqueue(t, "notify", { kind: "sender_completed", envelopeId: e.id, tenantId: e.tenant_id });
-    return true;
-  }).catch(async (err) => {
-    // Sin fila en `files` el PDF sellado recién subido no lo referencia nada (la retención nunca lo vería).
-    await d.blobs.delete(key).catch(() => {});
-    throw err;
-  });
   // Otra corrida ya completó el sobre: este PDF sellado quedó sin usar.
   if (!completed) await d.blobs.delete(key).catch(() => {});
   // El PDF de trabajo de las firmas con certificado ya está dentro del sellado: sin fila en `files`, la retención no lo
@@ -684,7 +762,13 @@ export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId:
       ]))
     )
       return;
-    await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalize_failed", actor: SYSTEM, data: { error: message, ...(code ? { code } : {}) } });
+    await appendEvent(t, {
+      tenantId: e.tenant_id,
+      envelopeId: e.id,
+      type: "envelope.finalize_failed",
+      actor: SYSTEM,
+      data: { error: message, ...(code ? { code } : {}) },
+    });
     await enqueue(t, "notify", { kind: "finalize_failed", envelopeId: e.id, tenantId: e.tenant_id, ...(code ? { reason: code } : {}) });
   });
   d.log.error({ envelopeId: p.envelopeId, err: message, code }, "la finalización del sobre falló definitivamente");
@@ -699,7 +783,8 @@ const WORKER_DIED = "el worker se detuvo durante el job (intentos agotados)";
  * (el worker murió en el último intento: requeueStuckJobs). Una cola sin entrada no necesita nada.
  */
 const JOB_GAVE_UP: Partial<Record<JobQueueName, (d: Deps, j: GaveUpJob) => Promise<void>>> = {
-  finalize: (d, j) => finalizeGaveUp(d, j.payload, new Error("el worker se detuvo durante la finalización (intentos agotados)"), { unlessReportedSince: j.createdAt }),
+  finalize: (d, j) =>
+    finalizeGaveUp(d, j.payload, new Error("el worker se detuvo durante la finalización (intentos agotados)"), { unlessReportedSince: j.createdAt }),
   bulk: (d, j) => bulkJobGaveUp(d, j.payload, new Error(WORKER_DIED)),
   webhook: (d, j) => webhookJobGaveUp(d, j.payload, WORKER_DIED),
 };
@@ -796,7 +881,10 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     // Tokens de formularios web usados: vencen a las 2 h, después no hace falta recordarlos.
     ["web-form-tokens", () => d.db.query(`DELETE FROM web_form_token_uses WHERE used_at < now() - interval '1 day'`)],
     // IDs de Assertion SAML ya usadas (anti-replay): pasado su vencimiento la aserción ya no se acepta.
-    ["saml-assertion-ids", () => d.db.query(`DELETE FROM saml_assertion_ids WHERE ctid IN (SELECT ctid FROM saml_assertion_ids WHERE expires_at < now() LIMIT 5000)`)],
+    [
+      "saml-assertion-ids",
+      () => d.db.query(`DELETE FROM saml_assertion_ids WHERE ctid IN (SELECT ctid FROM saml_assertion_ids WHERE expires_at < now() LIMIT 5000)`),
+    ],
     // Tokens de vinculación de Telegram (30 minutos): vencidos hace más de un día ya no hacen falta.
     ["telegram-link-tokens", () => d.db.query(`DELETE FROM telegram_link_tokens WHERE expires_at < now() - interval '1 day'`)],
     // Tokens de sesión del firmante (canje embebido, 0083): vencidos o revocados hace más de un día ya no abren nada
@@ -810,7 +898,10 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     ],
     [
       "download-links",
-      () => d.db.query(`DELETE FROM download_links WHERE ctid IN (SELECT ctid FROM download_links WHERE expires_at < now() - interval '1 day' LIMIT 5000)`),
+      () =>
+        d.db.query(
+          `DELETE FROM download_links WHERE ctid IN (SELECT ctid FROM download_links WHERE expires_at < now() - interval '1 day' LIMIT 5000)`,
+        ),
     ],
     // Claves de idempotencia de más de 7 días: un reintento real llega en minutos u horas (Stripe las guarda 24 h) y
     // los conectores sin clave propia (Zapier, Make) usan una por día. Sin esto la tabla crecía sin límite.

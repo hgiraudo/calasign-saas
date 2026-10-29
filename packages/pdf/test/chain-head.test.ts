@@ -1,6 +1,16 @@
 import { PDFDocument, PDFDict, PDFName, PDFRawStream, PDFRef, PDFString, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { IncrementalUpdate, LocalKeyProvider, finalizeEnvelopePdf, generateDevRootCa, issueSealCertificate, findChainHeadKeyword, readCertificateChainHead, renderEnvelopePdf, type FinalizeInput } from "../src";
+import {
+  IncrementalUpdate,
+  LocalKeyProvider,
+  finalizeEnvelopePdf,
+  generateDevRootCa,
+  issueSealCertificate,
+  findChainHeadKeyword,
+  readCertificateChainHead,
+  renderEnvelopePdf,
+  type FinalizeInput,
+} from "../src";
 
 async function samplePdf() {
   const doc = await PDFDocument.create();
@@ -71,7 +81,9 @@ describe("hash final del certificado legible desde el PDF", () => {
 
     // String literal en el Info (otra herramienta).
     const doc = await PDFDocument.load(await renderEnvelopePdf(await input("es")));
-    (doc as unknown as { getInfoDict(): { set(k: PDFName, v: PDFString): void } }).getInfoDict().set(PDFName.of("Keywords"), PDFString.of(`x calasign-chain-head:${other}`));
+    (doc as unknown as { getInfoDict(): { set(k: PDFName, v: PDFString): void } })
+      .getInfoDict()
+      .set(PDFName.of("Keywords"), PDFString.of(`x calasign-chain-head:${other}`));
     expect(findChainHeadKeyword(await doc.save({ useObjectStreams: false }))).toBe(other);
 
     // Sin Keyword (PDF anterior) o sin Info: null (el que llama recurre a readCertificateChainHead).
@@ -107,7 +119,9 @@ describe("hash final del certificado legible desde el PDF", () => {
     const withRev = u.serialize();
     expect(findChainHeadKeyword(withRev)).toBe(HEAD);
     // Con un objeto falso agregado después de la última revisión (sin xref): tampoco gana.
-    const tail = Buffer.from(`\n${(u.context.trailerInfo.Info as PDFRef).objectNumber} 0 obj\n<< /Keywords (calasign-chain-head:${fake}) >>\nendobj\n`);
+    const tail = Buffer.from(
+      `\n${(u.context.trailerInfo.Info as PDFRef).objectNumber} 0 obj\n<< /Keywords (calasign-chain-head:${fake}) >>\nendobj\n`,
+    );
     expect(findChainHeadKeyword(Buffer.concat([Buffer.from(withRev), tail]))).toBe(HEAD);
 
     // Revisión incremental que reescribe el Info: gana la entrada más reciente de la xref.

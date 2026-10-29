@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
 const tempDirs = [];
 process.on("exit", () => {
@@ -16,7 +15,12 @@ process.on("exit", () => {
 });
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -181,7 +185,10 @@ assert(device.jar.has("cs_signer"), "la sesión del firmante queda como cookie e
 
 const stranger = client();
 const blocked = await stranger("GET", `/v1/signing/${t1}`);
-assert(blocked.otpRequired && blocked.documents.length === 0 && blocked.inPerson?.active === false, "sin la sesión del anfitrión no se ven documentos");
+assert(
+  blocked.otpRequired && blocked.documents.length === 0 && blocked.inPerson?.active === false,
+  "sin la sesión del anfitrión no se ven documentos",
+);
 await expectStatus(stranger("POST", `/v1/signing/${t1}/consent`), 401, "sin la sesión del anfitrión no se puede aceptar");
 
 let sess = await device("GET", `/v1/signing/${t1}`);
@@ -238,7 +245,10 @@ detail = await sender("POST", `/v1/envelopes/${envelope.id}/corrections`, {
   reason: "Cambió el correo de Carlos",
 });
 assert(detail.envelope.message === "Mensaje corregido", "mensaje corregido");
-assert(detail.recipients.some((r) => r.id === R5 && r.status === "sent"), "el nuevo firmante del grupo actual quedó invitado");
+assert(
+  detail.recipients.some((r) => r.id === R5 && r.status === "sent"),
+  "el nuevo firmante del grupo actual quedó invitado",
+);
 await expectStatus(stranger("GET", `/v1/signing/${oldT3}`), 404, "el link anterior de Carlos quedó revocado");
 const newT3 = await linkFor(n("Carlos Tercero"), { not: oldT3 });
 assert(newT3 !== oldT3, "Carlos recibió un link nuevo");
@@ -345,9 +355,14 @@ step("reportes: totales, meses, remitentes, notificaciones y CSV seguro");
   const d2 = await sender("POST", `/v1/envelopes/${e2.id}/documents`, null, { form: fd2 });
   const P1 = randomUUID();
   await sender("PUT", `/v1/envelopes/${e2.id}/recipients`, { recipients: [{ id: P1, name: n("Paula Presencial"), routingOrder: 1, inPerson: {} }] });
-  await sender("PUT", `/v1/envelopes/${e2.id}/fields`, { fields: [{ documentId: d2.id, recipientId: P1, type: "signature", page: 0, x: 0.1, y: 0.2, width: 0.3, height: 0.06 }] });
+  await sender("PUT", `/v1/envelopes/${e2.id}/fields`, {
+    fields: [{ documentId: d2.id, recipientId: P1, type: "signature", page: 0, x: 0.1, y: 0.2, width: 0.3, height: 0.06 }],
+  });
   await sender("POST", `/v1/envelopes/${e2.id}/send`);
-  const det = await sender("POST", `/v1/envelopes/${e2.id}/recipients/${P1}/reassign`, { name: n("Raúl Reemplazo"), email: `raul+${stamp}@example.com` });
+  const det = await sender("POST", `/v1/envelopes/${e2.id}/recipients/${P1}/reassign`, {
+    name: n("Raúl Reemplazo"),
+    email: `raul+${stamp}@example.com`,
+  });
   const repl = det.recipients.find((r) => r.name === n("Raúl Reemplazo"));
   assert(repl.authMethod === "in_person" && repl.inPersonHost?.id === me.user.id, "el reemplazo sigue en persona con la misma anfitriona");
   const st = await device("POST", `/v1/envelopes/${e2.id}/recipients/${repl.id}/in-person`, {});
@@ -368,11 +383,18 @@ step("reportes: totales, meses, remitentes, notificaciones y CSV seguro");
   fd3.append("file", new Blob([tinyPdf("Anfitrión que se fue")], { type: "application/pdf" }), "h.pdf");
   const d3 = await sender("POST", `/v1/envelopes/${e3.id}/documents`, null, { form: fd3 });
   const Q1 = randomUUID();
-  await sender("PUT", `/v1/envelopes/${e3.id}/recipients`, { recipients: [{ id: Q1, name: n("Quique Presencial"), routingOrder: 1, inPerson: { hostUserId: host2 } }] });
-  await sender("PUT", `/v1/envelopes/${e3.id}/fields`, { fields: [{ documentId: d3.id, recipientId: Q1, type: "signature", page: 0, x: 0.1, y: 0.2, width: 0.3, height: 0.06 }] });
+  await sender("PUT", `/v1/envelopes/${e3.id}/recipients`, {
+    recipients: [{ id: Q1, name: n("Quique Presencial"), routingOrder: 1, inPerson: { hostUserId: host2 } }],
+  });
+  await sender("PUT", `/v1/envelopes/${e3.id}/fields`, {
+    fields: [{ documentId: d3.id, recipientId: Q1, type: "signature", page: 0, x: 0.1, y: 0.2, width: 0.3, height: 0.06 }],
+  });
   await sender("POST", `/v1/envelopes/${e3.id}/send`);
   await sender("DELETE", `/v1/members/${host2}`);
-  const det3 = await sender("POST", `/v1/envelopes/${e3.id}/recipients/${Q1}/reassign`, { name: n("Rita Reemplazo"), email: `rita+${stamp}@example.com` });
+  const det3 = await sender("POST", `/v1/envelopes/${e3.id}/recipients/${Q1}/reassign`, {
+    name: n("Rita Reemplazo"),
+    email: `rita+${stamp}@example.com`,
+  });
   const repl3 = det3.recipients.find((r) => r.name === n("Rita Reemplazo"));
   assert(repl3.authMethod === "link" && !repl3.inPersonHost, `sin anfitrión miembro, el reemplazo firma por link: ${JSON.stringify(repl3)}`);
   await linkFor(n("Rita Reemplazo"));

@@ -54,12 +54,7 @@ export async function findTextAnchors(
 }
 
 /** Caja (en coordenadas de la página mostrada) de una porción de un item de texto. */
-function boxFor(
-  item: TextItem,
-  start: number,
-  len: number,
-  vp: { convertToViewportPoint(x: number, y: number): number[] },
-) {
+function boxFor(item: TextItem, start: number, len: number, vp: { convertToViewportPoint(x: number, y: number): number[] }) {
   const [a, b, c, d, e, f] = item.transform;
   const ux = Math.hypot(a, b) ? a / Math.hypot(a, b) : 1;
   const uy = Math.hypot(a, b) ? b / Math.hypot(a, b) : 0;

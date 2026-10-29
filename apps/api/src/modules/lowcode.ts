@@ -32,10 +32,24 @@ export function templateInputSchema(tpl: TemplateDetail): LowcodeTemplateInputSc
   const roles = tpl.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder }));
   const fields = tpl.fields
     .filter((f) => PREFILL_TYPES.has(f.type) && !f.readOnly)
-    .map((f) => ({ id: f.id, label: f.label, type: f.type, required: f.required, options: f.options, roleId: f.roleId, roleName: roleName.get(f.roleId) ?? null }));
+    .map((f) => ({
+      id: f.id,
+      label: f.label,
+      type: f.type,
+      required: f.required,
+      options: f.options,
+      roleId: f.roleId,
+      roleName: roleName.get(f.roleId) ?? null,
+    }));
 
   // JSON Schema draft-04 con x-ms-summary (Power Automate muestra ese título) y title (los demás).
-  const prop = (title: string, description: string, extra: Record<string, unknown> = {}) => ({ type: "string", title, "x-ms-summary": title, description, ...extra });
+  const prop = (title: string, description: string, extra: Record<string, unknown> = {}) => ({
+    type: "string",
+    title,
+    "x-ms-summary": title,
+    description,
+    ...extra,
+  });
   const rolesSchema = {
     type: "object",
     required: tpl.roles.map((r) => r.id),
@@ -84,7 +98,11 @@ export function templateInputSchema(tpl: TemplateDetail): LowcodeTemplateInputSc
  * Convierte el envío "por formulario" al de /v1/envelopes/from-template. Los roles se buscan por id o por nombre (sin
  * distinguir mayúsculas); el prellenado vacío se descarta y los números se pasan a texto.
  */
-export function toFromTemplateInput(templateId: string, raw: unknown, tpl: Pick<TemplateDetail, "roles">): import("@calasign/shared").EnvelopeFromTemplateInput {
+export function toFromTemplateInput(
+  templateId: string,
+  raw: unknown,
+  tpl: Pick<TemplateDetail, "roles">,
+): import("@calasign/shared").EnvelopeFromTemplateInput {
   const input = LowcodeTemplateSendInput.parse(raw);
   const recipients: import("@calasign/shared").EnvelopeFromTemplateInput["recipients"] = [];
   const used = new Set<string>();
@@ -95,7 +113,14 @@ export function toFromTemplateInput(templateId: string, raw: unknown, tpl: Pick<
     used.add(role.id);
     const email = r.email || null;
     const phone = r.phone || null;
-    recipients.push({ roleId: role.id, name: r.name, email, phone, locale: r.locale ?? null, channels: r.channels ?? (email ? ["email"] : phone ? ["whatsapp"] : ["email"]) });
+    recipients.push({
+      roleId: role.id,
+      name: r.name,
+      email,
+      phone,
+      locale: r.locale ?? null,
+      channels: r.channels ?? (email ? ["email"] : phone ? ["whatsapp"] : ["email"]),
+    });
   }
   if (!recipients.length) throw badRequest("roles_missing", "Indicá al menos un destinatario en roles");
   const prefill: Record<string, string> = {};
@@ -120,7 +145,16 @@ export function toFromTemplateInput(templateId: string, raw: unknown, tpl: Pick<
 /** Evento sintético con la misma forma que una entrega real (cuando la organización todavía no tiene sobres). */
 export function syntheticEvent(type: string, tenantId: string): WebhookEventPayload {
   const now = new Date().toISOString();
-  const status = type === "envelope.completed" ? "completed" : type === "envelope.declined" ? "declined" : type === "envelope.voided" ? "voided" : type === "envelope.expired" ? "expired" : "sent";
+  const status =
+    type === "envelope.completed"
+      ? "completed"
+      : type === "envelope.declined"
+        ? "declined"
+        : type === "envelope.voided"
+          ? "voided"
+          : type === "envelope.expired"
+            ? "expired"
+            : "sent";
   return {
     id: "00000000-0000-7000-8000-000000000001",
     type: type as WebhookEventPayload["type"],
@@ -136,7 +170,14 @@ export function syntheticEvent(type: string, tenantId: string): WebhookEventPayl
         completedAt: status === "completed" ? now : null,
         signedSha256: status === "completed" ? "0".repeat(64) : null,
         recipients: [
-          { id: "00000000-0000-7000-8000-0000000000a1", name: "Ana Pérez", email: "ana@example.com", role: "signer", status: status === "completed" ? "signed" : "sent", routingOrder: 1 },
+          {
+            id: "00000000-0000-7000-8000-0000000000a1",
+            name: "Ana Pérez",
+            email: "ana@example.com",
+            role: "signer",
+            status: status === "completed" ? "signed" : "sent",
+            routingOrder: 1,
+          },
         ],
       },
       recipientId: type.startsWith("recipient.") ? "00000000-0000-7000-8000-0000000000a1" : null,
@@ -177,7 +218,9 @@ export async function lowcodeRoutes(app: FastifyInstance, s: Services) {
       // Mismas validaciones que /v1/envelopes/from-template (destinatarios, canales, prellenado).
       const input = EnvelopeFromTemplateInput.parse(toFromTemplateInput(loaded.tpl.template.id, req.body ?? {}, loaded.tpl));
       const plan = planFromTemplate(loaded, input);
-      const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
+      const envId = await s.db.tx((t) =>
+        insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan),
+      );
       return { status: 201, body: await loadDetail(s.db, a.tenantId, envId) };
     }),
   );
@@ -190,12 +233,15 @@ export async function lowcodeRoutes(app: FastifyInstance, s: Services) {
     const params: unknown[] = [a.tenantId, SAMPLE_STATUS[type]];
     const where = `e.tenant_id = $1 AND e.status = ANY($2)${envelopeVisibilitySql(a, params)}`;
     params.push(limit);
-    const rows = await s.db.query<any>(`SELECT e.id, e.updated_at FROM envelopes e WHERE ${where} ORDER BY e.updated_at DESC, e.id DESC LIMIT $${params.length}`, params);
+    const rows = await s.db.query<any>(
+      `SELECT e.id, e.updated_at FROM envelopes e WHERE ${where} ORDER BY e.updated_at DESC, e.id DESC LIMIT $${params.length}`,
+      params,
+    );
     const items: WebhookEventPayload[] = [];
     for (const r of rows) {
       const envelope = await envelopeSnapshot(s.db, r.id);
       if (!envelope) continue;
-      const recipient = type.startsWith("recipient.") ? envelope.recipients.find((x) => x.status !== "pending") ?? envelope.recipients[0] : null;
+      const recipient = type.startsWith("recipient.") ? (envelope.recipients.find((x) => x.status !== "pending") ?? envelope.recipients[0]) : null;
       items.push({
         // Id estable por sobre y evento: los conectores deduplican por id.
         id: `sample-${type}-${r.id}`,

@@ -10,14 +10,14 @@ import { AI_NOTICE_VERSION } from "@calasign/shared";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-recipient-clone-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant: string;
 let user: string;
 let uuid: () => string;
-let setAiProviderForTests: typeof import("../src/modules/ai/provider")["setAiProviderForTests"];
+let setAiProviderForTests: (typeof import("../src/modules/ai/provider"))["setAiProviderForTests"];
 const KEY = "cs_test_recipient_clone_key";
 const auth = { authorization: `Bearer ${KEY}` };
 
@@ -36,7 +36,11 @@ beforeAll(async () => {
      VALUES ($1, $2, 'T', 'enterprise', true, 1000000, $3, now(), $4)`,
     [tenant, `t-${tenant.slice(-8)}`, AI_NOTICE_VERSION, JSON.stringify(["La jurisdicción es Bogotá"])],
   );
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   user = uuidv7();
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, 'Anfitriona', 'x')`, [user, `host-${user.slice(-8)}@x.test`]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'owner')`, [tenant, user]);
@@ -57,11 +61,16 @@ async function draft(subject = "Contrato", extra: object = {}) {
   expect(r.statusCode, r.body).toBe(201);
   return r.json().envelope.id as string;
 }
-const putRecipients = (id: string, recipients: object[]) => app.inject({ method: "PUT", url: `/v1/envelopes/${id}/recipients`, headers: auth, payload: { recipients } });
+const putRecipients = (id: string, recipients: object[]) =>
+  app.inject({ method: "PUT", url: `/v1/envelopes/${id}/recipients`, headers: auth, payload: { recipients } });
 const clone = (id: string, payload: object = {}) => app.inject({ method: "POST", url: `/v1/envelopes/${id}/clone`, headers: auth, payload });
 
 function minimalPdf() {
-  const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"];
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+  ];
   let out = "%PDF-1.4\n";
   const offs: number[] = [];
   objs.forEach((o, i) => {
@@ -102,7 +111,10 @@ describe("chat de Telegram de un destinatario reutilizado", () => {
     expect(await chat()).toBeNull();
     // Teléfono distinto también.
     await db.query(`UPDATE recipients SET telegram_chat_id = '222' WHERE id = $1`, [rid]);
-    expect((await putRecipients(id, [{ id: rid, name: "Juan", email: "juan@x.test", phone: "+5491100000000", channels: ["email", "telegram"] }])).statusCode).toBe(200);
+    expect(
+      (await putRecipients(id, [{ id: rid, name: "Juan", email: "juan@x.test", phone: "+5491100000000", channels: ["email", "telegram"] }]))
+        .statusCode,
+    ).toBe(200);
     expect(await chat()).toBeNull();
   });
 
@@ -110,7 +122,14 @@ describe("chat de Telegram de un destinatario reutilizado", () => {
     const id = await draft();
     const a = uuid();
     const b = uuid();
-    expect((await putRecipients(id, [{ id: a, name: "Ana", email: "ana@x.test" }, { id: b, name: "Beto", email: "beto@x.test", channels: ["email", "telegram"] }])).statusCode).toBe(200);
+    expect(
+      (
+        await putRecipients(id, [
+          { id: a, name: "Ana", email: "ana@x.test" },
+          { id: b, name: "Beto", email: "beto@x.test", channels: ["email", "telegram"] },
+        ])
+      ).statusCode,
+    ).toBe(200);
     await db.query(`UPDATE recipients SET telegram_chat_id = '333' WHERE envelope_id = $1`, [id]);
     await db.query(`UPDATE recipients SET channels = ARRAY['telegram'] WHERE id = $1`, [a]);
     const up = await app.inject({ method: "POST", url: `/v1/envelopes/${id}/documents`, ...multipart(minimalPdf()) });
@@ -128,7 +147,8 @@ describe("chat de Telegram de un destinatario reutilizado", () => {
       { name: "Beto", channels: ["email", "telegram"], telegram_chat_id: null },
     ]);
     const [ana, beto] = rows;
-    const byName = (w: any[]) => [...w].sort((x, y) => String(x.recipientId === ana.id ? 0 : 1).localeCompare(String(y.recipientId === ana.id ? 0 : 1)));
+    const byName = (w: any[]) =>
+      [...w].sort((x, y) => String(x.recipientId === ana.id ? 0 : 1).localeCompare(String(y.recipientId === ana.id ? 0 : 1)));
     expect(byName(c.json().warnings)).toEqual([
       expect.objectContaining({ code: "telegram_relink_required", recipientId: ana.id, recipient: "Ana", telegramOnly: true }),
       expect.objectContaining({ code: "telegram_relink_required", recipientId: beto.id, recipient: "Beto", telegramOnly: false }),
@@ -159,10 +179,15 @@ describe("clonado: verificación de identidad, certificado y metadata", () => {
   it("la verificación de identidad del original pasa por el plan y el proveedor (si no se admite, se quita con aviso)", async () => {
     const id = await draft();
     const rid = uuid();
-    expect((await putRecipients(id, [{ id: rid, name: "Ana", email: "ana@x.test", idVerification: { provider: "mock", level: "document" } }])).statusCode).toBe(200);
+    expect(
+      (await putRecipients(id, [{ id: rid, name: "Ana", email: "ana@x.test", idVerification: { provider: "mock", level: "document" } }])).statusCode,
+    ).toBe(200);
     const ok = await clone(id);
     expect(ok.statusCode, ok.body).toBe(201);
-    const r = await db.one<any>(`SELECT id_verification_provider AS p, id_verification_level AS l, identity_status AS s FROM recipients WHERE envelope_id = $1`, [ok.json().envelope.id]);
+    const r = await db.one<any>(
+      `SELECT id_verification_provider AS p, id_verification_level AS l, identity_status AS s FROM recipients WHERE envelope_id = $1`,
+      [ok.json().envelope.id],
+    );
     expect(r).toEqual({ p: "mock", l: "document", s: "pending" });
     expect(ok.json().warnings).toEqual([]);
     const idvOf = async (envId: string) =>
@@ -173,8 +198,12 @@ describe("clonado: verificación de identidad, certificado y metadata", () => {
     expect(noPlan.statusCode, noPlan.body).toBe(201);
     const np = await idvOf(noPlan.json().envelope.id);
     expect(np).toMatchObject({ p: null, s: null });
-    expect(noPlan.json().warnings).toEqual([expect.objectContaining({ code: "identity_verification_dropped", recipientId: np.id, reason: "plan_without_kyc" })]);
-    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.created'`, [noPlan.json().envelope.id]);
+    expect(noPlan.json().warnings).toEqual([
+      expect.objectContaining({ code: "identity_verification_dropped", recipientId: np.id, reason: "plan_without_kyc" }),
+    ]);
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.created'`, [
+      noPlan.json().envelope.id,
+    ]);
     expect(ev.data.warnings).toEqual([{ code: "identity_verification_dropped", recipientId: np.id, reason: "plan_without_kyc" }]);
     await db.query(`UPDATE tenants SET billing_plan = 'enterprise' WHERE id = $1`, [tenant]);
     // Proveedor no configurado: igual, con aviso (antes 400 identity_provider_unavailable).
@@ -183,15 +212,27 @@ describe("clonado: verificación de identidad, certificado y metadata", () => {
     expect(noProvider.statusCode, noProvider.body).toBe(201);
     const nv = await idvOf(noProvider.json().envelope.id);
     expect(nv).toMatchObject({ p: null, s: null });
-    expect(noProvider.json().warnings).toEqual([expect.objectContaining({ code: "identity_verification_dropped", recipientId: nv.id, reason: "provider_unavailable" })]);
+    expect(noProvider.json().warnings).toEqual([
+      expect.objectContaining({ code: "identity_verification_dropped", recipientId: nv.id, reason: "provider_unavailable" }),
+    ]);
   });
 
   it("la firma con certificado se copia con sus controles (documento de identidad exigido)", async () => {
     const id = await draft();
     const rid = uuid();
     expect(
-      (await putRecipients(id, [{ id: rid, name: "Ana", email: "ana@x.test", idDocumentNumber: "123", signatureType: "certificate", certificateRequirements: { matchIdDocument: true } }]))
-        .statusCode,
+      (
+        await putRecipients(id, [
+          {
+            id: rid,
+            name: "Ana",
+            email: "ana@x.test",
+            idDocumentNumber: "123",
+            signatureType: "certificate",
+            certificateRequirements: { matchIdDocument: true },
+          },
+        ])
+      ).statusCode,
     ).toBe(200);
     const ok = await clone(id);
     expect(ok.statusCode, ok.body).toBe(201);
@@ -203,15 +244,22 @@ describe("clonado: verificación de identidad, certificado y metadata", () => {
     await db.query(`UPDATE recipients SET id_document_number = NULL WHERE id = $1`, [rid]);
     const down = await clone(id);
     expect(down.statusCode, down.body).toBe(201);
-    const d = await db.one<any>(`SELECT id, signature_type, certificate_requirements FROM recipients WHERE envelope_id = $1`, [down.json().envelope.id]);
+    const d = await db.one<any>(`SELECT id, signature_type, certificate_requirements FROM recipients WHERE envelope_id = $1`, [
+      down.json().envelope.id,
+    ]);
     expect(d.signature_type).toBe("certificate");
     expect(d.certificate_requirements).toMatchObject({ matchIdDocument: false, idDocumentMatchSkipped: true });
-    expect(down.json().warnings).toEqual([expect.objectContaining({ code: "certificate_id_match_dropped", recipientId: d.id, reason: "missing_id_document" })]);
+    expect(down.json().warnings).toEqual([
+      expect.objectContaining({ code: "certificate_id_match_dropped", recipientId: d.id, reason: "missing_id_document" }),
+    ]);
   });
 
   it("con metadata propia conserva las claves reservadas del documento y clonedFrom", async () => {
     const id = await draft("Con metadata");
-    await db.query(`UPDATE envelopes SET metadata = $2 WHERE id = $1`, [id, JSON.stringify({ templateId: "tpl-1", agreement: { a: 1 }, workflowRunId: "w", foo: 1 })]);
+    await db.query(`UPDATE envelopes SET metadata = $2 WHERE id = $1`, [
+      id,
+      JSON.stringify({ templateId: "tpl-1", agreement: { a: 1 }, workflowRunId: "w", foo: 1 }),
+    ]);
     const c = await clone(id, { metadata: { bar: 2, clonedFrom: "falso", templateId: "otro" } });
     expect(c.statusCode, c.body).toBe(201);
     const m = (await db.one<any>(`SELECT metadata FROM envelopes WHERE id = $1`, [c.json().envelope.id])).metadata;
@@ -265,7 +313,8 @@ describe("revisión con IA contra el playbook", () => {
       model: "test",
       reviewPlaybook: async () => {
         // Mientras el modelo responde, alguien sube otro documento (deja ai_review en NULL).
-        if (changeDocs) expect((await app.inject({ method: "POST", url: `/v1/envelopes/${id}/documents`, ...multipart(minimalPdf()) })).statusCode).toBe(201);
+        if (changeDocs)
+          expect((await app.inject({ method: "POST", url: `/v1/envelopes/${id}/documents`, ...multipart(minimalPdf()) })).statusCode).toBe(201);
         return { result: [], usage } as any;
       },
     } as any);

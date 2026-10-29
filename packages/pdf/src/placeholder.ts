@@ -31,7 +31,10 @@ export function fillByteRange(input: Uint8Array, placeholder: string, from = 0):
   const open = key < 0 ? -1 : buf.indexOf("[", key, "latin1");
   const close = open < 0 ? -1 : buf.indexOf("]", open, "latin1");
   if (key < from || open < 0 || close < 0 || !(open < first && first < close)) throw new Error("placeholder del ByteRange mal formado");
-  const tokens = buf.toString("latin1", open + 1, close).split(/\s+/).filter(Boolean);
+  const tokens = buf
+    .toString("latin1", open + 1, close)
+    .split(/\s+/)
+    .filter(Boolean);
   if (tokens.join(" ") !== `0 ${name} ${name} ${name}`) throw new Error("placeholder del ByteRange mal formado");
   if (buf.indexOf(name, close, "latin1") >= 0) throw new Error("placeholder del ByteRange repetido");
   // /Contents va inmediatamente después del ByteRange en el diccionario de firma que armamos.

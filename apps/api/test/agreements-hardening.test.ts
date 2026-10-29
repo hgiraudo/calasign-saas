@@ -11,8 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-agr-hard-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant: string;
@@ -65,7 +65,13 @@ function collectThenApprove() {
       id: randomUUID(),
       type: "collect_data",
       name: "Datos",
-      config: { title: "Tus datos", fields: [{ key: "email", label: "Correo", type: "email" }, { key: "nombre", label: "Nombre", type: "text" }] },
+      config: {
+        title: "Tus datos",
+        fields: [
+          { key: "email", label: "Correo", type: "email" },
+          { key: "nombre", label: "Nombre", type: "text" },
+        ],
+      },
     },
     { id: randomUUID(), type: "approval", name: "Visto bueno", config: { approverUserId: userId, message: "Revisá el alta" } },
   ];
@@ -105,10 +111,16 @@ describe("workflows con inicio público", () => {
       expect((await app.inject({ method: "GET", url: `/v1/public/workflows/${wf.slug}` })).statusCode).toBe(404);
       expect((await startPublic(wf.slug)).statusCode).toBe(404);
       await age(token);
-      const sub = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${token}/steps/0`, payload: { values: { email: "a@b.com", nombre: "A" } } });
+      const sub = await app.inject({
+        method: "POST",
+        url: `/v1/public/workflow-runs/${token}/steps/0`,
+        payload: { values: { email: "a@b.com", nombre: "A" } },
+      });
       expect(sub.statusCode).toBe(410);
       // Despublicarlo sí se puede sin el plan.
-      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { publicStart: false } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { publicStart: false } })).statusCode).toBe(
+        200,
+      );
     } finally {
       await db.query(`UPDATE tenants SET billing_plan = NULL WHERE id = $1`, [tenant]);
     }
@@ -138,24 +150,47 @@ describe("workflows con inicio público", () => {
   it("tiempo mínimo, deduplicación por correo + IP y aviso de aprobación por la cola", async () => {
     const wf = await publicWorkflow();
     const t1 = (await startPublic(wf.slug, "198.51.100.7")).json().token as string;
-    const fast = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t1}/steps/0`, payload: { values: { email: "x@y.com", nombre: "X" } }, remoteAddress: "198.51.100.7" });
+    const fast = await app.inject({
+      method: "POST",
+      url: `/v1/public/workflow-runs/${t1}/steps/0`,
+      payload: { values: { email: "x@y.com", nombre: "X" } },
+      remoteAddress: "198.51.100.7",
+    });
     expect(fast.statusCode).toBe(422);
     expect(fast.json().error.code).toBe("too_fast");
     await age(t1);
-    const ok = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t1}/steps/0`, payload: { values: { email: "X@y.com", nombre: "X" } }, remoteAddress: "198.51.100.7" });
+    const ok = await app.inject({
+      method: "POST",
+      url: `/v1/public/workflow-runs/${t1}/steps/0`,
+      payload: { values: { email: "X@y.com", nombre: "X" } },
+      remoteAddress: "198.51.100.7",
+    });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().status).toBe("waiting"); // ahora espera la aprobación
     const run = await db.one<any>(`SELECT id FROM workflow_runs WHERE workflow_id = $1 AND public_submitter IS NOT NULL`, [wf.id]);
-    const job = await db.one<any>(`SELECT payload FROM jobs WHERE queue = 'agreements' AND payload->>'runId' = $1 AND payload->>'kind' = 'workflow_approval_notice'`, [run.id]);
+    const job = await db.one<any>(
+      `SELECT payload FROM jobs WHERE queue = 'agreements' AND payload->>'runId' = $1 AND payload->>'kind' = 'workflow_approval_notice'`,
+      [run.id],
+    );
     expect(job.payload.stepIndex).toBe(1);
 
     // Mismo correo desde la misma IP en otra ejecución: rechazado. Desde otra IP, se acepta.
     const t2 = (await startPublic(wf.slug, "198.51.100.7")).json().token as string;
     await age(t2);
-    const dup = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t2}/steps/0`, payload: { values: { email: "x@y.com", nombre: "X" } }, remoteAddress: "198.51.100.7" });
+    const dup = await app.inject({
+      method: "POST",
+      url: `/v1/public/workflow-runs/${t2}/steps/0`,
+      payload: { values: { email: "x@y.com", nombre: "X" } },
+      remoteAddress: "198.51.100.7",
+    });
     expect(dup.statusCode).toBe(429);
     expect(dup.json().error.code).toBe("form_recent_submission");
-    const other = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t2}/steps/0`, payload: { values: { email: "x@y.com", nombre: "X" } }, remoteAddress: "198.51.100.99" });
+    const other = await app.inject({
+      method: "POST",
+      url: `/v1/public/workflow-runs/${t2}/steps/0`,
+      payload: { values: { email: "x@y.com", nombre: "X" } },
+      remoteAddress: "198.51.100.99",
+    });
     expect(other.statusCode).toBe(200);
   });
 
@@ -163,7 +198,11 @@ describe("workflows con inicio público", () => {
     const { config } = await import("../src/config");
     const wf = await publicWorkflow();
     const prev = config.webForms.maxPerTenantHour;
-    const n = (await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND public_collected_at > now() - interval '1 hour'`, [tenant])).n;
+    const n = (
+      await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND public_collected_at > now() - interval '1 hour'`, [
+        tenant,
+      ])
+    ).n;
     config.webForms.maxPerTenantHour = n + 1;
     try {
       // Los inicios sin completar no gastan el cupo.
@@ -172,9 +211,19 @@ describe("workflows con inicio público", () => {
       expect(t2).toBeTruthy();
       await age(t1);
       await age(t2);
-      const ok = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t1}/steps/0`, payload: { values: { email: "c1@y.com", nombre: "C" } }, remoteAddress: "192.0.2.1" });
+      const ok = await app.inject({
+        method: "POST",
+        url: `/v1/public/workflow-runs/${t1}/steps/0`,
+        payload: { values: { email: "c1@y.com", nombre: "C" } },
+        remoteAddress: "192.0.2.1",
+      });
       expect(ok.statusCode).toBe(200);
-      const over = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t2}/steps/0`, payload: { values: { email: "c2@y.com", nombre: "C" } }, remoteAddress: "192.0.2.2" });
+      const over = await app.inject({
+        method: "POST",
+        url: `/v1/public/workflow-runs/${t2}/steps/0`,
+        payload: { values: { email: "c2@y.com", nombre: "C" } },
+        remoteAddress: "192.0.2.2",
+      });
       expect(over.statusCode).toBe(429);
       expect(over.json().error.code).toBe("workflow_rate_limited");
     } finally {
@@ -189,7 +238,11 @@ describe("workflows con inicio público", () => {
     expect(res.statusCode).toBe(201);
     const slug = (res.json().publicUrl as string).split("/wf/")[1];
     const prev = config.webForms.maxPerTenantHour;
-    const n = (await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND public_collected_at > now() - interval '1 hour'`, [tenant])).n;
+    const n = (
+      await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND public_collected_at > now() - interval '1 hour'`, [
+        tenant,
+      ])
+    ).n;
     config.webForms.maxPerTenantHour = n + 1;
     try {
       const first = await startPublic(slug, "192.0.2.11");
@@ -209,10 +262,12 @@ describe("workflows con inicio público", () => {
     const { config } = await import("../src/config");
     const wf = await publicWorkflow();
     const prev = config.webForms.maxPublicStartsPerTenantHour;
-    const n = (await db.one<any>(
-      `SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND started_by IS NULL AND started_by_api_key IS NULL AND created_at > now() - interval '1 hour'`,
-      [tenant],
-    )).n;
+    const n = (
+      await db.one<any>(
+        `SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND started_by IS NULL AND started_by_api_key IS NULL AND created_at > now() - interval '1 hour'`,
+        [tenant],
+      )
+    ).n;
     config.webForms.maxPublicStartsPerTenantHour = n + 1;
     try {
       expect((await startPublic(wf.slug, "192.0.2.3")).statusCode).toBe(201);
@@ -229,10 +284,14 @@ describe("workflows con inicio público", () => {
     const internal = await createWorkflow({ name: "Interno pub", steps: collectThenApprove() });
     await db.query(`UPDATE tenants SET billing_plan = 'starter' WHERE id = $1`, [tenant]);
     try {
-      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { name: "Renombrado" } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { name: "Renombrado" } })).statusCode).toBe(
+        200,
+      );
       expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { active: false } })).statusCode).toBe(200);
       expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { active: true } })).statusCode).toBe(402);
-      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${internal.json().id}`, headers: H(), payload: { publicStart: true } })).statusCode).toBe(402);
+      expect(
+        (await app.inject({ method: "PATCH", url: `/v1/workflows/${internal.json().id}`, headers: H(), payload: { publicStart: true } })).statusCode,
+      ).toBe(402);
     } finally {
       await db.query(`UPDATE tenants SET billing_plan = NULL WHERE id = $1`, [tenant]);
     }
@@ -250,11 +309,19 @@ describe("workflows con inicio público", () => {
     expect(runs.find((r) => !r.started_by).status).toBe("cancelled");
     expect(runs.find((r) => r.started_by).status).toBe("waiting");
     await age(token);
-    const sub = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${token}/steps/0`, payload: { values: { email: "z@y.com", nombre: "Z" } } });
+    const sub = await app.inject({
+      method: "POST",
+      url: `/v1/public/workflow-runs/${token}/steps/0`,
+      payload: { values: { email: "z@y.com", nombre: "Z" } },
+    });
     expect(sub.statusCode).toBe(410);
     // Sin tiempo mínimo de llenado (solo en runs públicos).
     const internalToken = internal.json().collectUrl.split("/w/")[1];
-    const accepted = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${internalToken}/steps/0`, payload: { values: { email: "z@y.com", nombre: "Z" } } });
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/v1/public/workflow-runs/${internalToken}/steps/0`,
+      payload: { values: { email: "z@y.com", nombre: "Z" } },
+    });
     expect(accepted.statusCode).toBe(200);
     expect(accepted.json().status).toBe("waiting"); // espera la aprobación
     // El DELETE explica que desactivar no cancela las internas.
@@ -272,7 +339,10 @@ describe("workflows con inicio público", () => {
     // Una ejecución interna esperando su formulario no vence sola.
     const internal = await app.inject({ method: "POST", url: `/v1/workflows/${wf.id}/runs`, headers: H(), payload: { data: {} } });
     expect(internal.statusCode).toBe(201);
-    await db.query(`UPDATE workflow_runs SET updated_at = now() - make_interval(days => $2) WHERE id = $1`, [internal.json().id, COLLECT_IDLE_DAYS + 1]);
+    await db.query(`UPDATE workflow_runs SET updated_at = now() - make_interval(days => $2) WHERE id = $1`, [
+      internal.json().id,
+      COLLECT_IDLE_DAYS + 1,
+    ]);
     await workflowRunsSweep({ db, blobs: await blobs(), log: deps().log });
     expect((await db.one<any>(`SELECT status FROM workflow_runs WHERE id = $1`, [run.id])).status).toBe("waiting");
     await db.query(`UPDATE workflow_runs SET updated_at = now() - make_interval(days => $2) WHERE id = $1`, [run.id, COLLECT_IDLE_DAYS + 1]);
@@ -289,8 +359,18 @@ describe("workflows con inicio público", () => {
 describe("workflows: documentos generados y repositorio", () => {
   it("needsGeneratedDocuments: solo un envío pendiente que usa un PDF generado antes", async () => {
     const { needsGeneratedDocuments } = await import("../src/modules/agreements/workflows");
-    const gen = { id: randomUUID(), type: "generate_document", name: "G", config: { documentTemplateId: randomUUID(), output: "doc", allowMissing: false } } as any;
-    const send = { id: randomUUID(), type: "send_for_signature", name: "S", config: { document: "doc", envelopeKey: "e", subject: "x", recipients: [] } } as any;
+    const gen = {
+      id: randomUUID(),
+      type: "generate_document",
+      name: "G",
+      config: { documentTemplateId: randomUUID(), output: "doc", allowMissing: false },
+    } as any;
+    const send = {
+      id: randomUUID(),
+      type: "send_for_signature",
+      name: "S",
+      config: { document: "doc", envelopeKey: "e", subject: "x", recipients: [] },
+    } as any;
     const http = { id: randomUUID(), type: "http_request", name: "H", config: { url: "https://x.test", method: "POST" } } as any;
     expect(needsGeneratedDocuments([gen, http, send], 1)).toBe(true);
     expect(needsGeneratedDocuments([gen, send, http], 2)).toBe(false);
@@ -298,14 +378,24 @@ describe("workflows: documentos generados y repositorio", () => {
   });
 
   it("reintento con los documentos ya borrados: se permite si no queda un envío que los use", async () => {
-    const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Carta R", source: "# Hola {{nombre}}" } });
+    const tpl = await app.inject({
+      method: "POST",
+      url: "/v1/document-templates",
+      headers: H(),
+      payload: { name: "Carta R", source: "# Hola {{nombre}}" },
+    });
     const mk = async (withSend: boolean) => {
       const steps: any[] = [
         { id: randomUUID(), type: "generate_document", name: "Generar", config: { documentTemplateId: tpl.json().id, output: "carta" } },
         { id: randomUUID(), type: "http_request", name: "Avisar", config: { url: "ftp://example.com/x" } },
       ];
       if (withSend) {
-        steps.push({ id: randomUUID(), type: "send_for_signature", name: "Enviar", config: { document: "carta", envelopeKey: "e", subject: "Carta", recipients: [{ role: "Cliente", name: "Ana", email: "ana@x.test" }] } });
+        steps.push({
+          id: randomUUID(),
+          type: "send_for_signature",
+          name: "Enviar",
+          config: { document: "carta", envelopeKey: "e", subject: "Carta", recipients: [{ role: "Cliente", name: "Ana", email: "ana@x.test" }] },
+        });
       }
       const wf = await createWorkflow({ name: `Reintento ${randomUUID().slice(0, 6)}`, steps });
       expect(wf.statusCode).toBe(201);
@@ -333,13 +423,24 @@ describe("workflows: documentos generados y repositorio", () => {
     const t2 = (await startPublic(wf.slug, ip)).json().token as string;
     await age(t1);
     await age(t2);
-    const send = (t: string) => app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t}/steps/0`, payload: { values: { email: "par@y.com", nombre: "P" } }, remoteAddress: ip });
+    const send = (t: string) =>
+      app.inject({
+        method: "POST",
+        url: `/v1/public/workflow-runs/${t}/steps/0`,
+        payload: { values: { email: "par@y.com", nombre: "P" } },
+        remoteAddress: ip,
+      });
     const codes = (await Promise.all([send(t1), send(t2)])).map((r) => r.statusCode).sort();
     expect(codes).toEqual([200, 429]);
   }, 60_000);
 
   it("al rechazar el run se borran los PDFs generados que no salieron en un sobre", async () => {
-    const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Carta", source: "# Hola {{nombre}}\n\nTexto." } });
+    const tpl = await app.inject({
+      method: "POST",
+      url: "/v1/document-templates",
+      headers: H(),
+      payload: { name: "Carta", source: "# Hola {{nombre}}\n\nTexto." },
+    });
     expect(tpl.statusCode).toBe(201);
     const res = await createWorkflow({
       name: "Con documento",
@@ -353,7 +454,12 @@ describe("workflows: documentos generados y repositorio", () => {
     expect(run.statusCode).toBe(201);
     const fileId = run.json().context.documents.carta.fileId as string;
     expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [fileId])).toBeTruthy();
-    const dec = await app.inject({ method: "POST", url: `/v1/workflow-runs/${run.json().id}/steps/1/decision`, headers: H(), payload: { approve: false } });
+    const dec = await app.inject({
+      method: "POST",
+      url: `/v1/workflow-runs/${run.json().id}/steps/1/decision`,
+      headers: H(),
+      payload: { approve: false },
+    });
     expect(dec.statusCode).toBe(200);
     expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [fileId])).toBeNull();
     // Reintentar ya no es posible (y el run no vuelve a usar el documento).
@@ -363,7 +469,10 @@ describe("workflows: documentos generados y repositorio", () => {
   it("PATCH de un acuerdo fusiona los metadatos en SQL", async () => {
     const { uuidv7 } = await import("../src/lib/util");
     const file = uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`, [file, tenant]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`,
+      [file, tenant],
+    );
     const ag = uuidv7();
     await db.query(
       `INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title, status, owner_user_id, metadata) VALUES ($1,$2,'external',$3,'a.pdf','Acuerdo','active',$4,'{"a":"1"}')`,
@@ -395,7 +504,12 @@ describe("negociaciones", () => {
   });
 
   const create = (participants: { name: string; email: string; role?: string | null }[]) =>
-    app.inject({ method: "POST", url: "/v1/negotiations", headers: H(), payload: { title: "Servicios", documentTemplateId: templateId, data: { cliente: "ACME", precio: "100" }, participants } });
+    app.inject({
+      method: "POST",
+      url: "/v1/negotiations",
+      headers: H(),
+      payload: { title: "Servicios", documentTemplateId: templateId, data: { cliente: "ACME", precio: "100" }, participants },
+    });
 
   it("valida los roles de las contrapartes contra el documento", async () => {
     const dup = await create([
@@ -414,7 +528,12 @@ describe("negociaciones", () => {
 
   it("observadores: rol libre permitido (copia del sobre); con un rol de firma, 400", async () => {
     const createObs = (participants: Record<string, unknown>[]) =>
-      app.inject({ method: "POST", url: "/v1/negotiations", headers: H(), payload: { title: "Obs", documentTemplateId: templateId, data: { cliente: "ACME", precio: "100" }, participants } });
+      app.inject({
+        method: "POST",
+        url: "/v1/negotiations",
+        headers: H(),
+        payload: { title: "Obs", documentTemplateId: templateId, data: { cliente: "ACME", precio: "100" }, participants },
+      });
     const ok = await createObs([
       { name: "A", email: "a@x.com", role: "Cliente" },
       { name: "L", email: "l@x.com", role: "Abogado", observer: true },
@@ -455,7 +574,13 @@ describe("negociaciones", () => {
     const xref = pdf.length;
     pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
     pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-    const meta = { title: "Subido", participants: [{ name: "A", email: "a@x.com", role: "Cliente" }, { name: "L", email: "l@x.com", role: "Abogado", observer: true }] };
+    const meta = {
+      title: "Subido",
+      participants: [
+        { name: "A", email: "a@x.com", role: "Cliente" },
+        { name: "L", email: "l@x.com", role: "Abogado", observer: true },
+      ],
+    };
     const b = "----calasign" + randomUUID().slice(0, 8);
     const body = Buffer.concat([
       Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="meta"\r\n\r\n${JSON.stringify(meta)}\r\n`),
@@ -463,7 +588,12 @@ describe("negociaciones", () => {
       Buffer.from(pdf, "latin1"),
       Buffer.from(`\r\n--${b}--\r\n`),
     ]);
-    const up = await app.inject({ method: "POST", url: "/v1/negotiations/upload", headers: { ...H(), "content-type": `multipart/form-data; boundary=${b}` }, payload: body });
+    const up = await app.inject({
+      method: "POST",
+      url: "/v1/negotiations/upload",
+      headers: { ...H(), "content-type": `multipart/form-data; boundary=${b}` },
+      payload: body,
+    });
     expect(up.statusCode).toBe(201);
     const id = up.json().negotiation.id as string;
     const acc = await app.inject({ method: "POST", url: `/v1/negotiations/${id}/accept`, headers: H(), payload: {} });
@@ -495,16 +625,31 @@ describe("negociaciones", () => {
     const capped = await app.inject({ method: "POST", url: `/v1/public/negotiations/${tokenA}/comments`, payload: { body: "uno más" } });
     expect(capped.statusCode).toBe(429);
     expect((await app.inject({ method: "POST", url: `/v1/public/negotiations/${tokenB}/comments`, payload: { body: "hola" } })).statusCode).toBe(201);
-    expect((await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "respuesta" } })).statusCode).toBe(201);
+    expect(
+      (await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "respuesta" } })).statusCode,
+    ).toBe(201);
 
-    const prop = await app.inject({ method: "POST", url: `/v1/public/negotiations/${tokenB}/proposals`, payload: { kind: "variable", key: "precio", newValue: "90" } });
+    const prop = await app.inject({
+      method: "POST",
+      url: `/v1/public/negotiations/${tokenB}/proposals`,
+      payload: { kind: "variable", key: "precio", newValue: "90" },
+    });
     expect(prop.statusCode).toBe(201);
-    const edit = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "Razón social" } });
+    const edit = await app.inject({
+      method: "PATCH",
+      url: `/v1/negotiations/${id}`,
+      headers: H(),
+      payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "Razón social" },
+    });
     expect(edit.statusCode).toBe(200);
     const cancel = await app.inject({ method: "POST", url: `/v1/negotiations/${id}/cancel`, headers: H() });
     expect(cancel.statusCode).toBe(200);
-    expect((await db.one<any>(`SELECT count(*)::int AS n FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [id])).n).toBe(0);
-    const actions = (await db.query<any>(`SELECT action FROM account_audit_log WHERE tenant_id = $1 AND target_id = $2`, [tenant, id])).map((r) => r.action);
+    expect((await db.one<any>(`SELECT count(*)::int AS n FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [id])).n).toBe(
+      0,
+    );
+    const actions = (await db.query<any>(`SELECT action FROM account_audit_log WHERE tenant_id = $1 AND target_id = $2`, [tenant, id])).map(
+      (r) => r.action,
+    );
     expect(actions).toEqual(expect.arrayContaining(["negotiation.created", "negotiation.updated", "negotiation.cancelled"]));
   });
 
@@ -517,15 +662,27 @@ describe("negociaciones", () => {
     const token = decrypt(part.token_enc);
     const url = (r: string) => `/v1/public/negotiations/${token}/${r}`;
     expect((await app.inject({ method: "POST", url: url("comments"), payload: { body: "ok", expectedVersion: 1 } })).statusCode).toBe(201);
-    expect((await app.inject({ method: "POST", url: url("proposals"), payload: { kind: "variable", key: "precio", newValue: "95", expectedVersion: 1 } })).statusCode).toBe(201);
+    expect(
+      (await app.inject({ method: "POST", url: url("proposals"), payload: { kind: "variable", key: "precio", newValue: "95", expectedVersion: 1 } }))
+        .statusCode,
+    ).toBe(201);
     // El remitente saca la versión 2: lo que la contraparte escribió viendo la 1 no se guarda.
-    const edit = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "v2" } });
+    const edit = await app.inject({
+      method: "PATCH",
+      url: `/v1/negotiations/${id}`,
+      headers: H(),
+      payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "v2" },
+    });
     expect(edit.statusCode).toBe(200);
     const c = await app.inject({ method: "POST", url: url("comments"), payload: { body: "tarde", expectedVersion: 1 } });
     expect(c.statusCode).toBe(409);
     expect(c.json().error.code).toBe("version_changed");
     // Aunque el valor propuesto sea igual al vigente, el error útil es la versión (no no_change).
-    const pr = await app.inject({ method: "POST", url: url("proposals"), payload: { kind: "variable", key: "precio", newValue: "100", expectedVersion: 1 } });
+    const pr = await app.inject({
+      method: "POST",
+      url: url("proposals"),
+      payload: { kind: "variable", key: "precio", newValue: "100", expectedVersion: 1 },
+    });
     expect(pr.statusCode).toBe(409);
     expect(pr.json().error.code).toBe("version_changed");
     const n = (await db.one<any>(`SELECT current_version FROM negotiations WHERE id = $1`, [id])).current_version as number;
@@ -537,46 +694,123 @@ describe("negociaciones", () => {
   it("comentario del remitente con expectedVersion vieja: 409 version_changed", async () => {
     const res = await create([{ name: "A", email: "a@x.com", role: "Cliente" }]);
     const id = res.json().negotiation.id as string;
-    expect((await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "v1", expectedVersion: 1 } })).statusCode).toBe(201);
-    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "v2" } })).statusCode).toBe(200);
-    const late = await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "tarde", expectedVersion: 1 } });
+    expect(
+      (await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "v1", expectedVersion: 1 } }))
+        .statusCode,
+    ).toBe(201);
+    expect(
+      (
+        await app.inject({
+          method: "PATCH",
+          url: `/v1/negotiations/${id}`,
+          headers: H(),
+          payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "v2" },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const late = await app.inject({
+      method: "POST",
+      url: `/v1/negotiations/${id}/comments`,
+      headers: H(),
+      payload: { body: "tarde", expectedVersion: 1 },
+    });
     expect(late.statusCode).toBe(409);
     expect(late.json().error.code).toBe("version_changed");
-    expect((await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "v2", expectedVersion: 2 } })).statusCode).toBe(201);
+    expect(
+      (await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "v2", expectedVersion: 2 } }))
+        .statusCode,
+    ).toBe(201);
   });
 
   it("cláusulas: un ciclo nuevo es 400; uno heredado de la copia guardada se tolera (modo compatible)", async () => {
-    for (const [slug, body] of [["negc2", "Dos."], ["negc1", "Uno\n\n{{clausula:negc2}}"]]) {
+    for (const [slug, body] of [
+      ["negc2", "Dos."],
+      ["negc1", "Uno\n\n{{clausula:negc2}}"],
+    ]) {
       const r = await app.inject({ method: "POST", url: "/v1/clauses", headers: H(), payload: { slug, title: slug, body } });
       expect(r.statusCode, r.body).toBe(201);
     }
-    const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Con cláusulas", source: "# Para {{cliente}}\n\n{{clausula:negc1}}\n\n{{firma:Cliente}}" } });
+    const tpl = await app.inject({
+      method: "POST",
+      url: "/v1/document-templates",
+      headers: H(),
+      payload: { name: "Con cláusulas", source: "# Para {{cliente}}\n\n{{clausula:negc1}}\n\n{{firma:Cliente}}" },
+    });
     expect(tpl.statusCode).toBe(201);
-    const res = await app.inject({ method: "POST", url: "/v1/negotiations", headers: H(), payload: { title: "Cl", documentTemplateId: tpl.json().id, data: { cliente: "ACME" }, participants: [{ name: "A", email: "a@x.com", role: "Cliente" }] } });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/negotiations",
+      headers: H(),
+      payload: {
+        title: "Cl",
+        documentTemplateId: tpl.json().id,
+        data: { cliente: "ACME" },
+        participants: [{ name: "A", email: "a@x.com", role: "Cliente" }],
+      },
+    });
     expect(res.statusCode).toBe(201);
     const id = res.json().negotiation.id as string;
     // PATCH del remitente que cierra un ciclo: 400 (antes pasaba en modo compatible).
-    const cyc = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos\n\n{{clausula:negc1}}" } } });
+    const cyc = await app.inject({
+      method: "PATCH",
+      url: `/v1/negotiations/${id}`,
+      headers: H(),
+      payload: { clauseOverrides: { negc2: "Dos\n\n{{clausula:negc1}}" } },
+    });
     expect(cyc.statusCode).toBe(400);
     expect(cyc.json().error.code).toBe("template_syntax");
     // Propuesta de cláusula de la contraparte que cierra un ciclo: 400 al proponerla.
     const { decrypt } = await import("../src/lib/util");
     const part = await db.one<any>(`SELECT token_enc FROM negotiation_participants WHERE negotiation_id = $1`, [id]);
     const token = decrypt(part.token_enc);
-    const prop = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc2", newValue: "Dos\n\n{{clausula:negc1}}" } });
+    const prop = await app.inject({
+      method: "POST",
+      url: `/v1/public/negotiations/${token}/proposals`,
+      payload: { kind: "clause", key: "negc2", newValue: "Dos\n\n{{clausula:negc1}}" },
+    });
     expect(prop.statusCode).toBe(400);
     expect(prop.json().error.code).toBe("template_syntax");
-    expect((await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc2", newValue: "Dos bis." } })).statusCode).toBe(201);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/v1/public/negotiations/${token}/proposals`,
+          payload: { kind: "clause", key: "negc2", newValue: "Dos bis." },
+        })
+      ).statusCode,
+    ).toBe(201);
     // Copia guardada con un ciclo de antes de validar el grafo: editar datos u otra cláusula sigue funcionando.
-    await db.query(`UPDATE negotiations SET clause_snapshot = $2 WHERE id = $1`, [id, JSON.stringify({ negc1: "Uno\n\n{{clausula:negc2}}", negc2: "Dos\n\n{{clausula:negc1}}" })]);
-    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA" } } })).statusCode).toBe(200);
-    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc1: "Uno nuevo\n\n{{clausula:negc2}}" } } })).statusCode).toBe(200);
+    await db.query(`UPDATE negotiations SET clause_snapshot = $2 WHERE id = $1`, [
+      id,
+      JSON.stringify({ negc1: "Uno\n\n{{clausula:negc2}}", negc2: "Dos\n\n{{clausula:negc1}}" }),
+    ]);
+    expect(
+      (await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA" } } })).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "PATCH",
+          url: `/v1/negotiations/${id}`,
+          headers: H(),
+          payload: { clauseOverrides: { negc1: "Uno nuevo\n\n{{clausula:negc2}}" } },
+        })
+      ).statusCode,
+    ).toBe(200);
     // Propuesta de la contraparte sobre una cláusula del ciclo heredado (la copia actual ya falla desde ahí): no se
     // bloquea, como la edición del remitente; tampoco la que lo arregla.
-    const inh = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc1", newValue: "Uno otra\n\n{{clausula:negc2}}" } });
+    const inh = await app.inject({
+      method: "POST",
+      url: `/v1/public/negotiations/${token}/proposals`,
+      payload: { kind: "clause", key: "negc1", newValue: "Uno otra\n\n{{clausula:negc2}}" },
+    });
     expect(inh.statusCode, inh.body).toBe(201);
     // Pero no una que, con la excusa del ciclo heredado, arma otro distinto (negc1 → negc1 en vez de negc1 → negc2 → negc1).
-    const other = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc1", newValue: "Uno\n\n{{clausula:negc1}}" } });
+    const other = await app.inject({
+      method: "POST",
+      url: `/v1/public/negotiations/${token}/proposals`,
+      payload: { kind: "clause", key: "negc1", newValue: "Uno\n\n{{clausula:negc1}}" },
+    });
     expect(other.statusCode, other.body).toBe(400);
     expect(other.json().error.code).toBe("template_syntax");
     // Ni una que deja el ciclo heredado y suma otro (la búsqueda encontraba primero el heredado y la aceptaba).
@@ -588,9 +822,16 @@ describe("negociaciones", () => {
     expect(both.statusCode, both.body).toBe(400);
     expect(both.json().error.code).toBe("template_syntax");
     // Y arreglarlo también.
-    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos." } } })).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos." } } }))
+        .statusCode,
+    ).toBe(200);
     // Sin el ciclo heredado, una propuesta que lo vuelve a cerrar es 400 otra vez.
-    const again = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc2", newValue: "Dos\n\n{{clausula:negc1}}" } });
+    const again = await app.inject({
+      method: "POST",
+      url: `/v1/public/negotiations/${token}/proposals`,
+      payload: { kind: "clause", key: "negc2", newValue: "Dos\n\n{{clausula:negc1}}" },
+    });
     expect(again.statusCode).toBe(400);
   });
 
@@ -609,7 +850,10 @@ describe("negociaciones", () => {
     // Abierta por el dominio de una sub-marca de la misma organización: esa sub-marca (otra organización: la predeterminada).
     const brand = randomUUID();
     await db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,'Sub','sub-neg','{}')`, [brand, tenant]);
-    await db.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, status, verification_token) VALUES ($1,$2,$3,'firmas.sub-neg.example','verified','x')`, [randomUUID(), tenant, brand]);
+    await db.query(
+      `INSERT INTO brand_domains (id, tenant_id, brand_id, domain, status, verification_token) VALUES ($1,$2,$3,'firmas.sub-neg.example','verified','x')`,
+      [randomUUID(), tenant, brand],
+    );
     const byHost = (url: string, host: string) => brandForPage(db, { url, headers: { host } } as any);
     expect((await byHost(`/n/${decrypt(part.token_enc)}`, "firmas.sub-neg.example"))?.brandId).toBe(brand);
     expect((await byHost(`/wf/${slug}`, "firmas.sub-neg.example"))?.brandId).toBe(brand);
@@ -620,10 +864,20 @@ describe("negociaciones", () => {
   });
 
   it("auditoría de plantillas y cláusulas", async () => {
-    expect((await app.inject({ method: "PATCH", url: `/v1/document-templates/${templateId}`, headers: H(), payload: { name: "Servicios v2" } })).statusCode).toBe(200);
-    const cl = await app.inject({ method: "POST", url: "/v1/clauses", headers: H(), payload: { slug: "confid", title: "Confidencialidad", body: "Las partes guardan reserva." } });
+    expect(
+      (await app.inject({ method: "PATCH", url: `/v1/document-templates/${templateId}`, headers: H(), payload: { name: "Servicios v2" } }))
+        .statusCode,
+    ).toBe(200);
+    const cl = await app.inject({
+      method: "POST",
+      url: "/v1/clauses",
+      headers: H(),
+      payload: { slug: "confid", title: "Confidencialidad", body: "Las partes guardan reserva." },
+    });
     expect(cl.statusCode).toBe(201);
-    expect((await app.inject({ method: "PATCH", url: `/v1/clauses/${cl.json().id}`, headers: H(), payload: { title: "Reserva" } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "PATCH", url: `/v1/clauses/${cl.json().id}`, headers: H(), payload: { title: "Reserva" } })).statusCode).toBe(
+      200,
+    );
     expect((await app.inject({ method: "DELETE", url: `/v1/clauses/${cl.json().id}`, headers: H() })).statusCode).toBe(204);
     const actions = (await db.query<any>(`SELECT action FROM account_audit_log WHERE tenant_id = $1`, [tenant])).map((r) => r.action);
     expect(actions).toEqual(expect.arrayContaining(["document_template.updated", "clause.created", "clause.updated", "clause.deleted"]));

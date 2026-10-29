@@ -15,8 +15,8 @@ delete process.env.DATABASE_URL;
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -45,16 +45,19 @@ beforeAll(async () => {
      VALUES ($1, $2, 'T', 'business', true, 1000000, $3, now())`,
     [tenant, `t-${tenant.slice(-8)}`, AI_NOTICE_VERSION],
   );
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'admin', 'cs_test', $3)`, [util.uuidv7(), tenant, util.sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'admin', 'cs_test', $3)`, [
+    util.uuidv7(),
+    tenant,
+    util.sha256Hex(KEY),
+  ]);
   ownerId = util.uuidv7();
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1, 'owner@ai-races.test', 'Owner', 'scrypt$x')`, [ownerId]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'owner')`, [tenant, ownerId]);
   ownerSession = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1, $2, $3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(ownerSession),
-    ownerId,
-    tenant,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1, $2, $3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(ownerSession), ownerId, tenant],
+  );
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -68,11 +71,10 @@ const bearer = { authorization: `Bearer ${KEY}` };
 
 async function envelope(status = "draft") {
   const id = util.uuidv7();
-  await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', $3, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)`, [
-    id,
-    tenant,
-    status,
-  ]);
+  await db.query(
+    `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', $3, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)`,
+    [id, tenant, status],
+  );
   return id;
 }
 
@@ -91,8 +93,21 @@ function providerWith(during: () => Promise<void>) {
 }
 
 const manualPut = (id: string, governingLaw: string) =>
-  app.inject({ method: "PUT", url: `/v1/envelopes/${id}/ai/metadata`, headers: bearer, payload: {
-      metadata: { parties: [], effectiveDate: null, expiryDate: null, renewalDate: null, autoRenewal: null, amounts: [], governingLaw, noticePeriodDays: null },
+  app.inject({
+    method: "PUT",
+    url: `/v1/envelopes/${id}/ai/metadata`,
+    headers: bearer,
+    payload: {
+      metadata: {
+        parties: [],
+        effectiveDate: null,
+        expiryDate: null,
+        renewalDate: null,
+        autoRenewal: null,
+        amounts: [],
+        governingLaw,
+        noticePeriodDays: null,
+      },
     },
   });
 
@@ -135,17 +150,14 @@ describe("extracción de metadatos vs. edición manual", () => {
     const id = await envelope();
     providerWith(async () => {
       const file = util.uuidv7();
-      await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'h')`, [
-        file,
-        tenant,
-        `k-${file}`,
-      ]);
-      await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'nuevo.pdf',$4,1,'[]')`, [
-        util.uuidv7(),
-        tenant,
-        id,
-        file,
-      ]);
+      await db.query(
+        `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'h')`,
+        [file, tenant, `k-${file}`],
+      );
+      await db.query(
+        `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'nuevo.pdf',$4,1,'[]')`,
+        [util.uuidv7(), tenant, id, file],
+      );
     });
     try {
       const r = await app.inject({ method: "POST", url: `/v1/envelopes/${id}/ai/extract-metadata`, headers: bearer });
@@ -180,8 +192,12 @@ describe("extracción de metadatos vs. edición manual", () => {
 
 describe("aviso de tratamiento de datos de la IA", () => {
   it("aceptarlo (o habilitar la IA sin el aviso vigente) requiere sesión web: con API key, 403 session_required", async () => {
-    await db.query(`UPDATE tenants SET ai_enabled = false, ai_notice_version = NULL, ai_notice_accepted_at = NULL, ai_notice_accepted_by = NULL WHERE id = $1`, [tenant]);
-    const patch = (headers: Record<string, string>, payload: Record<string, unknown>) => app.inject({ method: "PATCH", url: "/v1/settings/ai", headers, payload });
+    await db.query(
+      `UPDATE tenants SET ai_enabled = false, ai_notice_version = NULL, ai_notice_accepted_at = NULL, ai_notice_accepted_by = NULL WHERE id = $1`,
+      [tenant],
+    );
+    const patch = (headers: Record<string, string>, payload: Record<string, unknown>) =>
+      app.inject({ method: "PATCH", url: "/v1/settings/ai", headers, payload });
     for (const body of [{ enabled: true, acceptNotice: true }, { enabled: true }, { acceptNotice: true }]) {
       const r = await patch(bearer, body);
       expect(r.statusCode, JSON.stringify(body)).toBe(403);
@@ -203,7 +219,9 @@ describe("aviso de tratamiento de datos de la IA", () => {
     const before = await db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_accepted_by FROM tenants WHERE id = $1`, [tenant]);
     const again = await patch(bearer, { acceptNotice: true, renewalAlertDays: 60 });
     expect(again.statusCode).toBe(200);
-    const after = await db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_accepted_by, ai_renewal_alert_days FROM tenants WHERE id = $1`, [tenant]);
+    const after = await db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_accepted_by, ai_renewal_alert_days FROM tenants WHERE id = $1`, [
+      tenant,
+    ]);
     expect(after).toEqual({ ...before, ai_renewal_alert_days: 60 });
     // Con un aviso anterior (versión vieja) vuelve a hacer falta la sesión.
     await db.query(`UPDATE tenants SET ai_notice_version = 'old' WHERE id = $1`, [tenant]);
@@ -215,9 +233,18 @@ describe("verificación de citas", () => {
   function line(id: string, text: string, y: number): TextLine {
     return { id, text, x: 72, y, width: text.length * 5, height: 10, spans: [{ text, x: 72, width: text.length * 5 }] };
   }
-  const page = (n: number, lines: string[]): PageText => ({ page: n, width: 595, height: 842, lines: lines.map((t, i) => line(`p${n}-l${i}`, t, 100 + i * 20)) });
+  const page = (n: number, lines: string[]): PageText => ({
+    page: n,
+    width: 595,
+    height: 842,
+    lines: lines.map((t, i) => line(`p${n}-l${i}`, t, 100 + i * 20)),
+  });
   const docs: DocText[] = [
-    { id: "d1", name: "a.pdf", pages: [page(0, ["Cláusula primera: el plazo es de doce meses."]), page(1, ["Cláusula segunda: la ley aplicable es la de Chile."])] },
+    {
+      id: "d1",
+      name: "a.pdf",
+      pages: [page(0, ["Cláusula primera: el plazo es de doce meses."]), page(1, ["Cláusula segunda: la ley aplicable es la de Chile."])],
+    },
   ];
 
   it("una cita corta (menos de 20 caracteres y de 4 palabras) no se da por verificada aunque aparezca", () => {
@@ -254,7 +281,14 @@ describe("verificación de citas", () => {
 
   it("una cita corta coincide con números y palabras enteros", () => {
     const amounts: DocText[] = [
-      { id: "d3", name: "c.pdf", pages: [page(0, ["Precio: USD 10.000.000 pagaderos a 130 días; recargo del 110% (anual)."]), page(1, ["Precio: USD 10.000, a 30 días, recargo del 10%."])] },
+      {
+        id: "d3",
+        name: "c.pdf",
+        pages: [
+          page(0, ["Precio: USD 10.000.000 pagaderos a 130 días; recargo del 110% (anual)."]),
+          page(1, ["Precio: USD 10.000, a 30 días, recargo del 10%."]),
+        ],
+      },
     ];
     expect(H.locateQuote(amounts, "USD 10.000", 1).verified).toBe(false);
     expect(H.locateQuote(amounts, "30 días", 1).verified).toBe(false);

@@ -16,8 +16,31 @@ vi.mock("../src/modules/white-label/brand", async (orig) => ({
 const { evidenceCertificate } = await import("../src/modules/connectors/evidence-file");
 
 function fakeDb(completedAt: Date | null) {
-  const envelope = { id: "e1", tenant_id: "t1", brand_id: null, subject: "S", status: "completed", created_at: new Date("2026-01-01T00:00:00Z"), completed_at: completedAt, sha256: "abc" };
-  const events = [{ seq: 1, type: "envelope.created", actor_type: "user", actor_id: "u", actor_label: "U", ip: null, user_agent: null, data: {}, occurred_at: new Date("2026-01-02T00:00:00Z"), prev_hash: "0", hash: "h1" }];
+  const envelope = {
+    id: "e1",
+    tenant_id: "t1",
+    brand_id: null,
+    subject: "S",
+    status: "completed",
+    created_at: new Date("2026-01-01T00:00:00Z"),
+    completed_at: completedAt,
+    sha256: "abc",
+  };
+  const events = [
+    {
+      seq: 1,
+      type: "envelope.created",
+      actor_type: "user",
+      actor_id: "u",
+      actor_label: "U",
+      ip: null,
+      user_agent: null,
+      data: {},
+      occurred_at: new Date("2026-01-02T00:00:00Z"),
+      prev_hash: "0",
+      hash: "h1",
+    },
+  ];
   return {
     one: async () => envelope,
     query: async (sql: string) => (sql.includes("envelope_events") ? events : []),
@@ -50,7 +73,8 @@ describe("certificado de evidencia", () => {
       const env = util.uuidv7();
       await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
       await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', 'completed', now())`, [env, tenant]);
-      for (const type of ["envelope.created", "envelope.completed"]) await appendEvent(db, { tenantId: tenant, envelopeId: env, type, actor: SYSTEM, data: {} });
+      for (const type of ["envelope.created", "envelope.completed"])
+        await appendEvent(db, { tenantId: tenant, envelopeId: env, type, actor: SYSTEM, data: {} });
       const a = await evidenceCertificate(db, env);
       await appendEvent(db, { tenantId: tenant, envelopeId: env, type: "document.downloaded", actor: SYSTEM, data: {} });
       const b = await evidenceCertificate(db, env);

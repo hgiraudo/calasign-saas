@@ -95,8 +95,18 @@ async function codeFor(email, after) {
   throw new Error(`no llegó el código a ${email}`);
 }
 
-await sender("POST", "/v1/auth/signup", { name: "Remitente", email: `rem+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Firmante SA ${stamp}` });
-const { envelope } = await sender("POST", "/v1/envelopes", { subject: `Sobre firmante ${stamp}`, reminderEveryDays: 2, expiryWarningDays: 3, allowDelegation: true });
+await sender("POST", "/v1/auth/signup", {
+  name: "Remitente",
+  email: `rem+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Firmante SA ${stamp}`,
+});
+const { envelope } = await sender("POST", "/v1/envelopes", {
+  subject: `Sobre firmante ${stamp}`,
+  reminderEveryDays: 2,
+  expiryWarningDays: 3,
+  allowDelegation: true,
+});
 assert(envelope.reminderEveryDays === 2 && envelope.allowDelegation === true, "configuración de recordatorios");
 const fd = new FormData();
 fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.pdf");
@@ -114,14 +124,27 @@ await sender("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
   ],
 });
 await sender("PUT", `/v1/envelopes/${envelope.id}/fields`, {
-  fields: [ids.s1, ids.s3, ids.s4].map((r, i) => ({ documentId: doc.id, recipientId: r, type: "signature", page: 0, x: 0.1 + i * 0.28, y: 0.7, width: 0.25, height: 0.07 })),
+  fields: [ids.s1, ids.s3, ids.s4].map((r, i) => ({
+    documentId: doc.id,
+    recipientId: r,
+    type: "signature",
+    page: 0,
+    x: 0.1 + i * 0.28,
+    y: 0.7,
+    width: 0.25,
+    height: 0.07,
+  })),
 });
 let detail = await sender("POST", `/v1/envelopes/${envelope.id}/send`);
 assert(detail.recipients.find((r) => r.id === ids.s1).authMethod === "otp_email", "authMethod persistido");
 step("sobre enviado: OTP + aprobador + 2 firmantes + copia (el aprobador no necesita campos)");
 
 // Reasignación por el remitente mientras el destinatario todavía no fue invitado.
-detail = await sender("POST", `/v1/envelopes/${envelope.id}/recipients/${ids.s4}/reassign`, { name: "Rita Reemplazo", email: em("rita"), reason: "cambió de área" });
+detail = await sender("POST", `/v1/envelopes/${envelope.id}/recipients/${ids.s4}/reassign`, {
+  name: "Rita Reemplazo",
+  email: em("rita"),
+  reason: "cambió de área",
+});
 const old4 = detail.recipients.find((r) => r.id === ids.s4);
 const rita = detail.recipients.find((r) => r.email === em("rita"));
 assert(old4.status === "reassigned" && old4.replacedBy === rita.id, "reasignado");
@@ -220,8 +243,18 @@ const txt = execFileSync("pdftotext", ["-layout", "var/e2e-signer-signed.pdf", "
 for (const needle of ["Aprobador", "Delegó en Dora Delegada", "Reasignado a Rita Reemplazo", "código de un solo uso por correo", "/verify"])
   assert(txt.includes(needle), `el certificado incluye "${needle}"`);
 const { items: events } = await sender("GET", `/v1/envelopes/${envelope.id}/events`);
-for (const t of ["recipient.otp_sent", "recipient.otp_failed", "recipient.authenticated", "recipient.approved", "recipient.delegated", "recipient.reassigned"])
-  assert(events.some((e) => e.type === t), `evento ${t}`);
+for (const t of [
+  "recipient.otp_sent",
+  "recipient.otp_failed",
+  "recipient.authenticated",
+  "recipient.approved",
+  "recipient.delegated",
+  "recipient.reassigned",
+])
+  assert(
+    events.some((e) => e.type === t),
+    `evento ${t}`,
+  );
 step("sobre completado; certificado y eventos reflejan OTP, aprobación, delegación y reasignación");
 
 // Verificación pública.

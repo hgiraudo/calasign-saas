@@ -10,7 +10,12 @@ import { appendEvent, type Actor } from "../../infra/evidence";
  * reembolso es una decisión de producto pendiente (docs/PAGOS-Y-AGENTES.md); el remitente ve el aviso en el detalle del
  * sobre y lo revisa o reembolsa desde el proveedor.
  */
-export async function noteSettledPaymentOnClose(t: Db, envelopeId: string, closedStatus: "voided" | "declined" | "expired", actor: Actor): Promise<void> {
+export async function noteSettledPaymentOnClose(
+  t: Db,
+  envelopeId: string,
+  closedStatus: "voided" | "declined" | "expired",
+  actor: Actor,
+): Promise<void> {
   const p = await t.one<any>(
     `SELECT id, tenant_id, amount, currency, provider, provider_payment_id, recipient_id FROM envelope_payments
       WHERE envelope_id = $1 AND status = 'paid' AND refund_required_at IS NULL`,

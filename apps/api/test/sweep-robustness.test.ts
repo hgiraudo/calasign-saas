@@ -37,7 +37,10 @@ const until = async (cond: () => Promise<boolean>, ms = 10_000) => {
 
 async function tenant(extra = "") {
   const id = uuidv7();
-  await db.query(`INSERT INTO tenants (id, slug, name${extra ? ", retention_days" : ""}) VALUES ($1, $2, 'T'${extra ? ", 30" : ""})`, [id, `t-${id.slice(-12)}`]);
+  await db.query(`INSERT INTO tenants (id, slug, name${extra ? ", retention_days" : ""}) VALUES ($1, $2, 'T'${extra ? ", 30" : ""})`, [
+    id,
+    `t-${id.slice(-12)}`,
+  ]);
   return id;
 }
 
@@ -97,10 +100,15 @@ describe("jobs dados por fallados con el worker muerto", () => {
         ),
     };
     const errors: string[] = [];
-    await jobs.requeueStuckJobsAndClose({ db: flaky, blobs: {} as any, log: { ...log, error: (_o: object, m?: string) => void errors.push(String(m)) } });
+    await jobs.requeueStuckJobsAndClose({
+      db: flaky,
+      blobs: {} as any,
+      log: { ...log, error: (_o: object, m?: string) => void errors.push(String(m)) },
+    });
     expect(broke).toBe(true);
     expect(errors).toContain("no se pudo cerrar un job dado por fallado");
-    const failedEv = async (e: string) => (await db.query(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.finalize_failed'`, [e])).length;
+    const failedEv = async (e: string) =>
+      (await db.query(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.finalize_failed'`, [e])).length;
     expect(await failedEv(envs[0])).toBe(0);
     expect(await failedEv(envs[1])).toBe(1);
 
@@ -109,11 +117,16 @@ describe("jobs dados por fallados con el worker muerto", () => {
     await jobs.sweepUnreportedFinalizeFailures({ db, blobs: {} as any, log });
     expect(await failedEv(envs[0])).toBe(1);
     expect(await failedEv(envs[1])).toBe(1);
-    const notices = await db.query<any>(`SELECT payload->>'envelopeId' AS e FROM jobs WHERE queue = 'notify' AND payload->>'kind' = 'finalize_failed'`);
+    const notices = await db.query<any>(
+      `SELECT payload->>'envelopeId' AS e FROM jobs WHERE queue = 'notify' AND payload->>'kind' = 'finalize_failed'`,
+    );
     expect(notices.map((n) => n.e).sort()).toEqual([...envs].sort());
 
     // Un reintento manual pendiente: el respaldo no lo toca hasta que falle también.
-    await db.query(`INSERT INTO jobs (queue, payload, status, dedupe_key) VALUES ('finalize', $1, 'pending', $2)`, [JSON.stringify({ envelopeId: envs[0], tenantId: t }), `finalize:${envs[0]}:retry:1`]);
+    await db.query(`INSERT INTO jobs (queue, payload, status, dedupe_key) VALUES ('finalize', $1, 'pending', $2)`, [
+      JSON.stringify({ envelopeId: envs[0], tenantId: t }),
+      `finalize:${envs[0]}:retry:1`,
+    ]);
     expect(await jobs.sweepUnreportedFinalizeFailures({ db, blobs: {} as any, log })).toBe(0);
     await db.query(`UPDATE jobs SET status = 'failed', finished_at = now() WHERE dedupe_key = $1`, [`finalize:${envs[0]}:retry:1`]);
     expect(await jobs.sweepUnreportedFinalizeFailures({ db, blobs: {} as any, log })).toBe(1);
@@ -130,20 +143,26 @@ describe("jobs dados por fallados con el worker muerto", () => {
       [bulk, t],
     );
     for (const [i, it] of items.entries()) {
-      await db.query(`INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status) VALUES ($1, $2, $3, $4, '{}', 'pending')`, [it, t, bulk, i + 1]);
+      await db.query(
+        `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status) VALUES ($1, $2, $3, $4, '{}', 'pending')`,
+        [it, t, bulk, i + 1],
+      );
     }
     const ep = uuidv7();
     const del = uuidv7();
-    await db.query(`INSERT INTO webhook_endpoints (id, tenant_id, url, secret_enc, secret_prefix) VALUES ($1, $2, 'https://x', 'e', 'whsec_')`, [ep, t]);
+    await db.query(`INSERT INTO webhook_endpoints (id, tenant_id, url, secret_enc, secret_prefix) VALUES ($1, $2, 'https://x', 'e', 'whsec_')`, [
+      ep,
+      t,
+    ]);
     await db.query(
       `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_id, event_type, payload, status) VALUES ($1, $2, $3, $4, 'envelope.sent', '{}', 'pending')`,
       [del, t, ep, uuidv7()],
     );
     const stuck = (queue: string, payload: unknown) =>
-      db.query(`INSERT INTO jobs (queue, payload, status, attempts, max_attempts, locked_at) VALUES ($1, $2, 'running', 8, 8, now() - interval '11 minutes')`, [
-        queue,
-        JSON.stringify(payload),
-      ]);
+      db.query(
+        `INSERT INTO jobs (queue, payload, status, attempts, max_attempts, locked_at) VALUES ($1, $2, 'running', 8, 8, now() - interval '11 minutes')`,
+        [queue, JSON.stringify(payload)],
+      );
     await stuck("bulk", { bulkSendId: bulk, tenantId: t, itemIds: items, retryRound: 0 });
     await stuck("webhook", { kind: "deliver", deliveryId: del });
 
@@ -151,7 +170,10 @@ describe("jobs dados por fallados con el worker muerto", () => {
     expect((await db.one<any>(`SELECT status FROM bulk_sends WHERE id = $1`, [bulk]))?.status).toBe("completed");
     const rows = await db.query<any>(`SELECT status, error FROM bulk_send_items WHERE bulk_send_id = $1`, [bulk]);
     expect(rows.every((r) => r.status === "failed" && /worker se detuvo/.test(r.error))).toBe(true);
-    expect((await db.one<any>(`SELECT status, next_retry_at FROM webhook_deliveries WHERE id = $1`, [del]))).toMatchObject({ status: "failed", next_retry_at: null });
+    expect(await db.one<any>(`SELECT status, next_retry_at FROM webhook_deliveries WHERE id = $1`, [del])).toMatchObject({
+      status: "failed",
+      next_retry_at: null,
+    });
     await db.query(`DELETE FROM jobs`);
   }, 60_000);
 });
@@ -162,9 +184,18 @@ describe("retención y vencimiento", () => {
     const mk = async (daysAgo: number) => {
       const env = uuidv7();
       const f = uuidv7();
-      await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'x')`, [f, t, `k-${f}`]);
-      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1,$2,'S','completed', now() - make_interval(days => $3))`, [env, t, daysAgo]);
-      await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`, [uuidv7(), t, env, f]);
+      await db.query(
+        `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'x')`,
+        [f, t, `k-${f}`],
+      );
+      await db.query(
+        `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1,$2,'S','completed', now() - make_interval(days => $3))`,
+        [env, t, daysAgo],
+      );
+      await db.query(
+        `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`,
+        [uuidv7(), t, env, f],
+      );
       return { env, key: `k-${f}` };
     };
     const bad = await mk(90); // el más viejo: primero en el orden
@@ -192,8 +223,14 @@ describe("retención y vencimiento", () => {
     const t = await tenant();
     const bad = uuidv7();
     const good = uuidv7();
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, expires_at) VALUES ($1,$2,'S','sent', now() - interval '2 days')`, [bad, t]);
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, expires_at) VALUES ($1,$2,'S','sent', now() - interval '1 day')`, [good, t]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, expires_at) VALUES ($1,$2,'S','sent', now() - interval '2 days')`, [
+      bad,
+      t,
+    ]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, expires_at) VALUES ($1,$2,'S','sent', now() - interval '1 day')`, [
+      good,
+      t,
+    ]);
     const flaky: Db = {
       ...db,
       tx: (fn) =>
@@ -213,7 +250,10 @@ describe("retención y vencimiento", () => {
     expect((await st(good))?.status).toBe("expired");
     // Dentro de la hora no se vuelve a tomar.
     const seen: string[] = [];
-    const spy: Db = { ...db, tx: (fn) => db.tx((tt) => fn({ ...tt, one: async (sql: string, p?: unknown[]) => (seen.push(String(p?.[0])), tt.one(sql, p)) } as Db)) };
+    const spy: Db = {
+      ...db,
+      tx: (fn) => db.tx((tt) => fn({ ...tt, one: async (sql: string, p?: unknown[]) => (seen.push(String(p?.[0])), tt.one(sql, p)) } as Db)),
+    };
     await jobs.expireDueEnvelopes({ db: spy, blobs: {} as any, log });
     expect(seen).not.toContain(bad);
   }, 60_000);
@@ -228,12 +268,24 @@ describe("recordatorios", () => {
     const now = new Date("2027-03-10T12:00:00Z");
     const at = (days: number) => new Date(now.getTime() + days * 86400_000);
     // Sobre enviado hace 5 días; el turno actual (orden 2) se activó hace 1 día: todavía no le toca.
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1,$2,'S','sent',$3,3)`, [env, t, at(-5).toISOString()]);
-    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',1,'A','a@x.com','signed',$4)`, [a, t, env, at(-5).toISOString()]);
-    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',2,'B','b@x.com','sent',$4)`, [b, t, env, at(-1).toISOString()]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1,$2,'S','sent',$3,3)`, [
+      env,
+      t,
+      at(-5).toISOString(),
+    ]);
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',1,'A','a@x.com','signed',$4)`,
+      [a, t, env, at(-5).toISOString()],
+    );
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',2,'B','b@x.com','sent',$4)`,
+      [b, t, env, at(-1).toISOString()],
+    );
     expect((await runAutomaticReminders(db, now)).reminded).toBe(0);
     // last_reminder_at quedó en la invitación de B: el sobre no se vuelve a mirar hasta que le toque.
-    expect(new Date((await db.one<any>(`SELECT last_reminder_at FROM envelopes WHERE id = $1`, [env]))!.last_reminder_at).getTime()).toBe(at(-1).getTime());
+    expect(new Date((await db.one<any>(`SELECT last_reminder_at FROM envelopes WHERE id = $1`, [env]))!.last_reminder_at).getTime()).toBe(
+      at(-1).getTime(),
+    );
     expect((await runAutomaticReminders(db, at(1))).reminded).toBe(0);
     // A los 3 días de su invitación (no a los 3 días de la pasada anterior).
     expect((await runAutomaticReminders(db, new Date(at(2).getTime() + 1000))).reminded).toBe(1);
@@ -253,27 +305,20 @@ describe("recordatorios", () => {
       [env, t, at(-10), at(2)],
     );
     for (const [i, r] of [r1, r2].entries()) {
-      await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',1,$4,$5,'signed',$6)`, [
-        r,
-        t,
-        env,
-        `R${i}`,
-        `r${i}@x.com`,
-        at(-10),
-      ]);
+      await db.query(
+        `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',1,$4,$5,'signed',$6)`,
+        [r, t, env, `R${i}`, `r${i}@x.com`, at(-10)],
+      );
     }
     // El primero ya firmó con certificado hace 3 días; el segundo es al que le toca.
     await db.query(
       `INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name, status, signed_at, created_at) VALUES ($1,$2,$3,$4,1,'F1','signed',$5,$6)`,
       [uuidv7(), t, env, r1, at(-3), at(-8)],
     );
-    await db.query(`INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name, created_at) VALUES ($1,$2,$3,$4,2,'F2',$5)`, [
-      uuidv7(),
-      t,
-      env,
-      r2,
-      at(-8),
-    ]);
+    await db.query(
+      `INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name, created_at) VALUES ($1,$2,$3,$4,2,'F2',$5)`,
+      [uuidv7(), t, env, r2, at(-8)],
+    );
     // (La base es compartida: otros sobres de pruebas anteriores también pueden tocar; se mira solo este.)
     await runAutomaticReminders(db, now);
     const q = await db.query<any>(`SELECT payload, dedupe_key FROM jobs WHERE payload->>'envelopeId' = $1 ORDER BY id`, [env]);
@@ -292,9 +337,18 @@ describe("recordatorios", () => {
     const r = uuidv7();
     const now = new Date("2027-05-10T12:00:00Z");
     const at = (days: number) => new Date(now.getTime() + days * 86400_000).toISOString();
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1,$2,'S','awaiting_certificates',$3,2)`, [env, t, at(-10)]);
-    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at, embedded) VALUES ($1,$2,$3,'signer',1,'E','e@x.com','signed',$4,true)`, [r, t, env, at(-10)]);
-    await db.query(`INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name, created_at) VALUES ($1,$2,$3,$4,1,'F1',$5)`, [uuidv7(), t, env, r, at(-8)]);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1,$2,'S','awaiting_certificates',$3,2)`,
+      [env, t, at(-10)],
+    );
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at, embedded) VALUES ($1,$2,$3,'signer',1,'E','e@x.com','signed',$4,true)`,
+      [r, t, env, at(-10)],
+    );
+    await db.query(
+      `INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name, created_at) VALUES ($1,$2,$3,$4,1,'F1',$5)`,
+      [uuidv7(), t, env, r, at(-8)],
+    );
     await runAutomaticReminders(db, now);
     expect(await db.query(`SELECT 1 FROM jobs WHERE payload->>'envelopeId' = $1`, [env])).toEqual([]);
   }, 60_000);
@@ -304,7 +358,10 @@ describe("borrado de archivos sin uso", () => {
   it("dos fases: la fila se borra (y se anota con su clave) antes de tocar el almacenamiento; si este falla, el barrido lo reintenta", async () => {
     const t = await tenant();
     const f = uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k-fail','application/pdf',1,'x')`, [f, t]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k-fail','application/pdf',1,'x')`,
+      [f, t],
+    );
     let down = true;
     const deleted: string[] = [];
     let inTx: boolean | null = null;
@@ -319,7 +376,10 @@ describe("borrado de archivos sin uso", () => {
     expect(await FC.deleteFilesIfUnused(db, blobs, [f])).toBe(1);
     expect(inTx).toBe(false);
     expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [f])).toBeNull();
-    expect(await db.one<any>(`SELECT storage_key, error FROM pending_file_deletions WHERE file_id = $1`, [f])).toEqual({ storage_key: "k-fail", error: "almacenamiento caído" });
+    expect(await db.one<any>(`SELECT storage_key, error FROM pending_file_deletions WHERE file_id = $1`, [f])).toEqual({
+      storage_key: "k-fail",
+      error: "almacenamiento caído",
+    });
     // Recién anotada: el barrido la deja (su llamador podría estar borrando el archivo ahora).
     expect((await FC.retryPendingFileDeletions(db, blobs)).seen).toBe(0);
     await db.query(`UPDATE pending_file_deletions SET queued_at = now() - interval '10 minutes' WHERE file_id = $1`, [f]);
@@ -336,10 +396,16 @@ describe("borrado de archivos sin uso", () => {
   it("un archivo en uso no se borra ni se anota; una anotación vieja sin clave se resuelve con el borrado entero", async () => {
     const t = await tenant();
     const f = uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k-used','application/pdf',1,'x')`, [f, t]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k-used','application/pdf',1,'x')`,
+      [f, t],
+    );
     const env = uuidv7();
     await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'S', 'draft')`, [env, t]);
-    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, file_id, name, position, page_count, pages) VALUES ($1, $4, $2, $3, 'd', 0, 1, '[]')`, [uuidv7(), env, f, t]);
+    await db.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, file_id, name, position, page_count, pages) VALUES ($1, $4, $2, $3, 'd', 0, 1, '[]')`,
+      [uuidv7(), env, f, t],
+    );
     const deleted: string[] = [];
     const blobs = { delete: async (k: string) => void deleted.push(k) } as any;
     expect(await FC.deleteFileIfUnused(db, blobs, f)).toBe(false);

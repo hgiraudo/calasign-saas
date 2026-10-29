@@ -10,7 +10,9 @@ describe("motor de plantillas: entradas hostiles", () => {
     expect(Date.now() - t).toBeLessThan(1000);
   });
   it("tope de marcas de firma", () => {
-    expect(() => renderTemplate("{{#each items}}\n" + "{{firma:A}} ".repeat(100) + "\n{{/each}}", { items: Array(10).fill(1) })).toThrow(/máximo 500/);
+    expect(() => renderTemplate("{{#each items}}\n" + "{{firma:A}} ".repeat(100) + "\n{{/each}}", { items: Array(10).fill(1) })).toThrow(
+      /máximo 500/,
+    );
   });
   it("las tablas siguen funcionando", () => {
     const b = renderTemplate("| a | b |\n|:---|---:|\n| 1 | 2 |", {}).blocks[0] as any;

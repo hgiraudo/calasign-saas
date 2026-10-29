@@ -17,7 +17,12 @@ export interface SignedBundle {
   baseName: string;
 }
 
-const safeSubject = (subject: string) => subject.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "documento";
+const safeSubject = (subject: string) =>
+  subject
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100) || "documento";
 
 /**
  * Nombre base del archivo exportado: asunto + id COMPLETO del sobre. Con solo los primeros 8 caracteres (el prefijo
@@ -81,7 +86,11 @@ export async function evidenceCertificate(db: Db, envelopeId: string, opts: { si
     // el último evento de la cadena y, sin eventos, la creación.
     generatedAt: iso(e.completed_at) ?? (events.length ? iso(events[events.length - 1].occurred_at) : null) ?? iso(e.created_at),
     envelope: { id: e.id, subject: e.subject, status: e.status, createdAt: iso(e.created_at), completedAt: iso(e.completed_at) },
-    signedPdf: { sha256: opts.signedSha256 ?? e.sha256 ?? null, algorithm: "SHA-256", note: "El PDF sellado (PAdES) incluye el certificado de finalización." },
+    signedPdf: {
+      sha256: opts.signedSha256 ?? e.sha256 ?? null,
+      algorithm: "SHA-256",
+      note: "El PDF sellado (PAdES) incluye el certificado de finalización.",
+    },
     recipients: recipients.map((r) => ({
       name: r.name,
       email: r.email,
@@ -126,7 +135,7 @@ export async function evidenceCertificate(db: Db, envelopeId: string, opts: { si
     }),
     chain: { algorithm: "SHA-256", genesisHash: GENESIS_HASH, head: events.length ? events[events.length - 1].hash : GENESIS_HASH },
     howToVerify:
-      "Para cada evento en orden de seq: hash = SHA-256 (hex en minúsculas) del texto UTF-8 `prevHash + \"\\n\" + canonicalBody`. " +
+      'Para cada evento en orden de seq: hash = SHA-256 (hex en minúsculas) del texto UTF-8 `prevHash + "\\n" + canonicalBody`. ' +
       "prevHash del primer evento es genesisHash; el de cada uno de los siguientes es el hash del anterior. canonicalBody es el JSON " +
       "canónico (claves ordenadas alfabéticamente, sin espacios) de { seq, type, actor_type, actor_id, ip, user_agent, data, occurred_at } " +
       "con los valores de ese evento (actorType, actorId, ip, userAgent, data, occurredAt). Si algún hash no coincide, el registro fue alterado.",

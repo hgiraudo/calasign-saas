@@ -31,7 +31,9 @@ export async function buildConnectors(env) {
       load: (rel) => {
         const p = join(cdir, rel);
         const buf = readFileSync(p);
-        return /\.(md|json|html|css|js|cjs|mjs|ts|txt|xml|svg|imljson|yml|yaml|ps1)$/i.test(p) ? Buffer.from(renderText(buf.toString("utf8"), relative(env.root, p))) : buf;
+        return /\.(md|json|html|css|js|cjs|mjs|ts|txt|xml|svg|imljson|yml|yaml|ps1)$/i.test(p)
+          ? Buffer.from(renderText(buf.toString("utf8"), relative(env.root, p)))
+          : buf;
       },
       /** Archivos de una subcarpeta (rutas relativas con "/"), en orden. */
       walk: (rel) => walk(join(cdir, rel)),
@@ -49,7 +51,14 @@ export async function buildConnectors(env) {
       env.artifact(`connectors/${id}/${a.name}`, data, a.description);
       arts.push(`/integrations/connectors/${id}/${a.name}`);
     }
-    index.push({ id, name: mod.meta.name, description: mod.meta.description, folder: `/integrations/connectors/${id}/`, artifacts: arts, files: (out.files ?? []).map((f) => f.name) });
+    index.push({
+      id,
+      name: mod.meta.name,
+      description: mod.meta.description,
+      folder: `/integrations/connectors/${id}/`,
+      artifacts: arts,
+      files: (out.files ?? []).map((f) => f.name),
+    });
   }
   env.write("connectors/index.json", Buffer.from(`${JSON.stringify({ version: env.vars.VERSION, connectors: index }, null, 2)}\n`));
   return index;

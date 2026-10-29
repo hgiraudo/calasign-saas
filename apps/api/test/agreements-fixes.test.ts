@@ -27,8 +27,8 @@ vi.mock("../src/modules/webhooks", async (importOriginal) => {
   };
 });
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant: string;
@@ -69,11 +69,10 @@ async function newMember(email: string, role: string, roleId: string | null = nu
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1,$2,$3,'scrypt$x')`, [id, email, email.split("@")[0]]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4)`, [tenant, id, role, roleId]);
   const token = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(token),
-    id,
-    tenant,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(token), id, tenant],
+  );
   return { id, cookie: `cs_session=${token}` };
 }
 
@@ -90,7 +89,12 @@ async function startRun(workflowId: string, data: Record<string, unknown> = {}, 
 let signTemplateId: string | null = null;
 async function signTemplate() {
   if (signTemplateId) return signTemplateId;
-  const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Firma", source: "# Hola {{nombre}}\n\n{{firma:Cliente}}" } });
+  const tpl = await app.inject({
+    method: "POST",
+    url: "/v1/document-templates",
+    headers: H(),
+    payload: { name: "Firma", source: "# Hola {{nombre}}\n\n{{firma:Cliente}}" },
+  });
   expect(tpl.statusCode).toBe(201);
   signTemplateId = tpl.json().id as string;
   return signTemplateId;
@@ -125,7 +129,10 @@ describe("utilidades de datos", () => {
   it("mergeDataPatch: fusión profunda, null borra, listas reemplazan", async () => {
     const { mergeDataPatch } = await import("../src/modules/agreements/common");
     const base = { cliente: { nombre: "ACME", cuit: "1" }, items: [1, 2], precio: "100" };
-    expect(mergeDataPatch(base, { cliente: { cuit: null, email: "a@b.c" }, items: [3], precio: null })).toEqual({ cliente: { nombre: "ACME", email: "a@b.c" }, items: [3] });
+    expect(mergeDataPatch(base, { cliente: { cuit: null, email: "a@b.c" }, items: [3], precio: null })).toEqual({
+      cliente: { nombre: "ACME", email: "a@b.c" },
+      items: [3],
+    });
     expect(base.cliente.cuit).toBe("1"); // no modifica el original
   });
 });
@@ -135,7 +142,12 @@ describe("workflows: pasos HTTP", () => {
     id: randomUUID(),
     type: "http_request",
     name: "Avisar",
-    config: { url: "https://hooks.example.test/services/T0/SECRETO?token=abc", method: "POST", headers: { Authorization: "Bearer clave" }, bodyTemplate: '{"token":"s3cret","n":{{nombre}}}' },
+    config: {
+      url: "https://hooks.example.test/services/T0/SECRETO?token=abc",
+      method: "POST",
+      headers: { Authorization: "Bearer clave" },
+      bodyTemplate: '{"token":"s3cret","n":{{nombre}}}',
+    },
   });
 
   it("sin templates:manage se enmascaran URL (ruta y consulta) y cuerpo; quien administra los ve y guardar lo enmascarado conserva lo guardado", async () => {
@@ -154,12 +166,19 @@ describe("workflows: pasos HTTP", () => {
     // Quien administra: completo en el detalle; en el listado, solo los encabezados enmascarados.
     const full = await app.inject({ method: "GET", url: `/v1/workflows/${wf.id}`, headers: H() });
     expect(full.json().steps[0].config.url).toContain("SECRETO");
-    const ownerList = (await app.inject({ method: "GET", url: "/v1/workflows", headers: H() })).json().items.find((x: { id: string }) => x.id === wf.id);
+    const ownerList = (await app.inject({ method: "GET", url: "/v1/workflows", headers: H() }))
+      .json()
+      .items.find((x: { id: string }) => x.id === wf.id);
     expect(ownerList.steps[0].config.url).toContain("SECRETO");
     expect(ownerList.steps[0].config.headers.Authorization).toBe("••••••");
 
     // Guardar pasos enmascarados (los que vio alguien sin el permiso) no pisa la URL, el cuerpo ni el encabezado.
-    const patched = await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { name: "Renombrado", steps: seen.json().steps } });
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `/v1/workflows/${wf.id}`,
+      headers: H(),
+      payload: { name: "Renombrado", steps: seen.json().steps },
+    });
     expect(patched.statusCode).toBe(200);
     const saved = (await db.one<any>(`SELECT steps FROM workflows WHERE id = $1`, [wf.id])).steps[0].config;
     expect(saved.url).toBe("https://hooks.example.test/services/T0/SECRETO?token=abc");
@@ -168,7 +187,16 @@ describe("workflows: pasos HTTP", () => {
     // Un cambio real sí se guarda.
     const changed = { ...seen.json().steps[0], config: { ...seen.json().steps[0].config, url: "https://otro.example.test/x", bodyTemplate: "{}" } };
     const latest = (await app.inject({ method: "GET", url: `/v1/workflows/${wf.id}`, headers: H() })).json();
-    expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: { ...H(), "x-expected-updated-at": latest.updatedAt }, payload: { steps: [changed] } })).statusCode).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "PATCH",
+          url: `/v1/workflows/${wf.id}`,
+          headers: { ...H(), "x-expected-updated-at": latest.updatedAt },
+          payload: { steps: [changed] },
+        })
+      ).statusCode,
+    ).toBe(200);
     const saved2 = (await db.one<any>(`SELECT steps FROM workflows WHERE id = $1`, [wf.id])).steps[0].config;
     expect(saved2.url).toBe("https://otro.example.test/x");
     expect(saved2.bodyTemplate).toBe("{}");
@@ -185,7 +213,11 @@ describe("workflows: pasos HTTP", () => {
           id: randomUUID(),
           type: "http_request",
           name: "ERP",
-          config: { url: "https://api.example.test/erp", headers: { "X-Ref": "{{http.crm.id}}" }, bodyTemplate: '{"crmId": {{http.crm.id}}, "nivel": {{http.crm.cliente.nivel}}, "n": {{nombre}}}' },
+          config: {
+            url: "https://api.example.test/erp",
+            headers: { "X-Ref": "{{http.crm.id}}" },
+            bodyTemplate: '{"crmId": {{http.crm.id}}, "nivel": {{http.crm.cliente.nivel}}, "n": {{nombre}}}',
+          },
         },
       ],
     });
@@ -205,7 +237,10 @@ describe("workflows: pasos HTTP", () => {
   });
 
   it("POST /v1/workflows/:id/runs con Idempotency-Key: el reintento devuelve la misma ejecución", async () => {
-    const wf = await createWorkflow({ name: `Idem ${randomUUID().slice(0, 6)}`, steps: [{ id: randomUUID(), type: "approval", name: "OK", config: { approverUserId: userId } }] });
+    const wf = await createWorkflow({
+      name: `Idem ${randomUUID().slice(0, 6)}`,
+      steps: [{ id: randomUUID(), type: "approval", name: "OK", config: { approverUserId: userId } }],
+    });
     const key = { "idempotency-key": `run-${randomUUID()}` };
     const a = await startRun(wf.id, { pedido: 1 }, key);
     const b = await startRun(wf.id, { pedido: 1 }, key);
@@ -221,7 +256,9 @@ describe("workflows: pasos HTTP", () => {
   it("Idempotency-Key con link público: la respuesta guardada no lleva el token y el reintento devuelve el collectUrl", async () => {
     const wf = await createWorkflow({
       name: `Idem link ${randomUUID().slice(0, 6)}`,
-      steps: [{ id: randomUUID(), type: "collect_data", name: "Datos", config: { title: "Datos", fields: [{ key: "dni", label: "DNI", type: "text" }] } }],
+      steps: [
+        { id: randomUUID(), type: "collect_data", name: "Datos", config: { title: "Datos", fields: [{ key: "dni", label: "DNI", type: "text" }] } },
+      ],
     });
     const key = `run-${randomUUID()}`;
     const a = await startRun(wf.id, {}, { "idempotency-key": key });
@@ -246,7 +283,12 @@ describe("workflows: envíos, formularios y vistas", () => {
         name: `Envío ${randomUUID().slice(0, 6)}`,
         steps: [
           { id: randomUUID(), type: "generate_document", name: "Generar", config: { documentTemplateId: tplId, output: "doc" } },
-          { id: randomUUID(), type: "send_for_signature", name: "Enviar", config: { document: "doc", envelopeKey: "e", subject: "Firma", recipients: [{ role: "Cliente", name: "{{nombre}}", ...recipient }] } },
+          {
+            id: randomUUID(),
+            type: "send_for_signature",
+            name: "Enviar",
+            config: { document: "doc", envelopeKey: "e", subject: "Firma", recipients: [{ role: "Cliente", name: "{{nombre}}", ...recipient }] },
+          },
         ],
       });
       const run = await startRun(wf.id, { nombre: "Ana", tel: "123" });
@@ -265,7 +307,12 @@ describe("workflows: envíos, formularios y vistas", () => {
           id: randomUUID(),
           type: "send_for_signature",
           name: "Enviar",
-          config: { document: "doc", envelopeKey: "e", subject: "Firma", recipients: [{ role: "Cliente", name: "{{nombre}}", email: "ana@x.test", phone: "{{tel}}", channels: ["email"] }] },
+          config: {
+            document: "doc",
+            envelopeKey: "e",
+            subject: "Firma",
+            recipients: [{ role: "Cliente", name: "{{nombre}}", email: "ana@x.test", phone: "{{tel}}", channels: ["email"] }],
+          },
         },
       ],
     });
@@ -285,7 +332,13 @@ describe("workflows: envíos, formularios y vistas", () => {
           id: randomUUID(),
           type: "collect_data",
           name: "Datos",
-          config: { title: "Datos", fields: [{ key: "monto", label: "Amount", type: "number" }, { key: "inicio", label: "Start", type: "date" }] },
+          config: {
+            title: "Datos",
+            fields: [
+              { key: "monto", label: "Amount", type: "number" },
+              { key: "inicio", label: "Start", type: "date" },
+            ],
+          },
         },
       ],
     });
@@ -293,7 +346,11 @@ describe("workflows: envíos, formularios y vistas", () => {
     try {
       const run = await startRun(wf.id);
       const token = (run.json().collectUrl as string).split("/w/")[1];
-      const sub = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${token}/steps/0`, payload: { values: { monto: "2,500", inicio: "03/01/2027" } } });
+      const sub = await app.inject({
+        method: "POST",
+        url: `/v1/public/workflow-runs/${token}/steps/0`,
+        payload: { values: { monto: "2,500", inicio: "03/01/2027" } },
+      });
       expect(sub.statusCode).toBe(200);
       const ctx = (await db.one<any>(`SELECT context FROM workflow_runs WHERE id = $1`, [run.json().id])).context;
       expect(ctx.data).toEqual({ monto: 2500, inicio: "2027-03-01" });
@@ -308,12 +365,22 @@ describe("workflows: envíos, formularios y vistas", () => {
       name: `Redactado ${randomUUID().slice(0, 6)}`,
       steps: [
         { id: randomUUID(), type: "generate_document", name: "Generar", config: { documentTemplateId: tplId, output: "doc" } },
-        { id: randomUUID(), type: "send_for_signature", name: "Enviar", config: { document: "doc", envelopeKey: "e", subject: "Firma", recipients: [{ role: "Cliente", name: "X", email: "{{correo}}" }] } },
+        {
+          id: randomUUID(),
+          type: "send_for_signature",
+          name: "Enviar",
+          config: { document: "doc", envelopeKey: "e", subject: "Firma", recipients: [{ role: "Cliente", name: "X", email: "{{correo}}" }] },
+        },
       ],
     });
     const run = await startRun(wf.id, { nombre: "Ana", correo: "no-es-correo-ana" });
     expect(run.json().steps[1].error).toContain("no-es-correo-ana");
-    const role = await app.inject({ method: "POST", url: "/v1/roles", headers: H(), payload: { name: `Plantillas ${randomUUID().slice(0, 4)}`, permissions: ["envelopes:create", "templates:manage"] } });
+    const role = await app.inject({
+      method: "POST",
+      url: "/v1/roles",
+      headers: H(),
+      payload: { name: `Plantillas ${randomUUID().slice(0, 4)}`, permissions: ["envelopes:create", "templates:manage"] },
+    });
     const tplAdmin = await newMember(`tpl-${randomUUID().slice(0, 6)}@fix.test`, "custom", role.json().id);
     const red = await app.inject({ method: "GET", url: `/v1/workflow-runs/${run.json().id}`, headers: H(tplAdmin.cookie) });
     expect(red.json().redacted).toBe(true);
@@ -324,7 +391,15 @@ describe("workflows: envíos, formularios y vistas", () => {
     const list = await app.inject({ method: "GET", url: `/v1/workflow-runs?workflowId=${wf.id}`, headers: H() });
     expect(list.statusCode).toBe(200);
     const item = list.json().items[0];
-    expect(item).toMatchObject({ id: run.json().id, workflowName: wf.name, status: "failed", stepCount: 2, currentStep: 1, currentStepName: "Enviar", canManage: true });
+    expect(item).toMatchObject({
+      id: run.json().id,
+      workflowName: wf.name,
+      status: "failed",
+      stepCount: 2,
+      currentStep: 1,
+      currentStepName: "Enviar",
+      canManage: true,
+    });
     expect(item.context).toBeUndefined();
     expect(item.steps).toBeUndefined();
 
@@ -332,7 +407,14 @@ describe("workflows: envíos, formularios y vistas", () => {
     const pub = await createWorkflow({
       name: `Público ${randomUUID().slice(0, 6)}`,
       publicStart: true,
-      steps: [{ id: randomUUID(), type: "collect_data", name: "Datos", config: { title: "Datos", fields: [{ key: "nombre", label: "Nombre", type: "text" }] } }],
+      steps: [
+        {
+          id: randomUUID(),
+          type: "collect_data",
+          name: "Datos",
+          config: { title: "Datos", fields: [{ key: "nombre", label: "Nombre", type: "text" }] },
+        },
+      ],
     });
     const slug = (pub.publicUrl as string).split("/wf/")[1];
     const started = await app.inject({ method: "POST", url: `/v1/public/workflows/${slug}/start`, payload: {}, remoteAddress: "203.0.113.77" });
@@ -346,7 +428,10 @@ describe("workflows: envíos, formularios y vistas", () => {
   }, 60_000);
 
   it("borrar un workflow con una ejecución fallida que dejó sobres en firma: 409 hasta cancelarla", async () => {
-    const wf = await createWorkflow({ name: `Borrar ${randomUUID().slice(0, 6)}`, steps: [{ id: randomUUID(), type: "approval", name: "OK", config: { approverUserId: userId } }] });
+    const wf = await createWorkflow({
+      name: `Borrar ${randomUUID().slice(0, 6)}`,
+      steps: [{ id: randomUUID(), type: "approval", name: "OK", config: { approverUserId: userId } }],
+    });
     const run = await startRun(wf.id);
     const runId = run.json().id as string;
     await db.query(`UPDATE workflow_runs SET status = 'failed' WHERE id = $1`, [runId]);
@@ -367,11 +452,24 @@ describe("workflows: envíos, formularios y vistas", () => {
   });
 
   it("PATCH de un workflow con X-Expected-Updated-At: 409 version_changed si cambió", async () => {
-    const wf = await createWorkflow({ name: `Edición ${randomUUID().slice(0, 6)}`, steps: [{ id: randomUUID(), type: "approval", name: "OK", config: { approverUserId: userId } }] });
-    const ok = await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: { ...H(), "x-expected-updated-at": wf.updatedAt }, payload: { name: "Pestaña 1" } });
+    const wf = await createWorkflow({
+      name: `Edición ${randomUUID().slice(0, 6)}`,
+      steps: [{ id: randomUUID(), type: "approval", name: "OK", config: { approverUserId: userId } }],
+    });
+    const ok = await app.inject({
+      method: "PATCH",
+      url: `/v1/workflows/${wf.id}`,
+      headers: { ...H(), "x-expected-updated-at": wf.updatedAt },
+      payload: { name: "Pestaña 1" },
+    });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().updatedAt).not.toBe(wf.updatedAt);
-    const stale = await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: { ...H(), "x-expected-updated-at": wf.updatedAt }, payload: { name: "Pestaña 2" } });
+    const stale = await app.inject({
+      method: "PATCH",
+      url: `/v1/workflows/${wf.id}`,
+      headers: { ...H(), "x-expected-updated-at": wf.updatedAt },
+      payload: { name: "Pestaña 2" },
+    });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("version_changed");
     expect((await db.one<any>(`SELECT name FROM workflows WHERE id = $1`, [wf.id])).name).toBe("Pestaña 1");
@@ -383,24 +481,44 @@ describe("workflows: envíos, formularios y vistas", () => {
 describe("repositorio y negociaciones", () => {
   it("PATCH de un acuerdo con X-Expected-Updated-At: 409 si cambió desde que se leyó", async () => {
     const file = util.uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k2','application/pdf',1,'h')`, [file, tenant]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k2','application/pdf',1,'h')`,
+      [file, tenant],
+    );
     const ag = util.uuidv7();
-    await db.query(`INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title, status, owner_user_id) VALUES ($1,$2,'external',$3,'a.pdf','Acuerdo','active',$4)`, [
-      ag,
-      tenant,
-      file,
-      userId,
-    ]);
+    await db.query(
+      `INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title, status, owner_user_id) VALUES ($1,$2,'external',$3,'a.pdf','Acuerdo','active',$4)`,
+      [ag, tenant, file, userId],
+    );
     const cur = (await app.inject({ method: "GET", url: `/v1/agreements/${ag}`, headers: H() })).json();
-    const ok = await app.inject({ method: "PATCH", url: `/v1/agreements/${ag}`, headers: { ...H(), "x-expected-updated-at": cur.updatedAt }, payload: { title: "Uno" } });
+    const ok = await app.inject({
+      method: "PATCH",
+      url: `/v1/agreements/${ag}`,
+      headers: { ...H(), "x-expected-updated-at": cur.updatedAt },
+      payload: { title: "Uno" },
+    });
     expect(ok.statusCode).toBe(200);
-    const stale = await app.inject({ method: "PATCH", url: `/v1/agreements/${ag}`, headers: { ...H(), "x-expected-updated-at": cur.updatedAt }, payload: { currency: "USD" } });
+    const stale = await app.inject({
+      method: "PATCH",
+      url: `/v1/agreements/${ag}`,
+      headers: { ...H(), "x-expected-updated-at": cur.updatedAt },
+      payload: { currency: "USD" },
+    });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("version_changed");
     const after = await db.one<any>(`SELECT title, currency FROM agreements WHERE id = $1`, [ag]);
     expect(after).toEqual({ title: "Uno", currency: null });
     // Solo el campo enviado cambia (el título no vuelve al valor viejo).
-    expect((await app.inject({ method: "PATCH", url: `/v1/agreements/${ag}`, headers: { ...H(), "x-expected-updated-at": ok.json().updatedAt }, payload: { currency: "USD" } })).statusCode).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "PATCH",
+          url: `/v1/agreements/${ag}`,
+          headers: { ...H(), "x-expected-updated-at": ok.json().updatedAt },
+          payload: { currency: "USD" },
+        })
+      ).statusCode,
+    ).toBe(200);
     expect(await db.one<any>(`SELECT title, currency FROM agreements WHERE id = $1`, [ag])).toEqual({ title: "Uno", currency: "USD" });
   });
 
@@ -420,7 +538,12 @@ describe("repositorio y negociaciones", () => {
       method: "POST",
       url: "/v1/negotiations",
       headers: H(),
-      payload: { title: "Servicios", documentTemplateId: templateId, data: { cliente: "ACME", precio: "100", extra: { a: 1, b: 2 } }, participants: [{ name: "Cli", email: "cli@x.test", role: "Cliente" }] },
+      payload: {
+        title: "Servicios",
+        documentTemplateId: templateId,
+        data: { cliente: "ACME", precio: "100", extra: { a: 1, b: 2 } },
+        participants: [{ name: "Cli", email: "cli@x.test", role: "Cliente" }],
+      },
     });
     expect(res.statusCode).toBe(201);
     return res.json().negotiation.id as string;
@@ -428,16 +551,36 @@ describe("repositorio y negociaciones", () => {
 
   it("PATCH de una negociación: data se fusiona (null borra) y expectedVersion vieja da 409", async () => {
     const id = await createNegotiation();
-    const p1 = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { precio: "200", extra: { a: null } }, expectedVersion: 1 } });
+    const p1 = await app.inject({
+      method: "PATCH",
+      url: `/v1/negotiations/${id}`,
+      headers: H(),
+      payload: { data: { precio: "200", extra: { a: null } }, expectedVersion: 1 },
+    });
     expect(p1.statusCode).toBe(200);
     expect(p1.json().negotiation.currentVersion).toBe(2);
-    expect((await db.one<any>(`SELECT data FROM negotiations WHERE id = $1`, [id])).data).toEqual({ cliente: "ACME", precio: "200", extra: { b: 2 } });
-    const stale = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { precio: "300" }, expectedVersion: 1 } });
+    expect((await db.one<any>(`SELECT data FROM negotiations WHERE id = $1`, [id])).data).toEqual({
+      cliente: "ACME",
+      precio: "200",
+      extra: { b: 2 },
+    });
+    const stale = await app.inject({
+      method: "PATCH",
+      url: `/v1/negotiations/${id}`,
+      headers: H(),
+      payload: { data: { precio: "300" }, expectedVersion: 1 },
+    });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("version_changed");
     // Sin expectedVersion (compatibilidad): también fusiona.
-    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { precio: "300" } } })).statusCode).toBe(200);
-    expect((await db.one<any>(`SELECT data FROM negotiations WHERE id = $1`, [id])).data).toEqual({ cliente: "ACME", precio: "300", extra: { b: 2 } });
+    expect(
+      (await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { precio: "300" } } })).statusCode,
+    ).toBe(200);
+    expect((await db.one<any>(`SELECT data FROM negotiations WHERE id = $1`, [id])).data).toEqual({
+      cliente: "ACME",
+      precio: "300",
+      extra: { b: 2 },
+    });
   });
 
   it("borrar el borrador de una negociación aceptada la reabre (sin sobre) y se puede volver a aceptar", async () => {
@@ -469,14 +612,22 @@ describe("retención de datos", () => {
     const old = (await startRun(wf.id, { dni: "12345678" })).json();
     const recent = (await startRun(wf.id, { dni: "87654321" })).json();
     expect(old.status).toBe("completed");
-    await db.query(`UPDATE workflow_runs SET updated_at = now() - interval '400 days', context = context || '{"collectEmailSources": {"x": {"ip": "1.2.3.4"}}}'::jsonb WHERE id = $1`, [old.id]);
+    await db.query(
+      `UPDATE workflow_runs SET updated_at = now() - interval '400 days', context = context || '{"collectEmailSources": {"x": {"ip": "1.2.3.4"}}}'::jsonb WHERE id = $1`,
+      [old.id],
+    );
 
     const negOld = await (async () => {
       const res = await app.inject({
         method: "POST",
         url: "/v1/negotiations",
         headers: H(),
-        payload: { title: "Vieja", documentTemplateId: templateIdForRetention(), data: { cliente: "Persona Real" }, participants: [{ name: "Cli", email: "cli@x.test", role: "Cliente" }] },
+        payload: {
+          title: "Vieja",
+          documentTemplateId: templateIdForRetention(),
+          data: { cliente: "Persona Real" },
+          participants: [{ name: "Cli", email: "cli@x.test", role: "Cliente" }],
+        },
       });
       return res;
     })();

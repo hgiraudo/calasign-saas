@@ -16,7 +16,6 @@ import {
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
-
 /**
  * Claves de metadatos que pone el sistema (workflows, formularios, envío masivo, CRM, conectores, negociaciones,
  * repositorio): no las puede fijar quien crea o clona un sobre. Si no, un sobre propio con workflowRunId ajeno se
@@ -64,7 +63,20 @@ export type RecipientStatus = (typeof RECIPIENT_STATUSES)[number];
 export const CHANNELS = ["email", "whatsapp", "telegram"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
-export const FIELD_TYPES = ["signature", "initials", "date_signed", "name", "email", "text", "checkbox", "number", "dropdown", "company", "title", "attachment"] as const;
+export const FIELD_TYPES = [
+  "signature",
+  "initials",
+  "date_signed",
+  "name",
+  "email",
+  "text",
+  "checkbox",
+  "number",
+  "dropdown",
+  "company",
+  "title",
+  "attachment",
+] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** Campos que el servidor completa solo (el firmante no los edita). */
@@ -87,7 +99,11 @@ export const SignupInput = z.object({
   organization: z.string().trim().min(1).max(200),
   locale: z.enum(LOCALES).optional(),
   /** Celda donde se guardan los datos (ver GET /v1/public/cells). Sin valor: la celda por defecto. */
-  cell: z.string().trim().regex(/^[a-z0-9-]{1,40}$/).optional(),
+  cell: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9-]{1,40}$/)
+    .optional(),
 });
 export type SignupInput = z.infer<typeof SignupInput>;
 

@@ -126,12 +126,10 @@ describe("mock: resumen, preguntas y playbook", () => {
   });
 
   it("evalúa reglas del playbook: ok, violación y no encontrado", () => {
-    const r = H.mockPlaybookReview([CONTRACT], [
-      "Jurisdicción debe ser Bogotá",
-      "Jurisdicción debe ser Medellín",
-      "Responsabilidad <= 12 meses",
-      "Confidencialidad debe ser 5 años",
-    ]);
+    const r = H.mockPlaybookReview(
+      [CONTRACT],
+      ["Jurisdicción debe ser Bogotá", "Jurisdicción debe ser Medellín", "Responsabilidad <= 12 meses", "Confidencialidad debe ser 5 años"],
+    );
     expect(r.map((x) => x.status)).toEqual(["ok", "violation", "violation", "not_found"]);
     expect(r[2].quote).toContain("18 meses");
     expect(r[2].page).toBe(1);
@@ -165,12 +163,19 @@ describe("alertas de renovación", () => {
   it("la salida del modelo queda dentro del esquema que acepta la edición manual", async () => {
     const { sanitizeAiMetadata } = await import("../src/modules/ai/service");
     const raw = {
-      parties: [{ name: "  ACME S.A.  ", role: "x".repeat(500) }, { name: "", role: null }, ...Array.from({ length: 30 }, (_, i) => ({ name: `P${i}`, role: null }))],
+      parties: [
+        { name: "  ACME S.A.  ", role: "x".repeat(500) },
+        { name: "", role: null },
+        ...Array.from({ length: 30 }, (_, i) => ({ name: `P${i}`, role: null })),
+      ],
       effectiveDate: "2027-02-31",
       expiryDate: "31/01/2027",
       renewalDate: "2027-06-30",
       autoRenewal: true,
-      amounts: [{ value: 1500, currency: "pesos colombianos", description: "d".repeat(900) }, { value: 10, currency: " usd ", description: null }],
+      amounts: [
+        { value: 1500, currency: "pesos colombianos", description: "d".repeat(900) },
+        { value: 10, currency: " usd ", description: null },
+      ],
       governingLaw: "L".repeat(1000),
       noticePeriodDays: 99999,
     } as any;

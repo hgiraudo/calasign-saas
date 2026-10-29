@@ -89,7 +89,11 @@ const receiver = http.createServer((req, res) => {
 });
 await new Promise((r) => receiver.listen(0, "127.0.0.1", r));
 const hookUrl = `http://127.0.0.1:${receiver.address().port}/hook`;
-const sigsOf = (header) => header.split(",").filter((p) => p.startsWith("v1=")).map((p) => p.slice(3));
+const sigsOf = (header) =>
+  header
+    .split(",")
+    .filter((p) => p.startsWith("v1="))
+    .map((p) => p.slice(3));
 const hmac = (secret, t, body) => createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
 async function waitDelivery(pred, what) {
   for (let i = 0; i < 60; i++) {
@@ -103,7 +107,13 @@ async function waitDelivery(pred, what) {
 try {
   // ───────── Cuenta y API key ─────────
   const stamp = Date.now();
-  await api("POST", "/v1/auth/signup", { name: "Dev API", email: `devapi+${stamp}@example.com`, password: "una-clave-segura-123", organization: `DevAPI ${stamp}`, locale: "es" });
+  await api("POST", "/v1/auth/signup", {
+    name: "Dev API",
+    email: `devapi+${stamp}@example.com`,
+    password: "una-clave-segura-123",
+    organization: `DevAPI ${stamp}`,
+    locale: "es",
+  });
   const { secret: key } = await api("POST", "/v1/api-keys", { name: `e2e-api ${stamp}` });
   bearer = key;
   step("cuenta y API key");
@@ -124,8 +134,31 @@ try {
     fields: [
       { documentId: doc.id, recipientId: rid, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 },
       { documentId: doc.id, recipientId: rid, type: "text", page: 0, x: 0.1, y: 0.5, width: 0.3, height: 0.04, label: "Empresa" },
-      { documentId: doc.id, recipientId: rid, type: "text", page: 0, x: 0.1, y: 0.4, width: 0.3, height: 0.04, label: "Fijo", value: "Valor del remitente", readOnly: true },
-      { documentId: doc.id, recipientId: rid, type: "attachment", page: 0, x: 0.5, y: 0.5, width: 0.3, height: 0.05, label: "Cédula", required: true },
+      {
+        documentId: doc.id,
+        recipientId: rid,
+        type: "text",
+        page: 0,
+        x: 0.1,
+        y: 0.4,
+        width: 0.3,
+        height: 0.04,
+        label: "Fijo",
+        value: "Valor del remitente",
+        readOnly: true,
+      },
+      {
+        documentId: doc.id,
+        recipientId: rid,
+        type: "attachment",
+        page: 0,
+        x: 0.5,
+        y: 0.5,
+        width: 0.3,
+        height: 0.05,
+        label: "Cédula",
+        required: true,
+      },
     ],
   });
   const before = await api("GET", "/v1/events?limit=500");
@@ -143,12 +176,21 @@ try {
     const miss = await api("GET", `/v1/envelopes?metadata=${encodeURIComponent(`orderId:${orderId}`)}&metadata=canal:otro`);
     assert(miss.items.length === 0, "metadata: todos los pares tienen que coincidir");
     const byRecipient = await api("GET", `/v1/envelopes?recipient=${encodeURIComponent(signerEmail.toUpperCase())}`);
-    assert(byRecipient.items.some((e) => e.id === A.id), "filtro por destinatario (sin mayúsculas)");
+    assert(
+      byRecipient.items.some((e) => e.id === A.id),
+      "filtro por destinatario (sin mayúsculas)",
+    );
     const future = new Date(Date.now() + 3600_000).toISOString();
     const none = await api("GET", `/v1/envelopes?created_from=${encodeURIComponent(future)}`);
     assert(none.items.length === 0, "created_from en el futuro");
-    const recent = await api("GET", `/v1/envelopes?updated_from=${encodeURIComponent(new Date(Date.now() - 60_000).toISOString())}&status=sent&created_via=api`);
-    assert(recent.items.some((e) => e.id === A.id), "updated_from + status + created_via");
+    const recent = await api(
+      "GET",
+      `/v1/envelopes?updated_from=${encodeURIComponent(new Date(Date.now() - 60_000).toISOString())}&status=sent&created_via=api`,
+    );
+    assert(
+      recent.items.some((e) => e.id === A.id),
+      "updated_from + status + created_via",
+    );
     await api("GET", "/v1/envelopes?created_from=ayer", null, { expect: 400 });
     await api("GET", "/v1/envelopes?metadata=sin-dos-puntos", null, { expect: 400 });
     step("búsqueda: metadata (dos sintaxis), destinatario, rangos de fechas, origen y errores de validación");
@@ -172,7 +214,12 @@ try {
     assert(partial.values["Fijo"] === "Valor del remitente", "valor fijado por el remitente");
     assert(partial.values["Empresa"] === undefined, "sin valor antes de firmar");
   }
-  await api("POST", `/v1/signing/${token}/complete`, { fields: [{ id: textField.id, value: "ACME Dominicana SRL" }], signature: { kind: "drawn", imagePng: PNG } }, { session: true });
+  await api(
+    "POST",
+    `/v1/signing/${token}/complete`,
+    { fields: [{ id: textField.id, value: "ACME Dominicana SRL" }], signature: { kind: "drawn", imagePng: PNG } },
+    { session: true },
+  );
   let detail;
   for (let i = 0; i < 60; i++) {
     detail = await api("GET", `/v1/envelopes/${A.id}`);
@@ -211,9 +258,16 @@ try {
       await sleep(500);
     }
     const types = all.map((e) => e.type);
-    for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "envelope.completed"]) assert(types.includes(t), `evento ${t} (vinieron ${types.join(", ")})`);
-    assert(types.indexOf("envelope.sent") < types.indexOf("envelope.completed"), `orden cronológico: ${JSON.stringify(all.map((e) => [e.type, e.id, e.cursor, e.occurredAt]))}`);
-    assert(all.every((e) => e.envelope.metadata.orderId === orderId && e.envelope.status === "completed"), "cada evento trae el sobre con su estado actual");
+    for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "envelope.completed"])
+      assert(types.includes(t), `evento ${t} (vinieron ${types.join(", ")})`);
+    assert(
+      types.indexOf("envelope.sent") < types.indexOf("envelope.completed"),
+      `orden cronológico: ${JSON.stringify(all.map((e) => [e.type, e.id, e.cursor, e.occurredAt]))}`,
+    );
+    assert(
+      all.every((e) => e.envelope.metadata.orderId === orderId && e.envelope.status === "completed"),
+      "cada evento trae el sobre con su estado actual",
+    );
     const signed = all.find((e) => e.type === "recipient.signed");
     assert(signed.recipientId === rid, "recipientId en recipient.signed");
     // Paginación de a uno siguiendo el cursor: mismos eventos, sin repetidos.
@@ -229,7 +283,10 @@ try {
     const onlyCompleted = await api("GET", `/v1/events?envelope_id=${A.id}&types=envelope.completed&after=${startCursor ?? ""}`);
     assert(onlyCompleted.items.length === 1 && onlyCompleted.items[0].type === "envelope.completed", "filtro por tipo");
     const raw = await api("GET", `/v1/events?envelope_id=${A.id}&scope=all&after=${startCursor ?? ""}&limit=500`);
-    assert(raw.items.some((e) => e.type === "envelope.finalizing"), "scope=all trae los tipos de evidencia");
+    assert(
+      raw.items.some((e) => e.type === "envelope.finalizing"),
+      "scope=all trae los tipos de evidencia",
+    );
     const noNew = await api("GET", `/v1/events?after=${raw.nextCursor}&envelope_id=${A.id}`);
     assert(noNew.items.length === 0 && noNew.nextCursor === raw.nextCursor, "sin eventos nuevos el cursor no cambia");
     // Cursores anteriores (el id solo, y "<tx>.<id>" de 0048): se traducen al mismo punto que el cursor nuevo.
@@ -237,7 +294,10 @@ try {
     assert(/^p\d+$/.test(mid), `formato del cursor: ${mid}`);
     // El id del evento es el del webhook (UUID), no da el id del registro: se comparan los cursores viejos desde el
     // principio ("0" y "<tx>.0") contra "p0".
-    assert(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(all[0].id), `formato del id (UUIDv5, el del webhook): ${all[0].id}`);
+    assert(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(all[0].id),
+      `formato del id (UUIDv5, el del webhook): ${all[0].id}`,
+    );
     const ids = (p) => JSON.stringify(p.items.map((e) => e.id));
     const fromNew = await api("GET", `/v1/events?envelope_id=${A.id}&after=p0&limit=500`);
     const fromLegacy = await api("GET", `/v1/events?envelope_id=${A.id}&after=0&limit=500`);
@@ -257,14 +317,28 @@ try {
     assert(B.envelope.status === "draft" && B.envelope.id !== A.id, "el clon es un borrador nuevo");
     assert(B.envelope.metadata.clonedFrom === A.id && B.envelope.metadata.orderId === orderId, "metadata con clonedFrom");
     assert(B.documents.length === 1 && B.documents[0].sha256 === detail.documents[0].sha256, "mismo documento original");
-    assert(B.recipients.length === 1 && B.recipients[0].email === signerEmail && B.recipients[0].status === "created", "destinatario copiado, sin estado");
+    assert(
+      B.recipients.length === 1 && B.recipients[0].email === signerEmail && B.recipients[0].status === "created",
+      "destinatario copiado, sin estado",
+    );
     assert(B.fields.length === 4, `campos copiados (${B.fields.length})`);
     const empresa = B.fields.find((f) => f.label === "Empresa");
     const fijo = B.fields.find((f) => f.label === "Fijo");
-    assert(empresa.value === null && fijo.value === "Valor del remitente" && fijo.readOnly, "sin lo que escribió el firmante, con lo fijado por el remitente");
-    assert(B.fields.every((f) => f.recipientId === B.recipients[0].id), "los campos apuntan al destinatario nuevo");
+    assert(
+      empresa.value === null && fijo.value === "Valor del remitente" && fijo.readOnly,
+      "sin lo que escribió el firmante, con lo fijado por el remitente",
+    );
+    assert(
+      B.fields.every((f) => f.recipientId === B.recipients[0].id),
+      "los campos apuntan al destinatario nuevo",
+    );
     const withValues = await api("POST", `/v1/envelopes/${A.id}/clone`, { includeValues: true, metadata: { lote: "x" } }, { expect: 201 });
-    assert(withValues.fields.find((f) => f.label === "Empresa").value === "ACME Dominicana SRL" && withValues.envelope.metadata.lote === "x" && withValues.envelope.metadata.clonedFrom === A.id, "includeValues y metadata propia (conserva clonedFrom)");
+    assert(
+      withValues.fields.find((f) => f.label === "Empresa").value === "ACME Dominicana SRL" &&
+        withValues.envelope.metadata.lote === "x" &&
+        withValues.envelope.metadata.clonedFrom === A.id,
+      "includeValues y metadata propia (conserva clonedFrom)",
+    );
     const docsOnly = await api("POST", `/v1/envelopes/${A.id}/clone`, { includeRecipients: false }, { expect: 201 });
     assert(docsOnly.recipients.length === 0 && docsOnly.fields.length === 0 && docsOnly.documents.length === 1, "includeRecipients: false");
     await api("POST", `/v1/envelopes/${randomUUID()}/clone`, {}, { expect: 404 });
@@ -273,7 +347,10 @@ try {
     // ───────── SSE: el envío del clon llega por el stream ─────────
     const cur = (await api("GET", "/v1/events?limit=500")).nextCursor;
     const ctrl = new AbortController();
-    const res = await fetch(`${BASE}/v1/events/stream?max_seconds=60&envelope_id=${B.envelope.id}`, { headers: { authorization: `Bearer ${bearer}`, "last-event-id": cur ?? "" }, signal: ctrl.signal });
+    const res = await fetch(`${BASE}/v1/events/stream?max_seconds=60&envelope_id=${B.envelope.id}`, {
+      headers: { authorization: `Bearer ${bearer}`, "last-event-id": cur ?? "" },
+      signal: ctrl.signal,
+    });
     assert(res.status === 200 && res.headers.get("content-type").startsWith("text/event-stream"), "stream abierto");
     await api("POST", `/v1/envelopes/${B.envelope.id}/send`);
     const reader = res.body.getReader();
@@ -285,7 +362,13 @@ try {
       if (done) break;
       buf += Buffer.from(value).toString();
       for (const block of buf.split("\n\n")) {
-        if (block.includes("event: envelope.sent")) got = JSON.parse(block.split("\n").find((l) => l.startsWith("data: ")).slice(6));
+        if (block.includes("event: envelope.sent"))
+          got = JSON.parse(
+            block
+              .split("\n")
+              .find((l) => l.startsWith("data: "))
+              .slice(6),
+          );
       }
     }
     ctrl.abort();
@@ -300,13 +383,22 @@ try {
     await waitDelivery((d) => d.headers["calasign-event-type"] === "envelope.completed", "envelope.completed");
     const before = received.length;
     const rot = await api("POST", `/v1/webhooks/${webhook.id}/rotate-secret`, { graceHours: 1 });
-    assert(rot.secret.startsWith("whsec_") && rot.secret !== whSecret && rot.webhook.previousSecretExpiresAt, "secreto nuevo y vigencia del anterior");
+    assert(
+      rot.secret.startsWith("whsec_") && rot.secret !== whSecret && rot.webhook.previousSecretExpiresAt,
+      "secreto nuevo y vigencia del anterior",
+    );
     await api("POST", `/v1/webhooks/${webhook.id}/test`, null, { expect: 202 });
-    const d1 = await waitDelivery((d, i) => received.indexOf(d) >= before && d.headers["calasign-event-type"] === "webhook.test", "test con dos firmas");
+    const d1 = await waitDelivery(
+      (d, i) => received.indexOf(d) >= before && d.headers["calasign-event-type"] === "webhook.test",
+      "test con dos firmas",
+    );
     const [tPart] = d1.headers["calasign-signature"].split(",");
     const t = tPart.slice(2);
     const sigs = sigsOf(d1.headers["calasign-signature"]);
-    assert(sigs.length === 2 && sigs[0] === hmac(rot.secret, t, d1.body) && sigs[1] === hmac(whSecret, t, d1.body), "durante la gracia: v1=<nuevo>,v1=<anterior>");
+    assert(
+      sigs.length === 2 && sigs[0] === hmac(rot.secret, t, d1.body) && sigs[1] === hmac(whSecret, t, d1.body),
+      "durante la gracia: v1=<nuevo>,v1=<anterior>",
+    );
     const before2 = received.length;
     const rot2 = await api("POST", `/v1/webhooks/${webhook.id}/rotate-secret`, { graceHours: 0 });
     assert(rot2.webhook.previousSecretExpiresAt === null, "graceHours 0 corta el anterior");
@@ -337,7 +429,10 @@ try {
     const del = await api("POST", "/v1/envelopes/batch", { action: "delete", ids: [...B.extra, A.id] });
     assert(del.succeeded === 2 && del.results[2].error.code === "not_draft", "delete: borradores sí, completado no");
     await api("GET", `/v1/envelopes/${B.extra[0]}`, null, { expect: 404 });
-    const evVoid = await api("GET", `/v1/events?envelope_id=${B.envelope.id}&types=envelope.voided&since=${encodeURIComponent(new Date(Date.now() - 600_000).toISOString())}`);
+    const evVoid = await api(
+      "GET",
+      `/v1/events?envelope_id=${B.envelope.id}&types=envelope.voided&since=${encodeURIComponent(new Date(Date.now() - 600_000).toISOString())}`,
+    );
     for (let i = 0; i < 10 && evVoid.items.length === 0; i++) {
       await sleep(500);
       Object.assign(evVoid, await api("GET", `/v1/events?envelope_id=${B.envelope.id}&types=envelope.voided`));

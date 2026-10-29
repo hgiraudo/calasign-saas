@@ -122,7 +122,11 @@ export function ArchivePanel({ envelopeId, canManage }: { envelopeId: string; ca
   return (
     <section className="card pad data-archive" aria-labelledby="archive-h">
       <h3 id="archive-h">{dt("archive.title")}</h3>
-      {info.validUntil ? <p>{dt("archive.validUntil", { date: formatDateTime(info.validUntil, locale) })}</p> : <p className="muted small">{dt("archive.noLtv")}</p>}
+      {info.validUntil ? (
+        <p>{dt("archive.validUntil", { date: formatDateTime(info.validUntil, locale) })}</p>
+      ) : (
+        <p className="muted small">{dt("archive.noLtv")}</p>
+      )}
       {info.renewals > 0 && <p className="muted small">{dt("archive.renewals", { n: info.renewals })}</p>}
       {info.versions.length > 0 && (
         <>
@@ -130,7 +134,9 @@ export function ArchivePanel({ envelopeId, canManage }: { envelopeId: string; ca
           <ol className="data-versions">
             {info.versions.map((v) => (
               <li key={v.version}>
-                <span>v{v.version} · {dt(v.reason === "completed" ? "archive.reason.completed" : "archive.reason.archive_renewal")}</span>
+                <span>
+                  v{v.version} · {dt(v.reason === "completed" ? "archive.reason.completed" : "archive.reason.archive_renewal")}
+                </span>
                 <span className="muted small"> · {formatDateTime(v.createdAt, locale)} · </span>
                 <code className="small">{v.sha256.slice(0, 16)}…</code>
               </li>
@@ -139,7 +145,11 @@ export function ArchivePanel({ envelopeId, canManage }: { envelopeId: string; ca
         </>
       )}
       {info.errorCode === "tsa_cannot_extend" && <p className="alert alert-warn">{dt("archive.tsaCannotExtend")}</p>}
-      {done && <p className="alert alert-success" role="status">{dt("archive.renewed")}</p>}
+      {done && (
+        <p className="alert alert-success" role="status">
+          {dt("archive.renewed")}
+        </p>
+      )}
       {canManage && info.validUntil && (
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void renew()}>
           {dt("archive.renew")}

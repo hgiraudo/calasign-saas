@@ -65,7 +65,8 @@ execFileSync(process.execPath, [join(HERE, "../build.mjs")], {
 await test("skill: zip con calasign/SKILL.md y references", () => {
   const z = readZip(readFileSync(join(OUT, "calasign-skill.zip")));
   assert.ok(z.has("calasign/SKILL.md"));
-  for (const r of ["rest-api", "lifecycle", "fields-and-anchors", "webhooks", "errors", "mcp-tools"]) assert.ok(z.has(`calasign/references/${r}.md`), r);
+  for (const r of ["rest-api", "lifecycle", "fields-and-anchors", "webhooks", "errors", "mcp-tools"])
+    assert.ok(z.has(`calasign/references/${r}.md`), r);
   const md = z.get("calasign/SKILL.md").toString();
   assert.match(md, /^---\nname: calasign\ndescription: .{20,200}\n/);
   assert.match(md, /https:\/\/example\.calasign\.test\/mcp/);
@@ -79,7 +80,8 @@ await test("claude code: marketplace con sha256 del zip del plugin", () => {
   const zip = readFileSync(join(OUT, file));
   assert.equal(createHash("sha256").update(zip).digest("hex"), src.sha256);
   const z = readZip(zip);
-  for (const f of [".claude-plugin/plugin.json", ".mcp.json", "commands/send.md", "commands/status.md", "skills/calasign/SKILL.md"]) assert.ok(z.has(f), f);
+  for (const f of [".claude-plugin/plugin.json", ".mcp.json", "commands/send.md", "commands/status.md", "skills/calasign/SKILL.md"])
+    assert.ok(z.has(f), f);
   assert.equal(JSON.parse(z.get(".mcp.json")).mcpServers.calasign.url, "https://example.calasign.test/mcp");
 });
 
@@ -103,7 +105,9 @@ function mockRemote() {
   const http = createServer(async (req, res) => {
     if (req.url !== "/mcp") return res.writeHead(404).end();
     if (req.headers.authorization !== `Bearer ${KEY}`) {
-      return res.writeHead(401, { "content-type": "application/json", "www-authenticate": 'Bearer resource_metadata="x"' }).end('{"error":{"code":"unauthorized"}}');
+      return res
+        .writeHead(401, { "content-type": "application/json", "www-authenticate": 'Bearer resource_metadata="x"' })
+        .end('{"error":{"code":"unauthorized"}}');
     }
     // Como el servidor real (sin sesiones): solo POST; GET (stream SSE) y DELETE responden 405.
     if (req.method !== "POST") return res.writeHead(405, { allow: "POST" }).end();
@@ -120,8 +124,14 @@ function mockRemote() {
     );
     server.registerTool(
       "send_envelope",
-      { title: "Enviar sobre", description: "Envía", inputSchema: { envelopeId: z.string(), confirm: z.boolean().optional() }, annotations: { destructiveHint: false, openWorldHint: true } },
-      async (a) => (a.confirm ? { content: [{ type: "text", text: "sent" }] } : { isError: true, content: [{ type: "text", text: "Confirmación requerida" }] }),
+      {
+        title: "Enviar sobre",
+        description: "Envía",
+        inputSchema: { envelopeId: z.string(), confirm: z.boolean().optional() },
+        annotations: { destructiveHint: false, openWorldHint: true },
+      },
+      async (a) =>
+        a.confirm ? { content: [{ type: "text", text: "sent" }] } : { isError: true, content: [{ type: "text", text: "Confirmación requerida" }] },
     );
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
@@ -141,7 +151,10 @@ function startStdio(env) {
     mkdirSync(dirname(join(dir, name)), { recursive: true });
     writeFileSync(join(dir, name), data);
   }
-  const child = spawn(process.execPath, [join(dir, "server/index.mjs")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [join(dir, "server/index.mjs")], {
+    env: { PATH: process.env.PATH, ...env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   let buf = "";
   const waiting = new Map();
   child.stdout.on("data", (d) => {

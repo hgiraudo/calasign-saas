@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-webforms-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant: string;
@@ -29,25 +29,30 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Org')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   // Plantilla: un documento, un rol firmante con firma y un texto "Plan" que prellena el formulario.
   const tpl = uuidv7();
   const file = uuidv7();
   const doc = uuidv7();
   const role = uuidv7();
   await db.query(`INSERT INTO templates (id, tenant_id, name) VALUES ($1, $2, 'Alta')`, [tpl, tenant]);
-  await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1, $2, 'original', 'x', 'application/pdf', 10, 'abc')`, [
-    file,
-    tenant,
-  ]);
-  await db.query(`INSERT INTO template_documents (id, tenant_id, template_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,0,'doc',$4,1,$5)`, [
-    doc,
+  await db.query(
+    `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1, $2, 'original', 'x', 'application/pdf', 10, 'abc')`,
+    [file, tenant],
+  );
+  await db.query(
+    `INSERT INTO template_documents (id, tenant_id, template_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,0,'doc',$4,1,$5)`,
+    [doc, tenant, tpl, file, JSON.stringify([{ width: 595, height: 842 }])],
+  );
+  await db.query(`INSERT INTO template_roles (id, tenant_id, template_id, name, role, routing_order) VALUES ($1,$2,$3,'Cliente','signer',1)`, [
+    role,
     tenant,
     tpl,
-    file,
-    JSON.stringify([{ width: 595, height: 842 }]),
   ]);
-  await db.query(`INSERT INTO template_roles (id, tenant_id, template_id, name, role, routing_order) VALUES ($1,$2,$3,'Cliente','signer',1)`, [role, tenant, tpl]);
   for (const [type, label] of [
     ["signature", null],
     ["text", "Plan"],
@@ -60,7 +65,12 @@ beforeAll(async () => {
   }
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
-  const res = await app.inject({ method: "POST", url: "/v1/web-forms", headers: auth, payload: { templateId: tpl, name: "Alta de clientes", signerRoleId: role, prefill: { Plan: "Oro" }, lockPrefill: true } });
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/web-forms",
+    headers: auth,
+    payload: { templateId: tpl, name: "Alta de clientes", signerRoleId: role, prefill: { Plan: "Oro" }, lockPrefill: true },
+  });
   expect(res.json().lockPrefill).toBe(true);
   expect(res.statusCode).toBe(201);
   formId = res.json().id;
@@ -242,7 +252,12 @@ describe("códigos de verificación: tope por destino", () => {
     const add = async (dest: string, n: number, tenantId = tenant, verified = false) => {
       for (let i = 0; i < n; i++) {
         const r = uuidv7();
-        await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status) VALUES ($1,$2,$3,'signer','V',$4,'sent')`, [r, tenant, env, dest]);
+        await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status) VALUES ($1,$2,$3,'signer','V',$4,'sent')`, [
+          r,
+          tenant,
+          env,
+          dest,
+        ]);
         await db.query(
           `INSERT INTO otp_challenges (id, tenant_id, recipient_id, method, destination, code_hash, expires_at, verified_at)
            VALUES ($1,$2,$3,'otp_email',$4,'h', now(), ${verified ? "now()" : "NULL"})`,
@@ -252,7 +267,10 @@ describe("códigos de verificación: tope por destino", () => {
     };
     // Otra organización agota su cupo con la misma dirección: no deja sin códigos a esta.
     await add("Victima@x.test", config.otp.maxPerDestinationHour, otherTenant);
-    await expect(assertOtpDestinationCapacity(db, otherTenant, "victima@x.test")).rejects.toMatchObject({ code: "otp_destination_limit", status: 429 });
+    await expect(assertOtpDestinationCapacity(db, otherTenant, "victima@x.test")).rejects.toMatchObject({
+      code: "otp_destination_limit",
+      status: 429,
+    });
     await expect(assertOtpDestinationCapacity(db, tenant, "victima@x.test")).resolves.toBeUndefined();
     // Los verificados no cuentan.
     await add("victima@X.test", config.otp.maxPerDestinationHour, tenant, true);

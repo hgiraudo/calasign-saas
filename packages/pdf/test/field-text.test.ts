@@ -119,7 +119,11 @@ describe("layoutFieldText (texto estampado en la caja del campo, sin perder cara
     ["sin espacios gigante", "x".repeat(400)],
   ])("%s: se parte por carácter dentro del ancho, sin perder ninguno", async (_n, text) => {
     const f = await font();
-    for (const [w, h] of [[80, 12], [80, 60], [200, 14]] as const) {
+    for (const [w, h] of [
+      [80, 12],
+      [80, 60],
+      [200, 14],
+    ] as const) {
       const fit = layoutFieldText(f, text, w, h, { below: 700, right: 500 });
       expect(fit.lines.join("")).toBe(text);
       for (const l of fit.lines) expect(f.widthOfTextAtSize(l, fit.size)).toBeLessThanOrEqual(w - 2 + 1e-6);
@@ -164,7 +168,12 @@ describe("layoutFieldText: el tamaño elegido es el de un recorrido exhaustivo d
     const sizes: number[] = [];
     for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
     sizes.push(minSize);
-    for (const [sw, nw] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+    for (const [sw, nw] of [
+      [false, true],
+      [false, false],
+      [true, true],
+      [true, false],
+    ] as const) {
       for (const s of sizes) {
         const w = wrapFieldUnits(units, width, s, wrapW, sw);
         if ((!nw || !w.numberSplit) && !w.wordSplit && !w.tooWide && fits(w.lines.length, s, bh)) return { size: s, lines: w.lines };
@@ -212,7 +221,30 @@ describe("layoutFieldText: el tamaño elegido es el de un recorrido exhaustivo d
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    const vocab = ["a", "de", "Ana", "Buenos", "Aires", "x", "1", "2", "$", "1.234,00", "+54", "11", "4444", "5555", "%", "12", "Mm", "Wwww", "iii", "firmante", "東京都渋谷区", "correo@ejemplo.com.ar"];
+    const vocab = [
+      "a",
+      "de",
+      "Ana",
+      "Buenos",
+      "Aires",
+      "x",
+      "1",
+      "2",
+      "$",
+      "1.234,00",
+      "+54",
+      "11",
+      "4444",
+      "5555",
+      "%",
+      "12",
+      "Mm",
+      "Wwww",
+      "iii",
+      "firmante",
+      "東京都渋谷区",
+      "correo@ejemplo.com.ar",
+    ];
     for (let i = 0; i < 2000; i++) {
       const n = 1 + Math.floor(rnd() * 12);
       const text = Array.from({ length: n }, () => vocab[Math.floor(rnd() * vocab.length)]).join(" ");

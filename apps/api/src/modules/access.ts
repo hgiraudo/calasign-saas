@@ -46,7 +46,7 @@ export async function loadAccess(db: Db, a: { tenantId: string; userId: string |
     return {
       role,
       roleId: k?.role_id ?? null,
-      roleName: role === "custom" ? k?.role_name ?? "?" : ROLE_NAMES[role] ?? role,
+      roleName: role === "custom" ? (k?.role_name ?? "?") : (ROLE_NAMES[role] ?? role),
       permissions: role === "custom" ? sanitize(k?.permissions) : builtin(role),
       groupIds: [],
       twoFactorSetupRequired: false,
@@ -68,7 +68,7 @@ export async function loadAccess(db: Db, a: { tenantId: string; userId: string |
   return {
     role,
     roleId: m.role_id,
-    roleName: role === "custom" ? m.role_name : ROLE_NAMES[role] ?? role,
+    roleName: role === "custom" ? m.role_name : (ROLE_NAMES[role] ?? role),
     permissions: role === "custom" ? sanitize(m.permissions) : builtin(role),
     groupIds: groups.map((g) => g.group_id),
     twoFactorSetupRequired: Boolean(m.require_2fa) && !m.totp_enabled_at,
@@ -136,7 +136,9 @@ export async function assertEnvelopeAccess(db: Db, a: AuthContext, envelopeId: s
   const canView =
     hasPerm(a, "envelopes:view_all") ||
     ((a.access?.groupIds.length ?? 0) > 0 &&
-      Boolean(await db.one(`SELECT 1 FROM envelope_shares WHERE envelope_id = $1 AND group_id = ANY($2::uuid[])`, [envelopeId, a.access!.groupIds]))) ||
+      Boolean(
+        await db.one(`SELECT 1 FROM envelope_shares WHERE envelope_id = $1 AND group_id = ANY($2::uuid[])`, [envelopeId, a.access!.groupIds]),
+      )) ||
     (await isInPersonHost(db, a, envelopeId));
   if (!canView) throw notFound("Sobre");
   throw new AppError(403, "forbidden", "No podés modificar este sobre", { permission: "envelopes:manage_all" });
@@ -162,12 +164,17 @@ export function canManageTemplateRow(a: AuthContext, t: { created_by: string | n
 
 export async function assertTemplateAccess(db: Db, a: AuthContext, templateId: string, mode: "view" | "manage") {
   if (!/^[0-9a-f-]{36}$/i.test(templateId)) throw notFound("Plantilla");
-  const t = await db.one<any>(`SELECT id, created_by, created_by_api_key, visibility FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, a.tenantId]);
+  const t = await db.one<any>(`SELECT id, created_by, created_by_api_key, visibility FROM templates WHERE id = $1 AND tenant_id = $2`, [
+    templateId,
+    a.tenantId,
+  ]);
   if (!t) throw notFound("Plantilla");
   if (canManageTemplateRow(a, t)) return;
   let canView = t.visibility === "organization";
   if (!canView && (a.access?.groupIds.length ?? 0) > 0) {
-    canView = Boolean(await db.one(`SELECT 1 FROM template_shares WHERE template_id = $1 AND group_id = ANY($2::uuid[])`, [templateId, a.access!.groupIds]));
+    canView = Boolean(
+      await db.one(`SELECT 1 FROM template_shares WHERE template_id = $1 AND group_id = ANY($2::uuid[])`, [templateId, a.access!.groupIds]),
+    );
   }
   if (!canView) throw notFound("Plantilla");
   if (mode === "manage") throw new AppError(403, "forbidden", "No podés modificar esta plantilla", { permission: "templates:manage" });
@@ -211,7 +218,6 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     }
     return requirePerm(a, "billing:manage");
   }
-
 
   // Sobres
   // En persona: la sesión la abre el anfitrión asignado (el handler exige que sea él), aunque el sobre no sea suyo; p. ej.
@@ -274,7 +280,8 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
       }
       if (a.access?.role !== "owner") {
         const missing = perms.filter((p) => !hasPerm(a, p));
-        if (missing.length) throw new AppError(403, "forbidden", `No podés crear una API key con permisos que no tenés: ${missing.join(", ")}`, { missing });
+        if (missing.length)
+          throw new AppError(403, "forbidden", `No podés crear una API key con permisos que no tenés: ${missing.join(", ")}`, { missing });
       }
     }
     return;

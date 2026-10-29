@@ -114,7 +114,13 @@ export async function declineEvidence(db: Db, req: FastifyRequest, r: any, envel
       data.recipient = signer.label;
       data.actorRole = "in_person_host";
       return {
-        actor: { type: "user", id: hostUserId, label: host ? `${host.name} <${host.email}>` : "Anfitrión (usuario eliminado)", ip: signer.ip, userAgent: signer.userAgent } as Actor,
+        actor: {
+          type: "user",
+          id: hostUserId,
+          label: host ? `${host.name} <${host.email}>` : "Anfitrión (usuario eliminado)",
+          ip: signer.ip,
+          userAgent: signer.userAgent,
+        } as Actor,
         data,
       };
     }
@@ -161,7 +167,11 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
   const wl = await brandForEnvelope(db, e);
   const theme = publicTheme(wl);
   const canSign =
-    e.status === "sent" && !pastExpiry(e) && (r.role === "signer" || r.role === "approver") && ["sent", "viewed"].includes(r.status) && group.order === r.routing_order;
+    e.status === "sent" &&
+    !pastExpiry(e) &&
+    (r.role === "signer" || r.role === "approver") &&
+    ["sent", "viewed"].includes(r.status) &&
+    group.order === r.routing_order;
   return {
     envelope: {
       id: e.id,
@@ -171,7 +181,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       status: e.status === "sent" && pastExpiry(e) ? "expired" : e.status,
       // Sin usuario remitente (API key): el nombre de la marca, como en los correos (jobs.ts); no el de la organización.
       senderName: sender?.name ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
-      organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
+      organizationName: rebrands(wl) || e.brand_id ? wl.name : (org?.name ?? ""),
       expiresAt: e.expires_at ? new Date(e.expires_at).toISOString() : null,
       locale: e.locale ?? "es",
     },
@@ -249,7 +259,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     if (d.purged_at) throw purgedOriginal(envelope.status);
     const bytes = await s.blobs.get(d.storage_key);
     // Solo la descarga explícita (?download=1, el botón de la página): el visor pide el archivo en cada apertura.
-    if (req.query.download === "1") await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "document", req.params.documentId);
+    if (req.query.download === "1")
+      await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "document", req.params.documentId);
     reply.header("content-type", "application/pdf").header("cache-control", "private, no-store");
     return reply.send(Buffer.from(bytes));
   });
@@ -263,10 +274,10 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         const e = await lockEnvelope(t, e0.tenant_id, e0.id);
         if (e.status !== "sent" || pastExpiry(e)) return;
         // Solo con el link vigente: el consentimiento de quien tenía el link anterior no pasa al contacto corregido.
-        const upd = await t.query(`UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL AND access_token_hash = $2 RETURNING id`, [
-          r0.id,
-          r0.access_token_hash,
-        ]);
+        const upd = await t.query(
+          `UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL AND access_token_hash = $2 RETURNING id`,
+          [r0.id, r0.access_token_hash],
+        );
         if (upd.length)
           await appendEvent(t, {
             tenantId: e0.tenant_id,
@@ -301,7 +312,10 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     // Se decodifica ahora (con tope de píxeles): un PNG dañado o que declara dimensiones enormes haría fallar (o tumbar)
     // el sellado del sobre después de que el firmante ya figura como firmado.
     // Además, una firma transparente, toda blanca o de un punto no es una firma: se rechaza antes de guardarla.
-    for (const [png, what] of [[sigPng, "Firma"], [iniPng, "Iniciales"]] as const) {
+    for (const [png, what] of [
+      [sigPng, "Firma"],
+      [iniPng, "Iniciales"],
+    ] as const) {
       if (!png) continue;
       let ink: number;
       try {
@@ -317,7 +331,11 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     // Si la firma no se completa (faltan campos, no es su turno, el sobre cerró…), las imágenes ya subidas no las
     // referencia nada: sin fila en `files` la retención nunca las borra y la firma del titular quedaba guardada para
     // siempre, una copia por cada intento fallido.
-    const discardStored = () => deleteBlobsQuietly(s.blobs, stored.map((x) => x.key));
+    const discardStored = () =>
+      deleteBlobsQuietly(
+        s.blobs,
+        stored.map((x) => x.key),
+      );
     try {
       for (const [purpose, png, meta] of [
         ["signature", sigPng, input.signature],
@@ -336,116 +354,119 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       await discardStored();
       throw err;
     }
-    await s.db.tx(async (t) => {
-      const e = await lockEnvelope(t, e0.tenant_id, e0.id);
-      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-      assertLinkCurrent(r, r0);
-      assertCanComplete(e, r, (await currentSignerGroup(t, e.id)).order);
-      // En persona: el certificado dice "identidad confirmada en el dispositivo del anfitrión"; sin la confirmación
-      // (POST …/in-person/confirm) la firma no puede completarse aunque la sesión del anfitrión esté abierta.
-      if (r.auth_method === "in_person" && !r.identity_confirmed_at)
-        throw conflict("identity_confirmation_required", "Primero hay que confirmar la identidad en el dispositivo del anfitrión");
-      // KYC: el hook de identidad miró al destinatario antes de subir las imágenes, sin bloqueo. Una corrección del nombre
-      // confirmada mientras tanto (el link no rota) anula la verificación; sin esto se firmaba sin identidad verificada.
-      if (identityBlocking(r)) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
+    await s.db
+      .tx(async (t) => {
+        const e = await lockEnvelope(t, e0.tenant_id, e0.id);
+        const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+        assertLinkCurrent(r, r0);
+        assertCanComplete(e, r, (await currentSignerGroup(t, e.id)).order);
+        // En persona: el certificado dice "identidad confirmada en el dispositivo del anfitrión"; sin la confirmación
+        // (POST …/in-person/confirm) la firma no puede completarse aunque la sesión del anfitrión esté abierta.
+        if (r.auth_method === "in_person" && !r.identity_confirmed_at)
+          throw conflict("identity_confirmation_required", "Primero hay que confirmar la identidad en el dispositivo del anfitrión");
+        // KYC: el hook de identidad miró al destinatario antes de subir las imágenes, sin bloqueo. Una corrección del nombre
+        // confirmada mientras tanto (el link no rota) anula la verificación; sin esto se firmaba sin identidad verificada.
+        if (identityBlocking(r)) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
 
-      const fields = await t.query<any>(`SELECT * FROM fields WHERE recipient_id = $1`, [r.id]);
-      const values = new Map(input.fields.map((f) => [f.id, f.value]));
-      for (const id of values.keys()) if (!fields.some((f) => f.id === id)) throw badRequest("invalid_field", "Campo desconocido");
-      const now = new Date();
-      const locale = r.locale ?? e.locale;
-      const missing: string[] = [];
-      // Ids y tipos de los campos que faltan o son inválidos: la web los ubica y los nombra en el idioma del firmante.
-      const missingFields: { id: string; type: string; label: string | null }[] = [];
-      const invalidFields: { id: string; type: string; label: string | null; error: string }[] = [];
-      const miss = (f: any, fallback: string) => {
-        missing.push(f.label ?? fallback);
-        missingFields.push({ id: f.id, type: f.type, label: f.label ?? null });
-      };
-      const hasSig = stored.some((x) => x.purpose === "signature");
-      const hasIni = stored.some((x) => x.purpose === "initials");
+        const fields = await t.query<any>(`SELECT * FROM fields WHERE recipient_id = $1`, [r.id]);
+        const values = new Map(input.fields.map((f) => [f.id, f.value]));
+        for (const id of values.keys()) if (!fields.some((f) => f.id === id)) throw badRequest("invalid_field", "Campo desconocido");
+        const now = new Date();
+        const locale = r.locale ?? e.locale;
+        const missing: string[] = [];
+        // Ids y tipos de los campos que faltan o son inválidos: la web los ubica y los nombra en el idioma del firmante.
+        const missingFields: { id: string; type: string; label: string | null }[] = [];
+        const invalidFields: { id: string; type: string; label: string | null; error: string }[] = [];
+        const miss = (f: any, fallback: string) => {
+          missing.push(f.label ?? fallback);
+          missingFields.push({ id: f.id, type: f.type, label: f.label ?? null });
+        };
+        const hasSig = stored.some((x) => x.purpose === "signature");
+        const hasIni = stored.some((x) => x.purpose === "initials");
 
-      const invalid: string[] = [];
-      // Lógica (Fase 4): campos ocultos por sus condiciones no se exigen ni se estampan; los calculados los fija el servidor.
-      const autoValue = (type: string) => (type === "name" ? r.name : type === "email" ? r.email ?? "" : formatSigningDate(now, locale));
-      const logic = await prepareCompletionLogic(t, e.id, r.id, values, { hasSig, hasIni, autoValue });
-      for (const f of fields) {
-        if (logic.hidden.has(f.id)) continue;
-        if (logic.computed.has(f.id)) {
-          await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, logic.computed.get(f.id)]);
-          continue;
+        const invalid: string[] = [];
+        // Lógica (Fase 4): campos ocultos por sus condiciones no se exigen ni se estampan; los calculados los fija el servidor.
+        const autoValue = (type: string) => (type === "name" ? r.name : type === "email" ? (r.email ?? "") : formatSigningDate(now, locale));
+        const logic = await prepareCompletionLogic(t, e.id, r.id, values, { hasSig, hasIni, autoValue });
+        for (const f of fields) {
+          if (logic.hidden.has(f.id)) continue;
+          if (logic.computed.has(f.id)) {
+            await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, logic.computed.get(f.id)]);
+            continue;
+          }
+          let v: string | null = null;
+          if (f.read_only) {
+            v = f.value;
+          } else if (f.type === "attachment") {
+            v = f.attachment_file_id ? f.value : null;
+            if (f.required && !f.attachment_file_id) miss(f, "Adjunto");
+          } else if (VALUE_FIELD_TYPES.includes(f.type) && f.type !== "text") {
+            const res = checkValue(
+              { type: f.type, required: f.required, label: f.label, options: f.options, min: f.min_value, max: f.max_value },
+              values.has(f.id) ? values.get(f.id) : f.value,
+            );
+            if ("error" in res) {
+              if (res.error === "obligatorio") miss(f, f.type);
+              else {
+                invalid.push(`${f.label ?? f.type}: ${res.error}`);
+                invalidFields.push({ id: f.id, type: f.type, label: f.label ?? null, error: res.error });
+              }
+            } else v = res.value;
+          } else if ((AUTO_FIELD_TYPES as string[]).includes(f.type)) {
+            v = autoValue(f.type);
+          } else if (f.type === "signature") {
+            if (!hasSig) miss(f, "Firma");
+            v = "signed";
+          } else if (f.type === "initials") {
+            if (!hasIni && !hasSig) miss(f, "Iniciales");
+            v = "signed";
+          } else if (f.type === "checkbox") {
+            v = values.get(f.id) === "true" ? "true" : "false";
+            if (f.required && v !== "true") miss(f, "Casilla");
+          } else {
+            v = (values.has(f.id) ? (values.get(f.id) ?? "") : (f.value ?? "")).trim() || null;
+            if (f.required && !v) miss(f, "Texto");
+          }
+          await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, v]);
         }
-        let v: string | null = null;
-        if (f.read_only) {
-          v = f.value;
-        } else if (f.type === "attachment") {
-          v = f.attachment_file_id ? f.value : null;
-          if (f.required && !f.attachment_file_id) miss(f, "Adjunto");
-        } else if (VALUE_FIELD_TYPES.includes(f.type) && f.type !== "text") {
-          const res = checkValue(
-            { type: f.type, required: f.required, label: f.label, options: f.options, min: f.min_value, max: f.max_value },
-            values.has(f.id) ? values.get(f.id) : f.value,
+        if (missing.length)
+          throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing, fields: missingFields });
+        if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid, fields: invalidFields });
+
+        for (const x of stored) {
+          await t.query(
+            `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signature_image',$3,'image/png',$4,$5)`,
+            [x.fileId, e.tenant_id, x.key, x.png.length, sha256Hex(x.png)],
           );
-          if ("error" in res) {
-            if (res.error === "obligatorio") miss(f, f.type);
-            else {
-              invalid.push(`${f.label ?? f.type}: ${res.error}`);
-              invalidFields.push({ id: f.id, type: f.type, label: f.label ?? null, error: res.error });
-            }
-          } else v = res.value;
-        } else if ((AUTO_FIELD_TYPES as string[]).includes(f.type)) {
-          v = autoValue(f.type);
-        } else if (f.type === "signature") {
-          if (!hasSig) miss(f, "Firma");
-          v = "signed";
-        } else if (f.type === "initials") {
-          if (!hasIni && !hasSig) miss(f, "Iniciales");
-          v = "signed";
-        } else if (f.type === "checkbox") {
-          v = values.get(f.id) === "true" ? "true" : "false";
-          if (f.required && v !== "true") miss(f, "Casilla");
-        } else {
-          v = (values.has(f.id) ? values.get(f.id) ?? "" : f.value ?? "").trim() || null;
-          if (f.required && !v) miss(f, "Texto");
-        }
-        await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, v]);
-      }
-      if (missing.length) throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing, fields: missingFields });
-      if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid, fields: invalidFields });
-
-      for (const x of stored) {
-        await t.query(
-          `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signature_image',$3,'image/png',$4,$5)`,
-          [x.fileId, e.tenant_id, x.key, x.png.length, sha256Hex(x.png)],
-        );
-        await t.query(
-          `INSERT INTO adopted_signatures (id, tenant_id, recipient_id, purpose, kind, text, image_file_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
+          await t.query(
+            `INSERT INTO adopted_signatures (id, tenant_id, recipient_id, purpose, kind, text, image_file_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
            ON CONFLICT (recipient_id, purpose) DO UPDATE SET kind = EXCLUDED.kind, text = EXCLUDED.text, image_file_id = EXCLUDED.image_file_id`,
-          [uuidv7(), e.tenant_id, r.id, x.purpose, x.kind, x.text, x.fileId],
-        );
-      }
-      await t.query(`UPDATE recipients SET status = 'signed', signed_at = now(), signed_ip = $2, signed_user_agent = $3 WHERE id = $1`, [
-        r.id,
-        actor.ip,
-        actor.userAgent,
-      ]);
-      const docs = await loadDocuments(t, e.id);
-      await appendEvent(t, {
-        tenantId: e.tenant_id,
-        envelopeId: e.id,
-        type: r.role === "approver" ? "recipient.approved" : "recipient.signed",
-        actor,
-        data: {
-          documents: docs.map((d) => ({ id: d.id, sha256: d.sha256 })),
-          fields: fields.length,
-          signature: stored.map((x) => ({ purpose: x.purpose, kind: x.kind, sha256: sha256Hex(x.png) })),
-        },
+            [uuidv7(), e.tenant_id, r.id, x.purpose, x.kind, x.text, x.fileId],
+          );
+        }
+        await t.query(`UPDATE recipients SET status = 'signed', signed_at = now(), signed_ip = $2, signed_user_agent = $3 WHERE id = $1`, [
+          r.id,
+          actor.ip,
+          actor.userAgent,
+        ]);
+        const docs = await loadDocuments(t, e.id);
+        await appendEvent(t, {
+          tenantId: e.tenant_id,
+          envelopeId: e.id,
+          type: r.role === "approver" ? "recipient.approved" : "recipient.signed",
+          actor,
+          data: {
+            documents: docs.map((d) => ({ id: d.id, sha256: d.sha256 })),
+            fields: fields.length,
+            signature: stored.map((x) => ({ purpose: x.purpose, kind: x.kind, sha256: sha256Hex(x.png) })),
+          },
+        });
+        await advanceRouting(t, e.tenant_id, e.id, { type: "system", label: "Sistema" });
+      })
+      .catch(async (err) => {
+        await discardStored();
+        throw err;
       });
-      await advanceRouting(t, e.tenant_id, e.id, { type: "system", label: "Sistema" });
-    }).catch(async (err) => {
-      await discardStored();
-      throw err;
-    });
     const { recipient, envelope } = await resolveToken(s.db, req.params.token);
     return buildSession(s.db, req.params.token, recipient, envelope);
   });
@@ -458,17 +479,26 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       assertLinkCurrent(r, r0);
       if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
-      if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
+      if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status))
+        throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);
       await t.query(`UPDATE envelopes SET status = 'declined', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
-      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", ...(await declineEvidence(t, req, r, e.id, input.reason)) });
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "recipient.declined",
+        ...(await declineEvidence(t, req, r, e.id, input.reason)),
+      });
       await noteSettledPaymentOnClose(t, e.id, "declined", recipientActor(req, r));
       await enqueue(t, "notify", { kind: "sender_declined", envelopeId: e.id, tenantId: e.tenant_id, declinedBy: r.id });
-      const others = (await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id])).filter(
+      const others = (
+        await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id])
+      ).filter(
         // Embebidos, en persona y autorregistrados sin correo validado no reciben avisos (ver receivesSignerNotices).
         receivesSignerNotices,
       );
-      for (const o of others) await enqueue(t, "notify", { kind: "declined", envelopeId: e.id, recipientId: o.id, tenantId: e.tenant_id, declinedBy: r.id });
+      for (const o of others)
+        await enqueue(t, "notify", { kind: "declined", envelopeId: e.id, recipientId: o.id, tenantId: e.tenant_id, declinedBy: r.id });
     });
     const { recipient, envelope } = await resolveToken(s.db, req.params.token);
     return buildSession(s.db, req.params.token, recipient, envelope);

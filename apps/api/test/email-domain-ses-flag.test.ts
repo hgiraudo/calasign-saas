@@ -15,8 +15,8 @@ vi.mock("../src/modules/custom-domains", async (orig) => ({
   resolveTxt: async (name: string) => dns(name),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let cookie: string;

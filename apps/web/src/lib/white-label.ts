@@ -97,12 +97,20 @@ const subscribe = (l: () => void) => {
 
 /** Marca activa (re-renderiza al cambiar). */
 export function useBrandTheme(): PublicBrandTheme | null {
-  return useSyncExternalStore(subscribe, () => current, () => current);
+  return useSyncExternalStore(
+    subscribe,
+    () => current,
+    () => current,
+  );
 }
 
 /** Cambia con cada marca nueva (para dependencias de useCallback). */
 export function useBrandVersion(): number {
-  return useSyncExternalStore(subscribe, () => version, () => version);
+  return useSyncExternalStore(
+    subscribe,
+    () => version,
+    () => version,
+  );
 }
 
 export function rebrands(t: PublicBrandTheme | null | undefined): boolean {

@@ -8,8 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-upload-limits-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant = "";
@@ -26,7 +26,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
   pdf = minimalPdf();
@@ -37,7 +41,11 @@ afterAll(async () => {
 });
 
 function minimalPdf() {
-  const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"];
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+  ];
   let out = "%PDF-1.4\n";
   const offs: number[] = [];
   objs.forEach((o, i) => {
@@ -81,7 +89,11 @@ describe("multipart", () => {
 
   it("acepta la subida normal y un sobre en un paso con varios documentos (tope propio de partes)", async () => {
     const id = await draft();
-    const ok = await app.inject({ method: "POST", url: `/v1/envelopes/${id}/documents`, ...multipart([{ name: "file", value: pdf, filename: "a.pdf" }]) });
+    const ok = await app.inject({
+      method: "POST",
+      url: `/v1/envelopes/${id}/documents`,
+      ...multipart([{ name: "file", value: pdf, filename: "a.pdf" }]),
+    });
     expect(ok.statusCode).toBe(201);
     const docs = Array.from({ length: 10 }, (_, i) => ({ name: `d${i}`, value: pdf, filename: `d${i}.pdf` }));
     const payload = JSON.stringify({ subject: "Varios", documents: docs.map((d) => ({ file: d.name })) });
@@ -98,7 +110,11 @@ describe("PDFs procesándose a la vez", () => {
     Object.assign(PDF_INGEST_LIMITS, { maxConcurrent: 0, maxQueue: 0 });
     try {
       const id = await draft();
-      const res = await app.inject({ method: "POST", url: `/v1/envelopes/${id}/documents`, ...multipart([{ name: "file", value: pdf, filename: "a.pdf" }]) });
+      const res = await app.inject({
+        method: "POST",
+        url: `/v1/envelopes/${id}/documents`,
+        ...multipart([{ name: "file", value: pdf, filename: "a.pdf" }]),
+      });
       expect(res.statusCode).toBe(503);
       expect(res.json().error.code).toBe("pdf_busy");
       expect(res.headers["retry-after"]).toBe("5");
@@ -152,19 +168,19 @@ describe("original borrado por retención en la página del firmante", () => {
        VALUES ($1,$2,$3,'signer','Ana','ana@x.test','signed',$4,$5)`,
       [recipient, tenant, envelope, sha256Hex(token), encrypt(token)],
     );
-    for (const [f, purged, pos] of [[kept, false, 1], [gone, true, 2]] as const) {
+    for (const [f, purged, pos] of [
+      [kept, false, 1],
+      [gone, true, 2],
+    ] as const) {
       await db.query(
         `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, purged_at)
          VALUES ($1,$2,'original',$3,'application/pdf',1,'x',$4)`,
         [f.file, tenant, `missing/${f.file}.pdf`, purged ? new Date() : null],
       );
-      await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,'d.pdf',$5,1,'[]')`, [
-        f.doc,
-        tenant,
-        envelope,
-        pos,
-        f.file,
-      ]);
+      await db.query(
+        `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,'d.pdf',$5,1,'[]')`,
+        [f.doc, tenant, envelope, pos, f.file],
+      );
     }
     return { token, kept, gone };
   }

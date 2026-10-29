@@ -27,7 +27,11 @@ function sourceFrom(args: string[]): CertSource {
   if (p12) {
     const envName = arg(args, "password-env");
     const file = arg(args, "password-file");
-    const password = envName ? process.env[envName] ?? "" : file ? readFileSync(file, "utf8").trim() : arg(args, "password") ?? process.env.CALASIGN_P12_PASSWORD ?? "";
+    const password = envName
+      ? (process.env[envName] ?? "")
+      : file
+        ? readFileSync(file, "utf8").trim()
+        : (arg(args, "password") ?? process.env.CALASIGN_P12_PASSWORD ?? "");
     return new P12Source(p12, password);
   }
   const mod = arg(args, "pkcs11");
@@ -67,7 +71,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       console.error(`Firmando "${info.envelopeSubject}" (${info.organizationName}) como ${info.signerName}…`);
       const { prepared, result } = await signWithEntry(client, source, entry);
       for (const w of prepared.warnings) console.error(`Aviso: ${w}`);
-      console.log(JSON.stringify({ ok: true, certificate: prepared.certificate.commonName, signedPdfSha256: result.signedPdfSha256, envelopeStatus: result.envelopeStatus }));
+      console.log(
+        JSON.stringify({
+          ok: true,
+          certificate: prepared.certificate.commonName,
+          signedPdfSha256: result.signedPdfSha256,
+          envelopeStatus: result.envelopeStatus,
+        }),
+      );
       return 0;
     } finally {
       await source.close?.();

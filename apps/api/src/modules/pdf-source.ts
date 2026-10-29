@@ -42,7 +42,8 @@ export async function fetchPdf(url: string, maxBytes = config.maxUploadBytes, ti
   } catch {
     throw new PdfSourceError("invalid_url", "URL inválida");
   }
-  if (u.protocol !== "https:" && !(config.environment === "local" && u.protocol === "http:")) throw new PdfSourceError("invalid_url", "la URL tiene que ser https");
+  if (u.protocol !== "https:" && !(config.environment === "local" && u.protocol === "http:"))
+    throw new PdfSourceError("invalid_url", "la URL tiene que ser https");
   if (u.username || u.password) throw new PdfSourceError("invalid_url", "la URL no puede llevar credenciales");
   let r;
   try {

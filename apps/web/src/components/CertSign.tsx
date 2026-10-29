@@ -19,7 +19,10 @@ export interface CertDraft {
 // «Corresponde al documento» es opt-in: solo traba el envío si el remitente lo marca en un destinatario con documento.
 export const EMPTY_CERT_DRAFT: CertDraft = { signatureType: "electronic", matchIdDocument: false, requireQualified: false, allowedIssuers: "" };
 
-export function certToDraft(r: { signatureType?: SignatureType; certificateRequirements?: { matchIdDocument: boolean; allowedIssuers: string[]; requireQualified: boolean } | null }): CertDraft {
+export function certToDraft(r: {
+  signatureType?: SignatureType;
+  certificateRequirements?: { matchIdDocument: boolean; allowedIssuers: string[]; requireQualified: boolean } | null;
+}): CertDraft {
   const q = r.certificateRequirements;
   return {
     signatureType: r.signatureType ?? "electronic",
@@ -110,7 +113,12 @@ export function CertificateOption({
           </label>
           <label className="field">
             <span>{c("edit.certIssuers")}</span>
-            <input value={value.allowedIssuers} maxLength={600} placeholder={c("edit.certIssuersHint")} onChange={(e) => onChange({ ...value, allowedIssuers: e.target.value })} />
+            <input
+              value={value.allowedIssuers}
+              maxLength={600}
+              placeholder={c("edit.certIssuersHint")}
+              onChange={(e) => onChange({ ...value, allowedIssuers: e.target.value })}
+            />
           </label>
         </div>
       )}
@@ -192,7 +200,11 @@ export function SignerCertificateStep({ step, base, onChange }: { step: SigningC
     return (
       <div className="certsign-step is-signed">
         <h3>✓ {c("sign.certSignedTitle")}</h3>
-        {step.certificate && <p className="muted small">{c("sign.certSignedWith", { cn: step.certificate.commonName ?? step.certificate.subject, issuer: step.certificate.issuer })}</p>}
+        {step.certificate && (
+          <p className="muted small">
+            {c("sign.certSignedWith", { cn: step.certificate.commonName ?? step.certificate.subject, issuer: step.certificate.issuer })}
+          </p>
+        )}
       </div>
     );
   }
@@ -231,7 +243,9 @@ export function SignerCertificateStep({ step, base, onChange }: { step: SigningC
           <div className="certsign-code-value" aria-live="polite">
             {pairing.code}
           </div>
-          <div className="muted small">{c("sign.certCodeExpires", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) })}</div>
+          <div className="muted small">
+            {c("sign.certCodeExpires", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) })}
+          </div>
           <div className="row gap">
             <a className="btn btn-primary" href={pairing.deepLink}>
               {c("sign.certOpen")}

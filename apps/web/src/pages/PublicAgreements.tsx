@@ -113,7 +113,14 @@ export function PublicWorkflowStartPage() {
               <p role="status">{ta("pub.waiting")}</p>
             ) : (
               <>
-                <input ref={trap} tabIndex={-1} autoComplete="off" aria-hidden="true" name="website" style={{ position: "absolute", left: "-5000px" }} />
+                <input
+                  ref={trap}
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  name="website"
+                  style={{ position: "absolute", left: "-5000px" }}
+                />
                 {info.captchaSiteKey && <Captcha siteKey={info.captchaSiteKey} locale={locale} onToken={setCaptcha} resetSignal={captchaReset} />}
                 <div>
                   <button type="button" className="btn btn-primary" onClick={start} disabled={busy || Boolean(info.captchaSiteKey && !captcha)}>
@@ -196,7 +203,10 @@ export function PublicWorkflowRunPage() {
     setError(null);
     setInvalid({});
     try {
-      const v = await api<PublicWorkflowRun>(`${url}/steps/${view.step.index}`, { method: "POST", body: { values, website: trap.current?.value ?? "" } });
+      const v = await api<PublicWorkflowRun>(`${url}/steps/${view.step.index}`, {
+        method: "POST",
+        body: { values, website: trap.current?.value ?? "" },
+      });
       setView(v);
       setValues({});
       setSent(true);
@@ -227,7 +237,14 @@ export function PublicWorkflowRunPage() {
             {view.step ? (
               <form className="stack" onSubmit={submit}>
                 {view.step.description && <p className="muted">{view.step.description}</p>}
-                <input ref={trap} tabIndex={-1} autoComplete="off" aria-hidden="true" name="website" style={{ position: "absolute", left: "-5000px" }} />
+                <input
+                  ref={trap}
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  name="website"
+                  style={{ position: "absolute", left: "-5000px" }}
+                />
                 {view.step.fields.map((f) => {
                   const err = invalid[f.key];
                   const a11y = { "aria-invalid": err ? true : undefined, "aria-describedby": err ? `wf-err-${f.key}` : undefined };

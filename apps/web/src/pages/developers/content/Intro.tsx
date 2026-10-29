@@ -35,7 +35,12 @@ export function IntroPage() {
         head={[t("intro.base.col.what"), t("intro.base.col.url")]}
         rows={[
           [t("intro.base.api"), <code key="a">{BASE}/v1</code>],
-          [t("intro.base.spec"), <a key="b" href="/v1/openapi.json">{BASE}/v1/openapi.json</a>],
+          [
+            t("intro.base.spec"),
+            <a key="b" href="/v1/openapi.json">
+              {BASE}/v1/openapi.json
+            </a>,
+          ],
           [t("intro.base.mcp"), <code key="c">{MCP_URL}</code>],
           [t("intro.base.oauth"), <code key="d">{BASE}/oauth/authorize · /oauth/token</code>],
         ]}

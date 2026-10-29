@@ -4,7 +4,8 @@
 export const meta = {
   id: "pipedrive",
   name: "Pipedrive",
-  description: "Pipedrive Marketplace: acción «Enviar a firmar con CalaSign» en Deals y Persons, sobre el conector nativo (OAuth, estado en un campo del deal, PDF firmado y nota).",
+  description:
+    "Pipedrive Marketplace: acción «Enviar a firmar con CalaSign» en Deals y Persons, sobre el conector nativo (OAuth, estado en un campo del deal, PDF firmado y nota).",
 };
 
 const FILES = ["README.md", "app-extensions.json", "send.html", "send.js", "send.css"];

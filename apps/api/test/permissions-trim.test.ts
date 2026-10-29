@@ -10,8 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-perms-trim-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -51,11 +51,10 @@ async function newMember(email: string, role: string, roleId: string | null = nu
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1,$2,$3,'scrypt$x')`, [id, email, email.split("@")[0]]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4)`, [tenant, id, role, roleId]);
   const token = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(token),
-    id,
-    tenant,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(token), id, tenant],
+  );
   return { id, session: token };
 }
 
@@ -97,7 +96,12 @@ describe("PATCH /v1/roles/:id", () => {
     expect(widen.statusCode).toBe(200);
     expect((await db.one<any>(`SELECT revoked_at FROM api_keys WHERE id = $1`, [key]))!.revoked_at).toBeNull();
 
-    const trim = await app.inject({ method: "PATCH", url: `/v1/roles/${roleId}`, headers: H(ownerCookie), payload: { permissions: ["envelopes:create"] } });
+    const trim = await app.inject({
+      method: "PATCH",
+      url: `/v1/roles/${roleId}`,
+      headers: H(ownerCookie),
+      payload: { permissions: ["envelopes:create"] },
+    });
     expect(trim.statusCode).toBe(200);
     expect((await db.one<any>(`SELECT revoked_at FROM api_keys WHERE id = $1`, [key]))!.revoked_at).not.toBeNull();
     expect((await db.one<any>(`SELECT revoked_at FROM invitations WHERE id = $1`, [inv]))!.revoked_at).not.toBeNull();
@@ -124,7 +128,9 @@ describe("canManage en plantillas", () => {
     expect(asMember.statusCode).toBe(200);
     expect(asMember.json().canManage).toBe(false);
     // Y efectivamente no puede modificarla.
-    expect((await app.inject({ method: "PATCH", url: `/v1/templates/${tplId}`, headers: H(m.session), payload: { name: "x" } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "PATCH", url: `/v1/templates/${tplId}`, headers: H(m.session), payload: { name: "x" } })).statusCode).toBe(
+      403,
+    );
 
     const own = await app.inject({ method: "POST", url: "/v1/templates", headers: H(m.session), payload: { name: "La mía" } });
     expect(own.statusCode).toBe(201);
@@ -142,7 +148,11 @@ describe("firma en persona", () => {
     const envelope = util.uuidv7();
     const recipient = util.uuidv7();
     const token = util.randomToken();
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by) VALUES ($1,$2,'Presencial','sent',$3)`, [envelope, tenant, ownerId]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by) VALUES ($1,$2,'Presencial','sent',$3)`, [
+      envelope,
+      tenant,
+      ownerId,
+    ]);
     await db.query(
       `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, access_token_hash, access_token_enc, auth_method, in_person_host_user_id)
        VALUES ($1,$2,$3,'signer','Ana','ana@x.test','sent',$4,$5,'in_person',$6)`,
@@ -188,11 +198,23 @@ describe("ejecuciones de workflows", () => {
       headers: H(ownerCookie),
       payload: {
         name: "Alta de proveedor",
-        steps: [{ id: randomUUID(), type: "collect_data", name: "Datos", config: { title: "Datos", fields: [{ key: "cuit", label: "CUIT", type: "text" }] } }],
+        steps: [
+          {
+            id: randomUUID(),
+            type: "collect_data",
+            name: "Datos",
+            config: { title: "Datos", fields: [{ key: "cuit", label: "CUIT", type: "text" }] },
+          },
+        ],
       },
     });
     expect(wf.statusCode).toBe(201);
-    const run = await app.inject({ method: "POST", url: `/v1/workflows/${wf.json().id}/runs`, headers: H(ownerCookie), payload: { data: { secreto: "123" } } });
+    const run = await app.inject({
+      method: "POST",
+      url: `/v1/workflows/${wf.json().id}/runs`,
+      headers: H(ownerCookie),
+      payload: { data: { secreto: "123" } },
+    });
     expect(run.statusCode).toBe(201);
     const runId = run.json().id as string;
     expect(run.json().context.data).toEqual({ secreto: "123" });
@@ -203,7 +225,12 @@ describe("ejecuciones de workflows", () => {
 
     const redacted = await app.inject({ method: "GET", url: `/v1/workflow-runs/${runId}`, headers: H(tplAdmin.session) });
     expect(redacted.statusCode).toBe(200);
-    expect(redacted.json()).toMatchObject({ redacted: true, collectUrl: null, canManage: true, context: { data: {}, envelopes: {}, http: {}, documents: {} } });
+    expect(redacted.json()).toMatchObject({
+      redacted: true,
+      collectUrl: null,
+      canManage: true,
+      context: { data: {}, envelopes: {}, http: {}, documents: {} },
+    });
     expect(redacted.json().steps.every((s: { output: unknown }) => s.output === null)).toBe(true);
     const list = await app.inject({ method: "GET", url: "/v1/workflow-runs", headers: H(tplAdmin.session) });
     // El listado trae resúmenes: sin contexto ni pasos (el detalle los trae, redactados).
@@ -231,7 +258,12 @@ describe("ejecuciones de workflows", () => {
     expect(redactedHttpError(null)).toBeNull();
 
     // Las que inicia él sí las ve completas.
-    const mine = await app.inject({ method: "POST", url: `/v1/workflows/${wf.json().id}/runs`, headers: H(tplAdmin.session), payload: { data: { propio: true } } });
+    const mine = await app.inject({
+      method: "POST",
+      url: `/v1/workflows/${wf.json().id}/runs`,
+      headers: H(tplAdmin.session),
+      payload: { data: { propio: true } },
+    });
     expect(mine.statusCode).toBe(201);
     expect(mine.json().context.data).toEqual({ propio: true });
     expect(mine.json().collectUrl).toMatch(/\/w\//);
@@ -243,7 +275,7 @@ describe("orden de bloqueos", () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../src/modules/teams.ts", import.meta.url), "utf8");
     const start = src.indexOf('app.patch<P>("/v1/roles/:id"');
-    const body = src.slice(start, src.indexOf("app.delete<P>(\"/v1/roles/:id\"", start));
+    const body = src.slice(start, src.indexOf('app.delete<P>("/v1/roles/:id"', start));
     const tenantLock = body.indexOf("FROM tenants WHERE id = $1 FOR UPDATE");
     const roleLock = body.indexOf("FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE");
     expect(tenantLock).toBeGreaterThan(-1);

@@ -132,7 +132,15 @@ function newToken() {
 }
 
 function checkContact(
-  c: { email?: string | null; phone?: string | null; channels: string[]; auth_method?: string; in_person?: boolean; embedded?: boolean; telegram_chat_id?: string | null },
+  c: {
+    email?: string | null;
+    phone?: string | null;
+    channels: string[];
+    auth_method?: string;
+    in_person?: boolean;
+    embedded?: boolean;
+    telegram_chat_id?: string | null;
+  },
   who: string,
 ) {
   if (c.in_person) return;
@@ -249,11 +257,20 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     // Mismo número escrito distinto ("20.123.456" / "20123456") no es un cambio.
     const idDocChanged = normalizeDocumentNumber(next.idDocumentNumber) !== normalizeDocumentNumber(r.id_document_number);
     if (idDocChanged) {
-      changes.idDocumentNumber = { from: r.id_document_number ? maskDocNumber(r.id_document_number) : null, to: next.idDocumentNumber ? maskDocNumber(next.idDocumentNumber) : null };
+      changes.idDocumentNumber = {
+        from: r.id_document_number ? maskDocNumber(r.id_document_number) : null,
+        to: next.idDocumentNumber ? maskDocNumber(next.idDocumentNumber) : null,
+      };
     }
     if (!Object.keys(changes).length) continue;
     // Firma con certificado que exige corresponder al documento: no se le puede quitar el número.
-    if (changes.idDocumentNumber && !next.idDocumentNumber && r.role === "signer" && r.signature_type === "certificate" && r.certificate_requirements?.matchIdDocument === true) {
+    if (
+      changes.idDocumentNumber &&
+      !next.idDocumentNumber &&
+      r.role === "signer" &&
+      r.signature_type === "certificate" &&
+      r.certificate_requirements?.matchIdDocument === true
+    ) {
       throw missingIdDocument(r.name, 400);
     }
     const contactChanged = Boolean(changes.email || changes.phone || changes.channels);
@@ -279,7 +296,10 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
         [r.id],
       );
       if (canceled.length || (r.identity_status ?? "pending") !== "pending") {
-        await db.query(`UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`, [r.id]);
+        await db.query(
+          `UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`,
+          [r.id],
+        );
         changes.identityReset = true;
       }
     }
@@ -304,7 +324,10 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
         [r.id, t.hash, t.enc],
       );
       // El checkout de un cobro pendiente se armó con el contacto y el link anteriores: se descarta.
-      await db.query(`UPDATE envelope_payments SET ${DISCARD_CHECKOUT_SET}, updated_at = now() WHERE recipient_id = $1 AND status NOT IN ('paid','refunded')`, [r.id]);
+      await db.query(
+        `UPDATE envelope_payments SET ${DISCARD_CHECKOUT_SET}, updated_at = now() WHERE recipient_id = $1 AND status NOT IN ('paid','refunded')`,
+        [r.id],
+      );
       // Un código de embed sin usar emitido para el contacto anterior abriría el link nuevo: se vence.
       await db.query(`UPDATE embed_sessions SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND used_at IS NULL`, [r.id]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
@@ -425,12 +448,18 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     }
     // Condiciones y fórmulas de los campos nuevos (se validan contra todos los campos del sobre). Sin esto se
     // descartaban: un total calculado quedaba como número a completar a mano y un campo condicional, siempre visible.
-    const others = await db.query<any>(`SELECT id, type, label, conditions, formula FROM fields WHERE envelope_id = $1 AND NOT (id = ANY($2::uuid[]))`, [
-      e.id,
-      addedFields,
-    ]);
+    const others = await db.query<any>(
+      `SELECT id, type, label, conditions, formula FROM fields WHERE envelope_id = $1 AND NOT (id = ANY($2::uuid[]))`,
+      [e.id, addedFields],
+    );
     await saveFieldLogic(db, "fields", [
-      ...others.map((x) => ({ id: x.id, type: x.type, label: x.label, conditions: Array.isArray(x.conditions) && x.conditions.length ? x.conditions : null, formula: x.formula })),
+      ...others.map((x) => ({
+        id: x.id,
+        type: x.type,
+        label: x.label,
+        conditions: Array.isArray(x.conditions) && x.conditions.length ? x.conditions : null,
+        formula: x.formula,
+      })),
       ...addedLogic,
     ]);
   }
@@ -460,9 +489,17 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   // ya venía así.
   if (input.addFields?.length || input.addRecipients?.length) {
     const pendingIds = new Set(now.filter((r) => PENDING.includes(r.status)).map((r) => r.id));
-    const all = await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only, type, formula FROM fields WHERE envelope_id = $1`, [e.id]);
+    const all = await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only, type, formula FROM fields WHERE envelope_id = $1`, [
+      e.id,
+    ]);
     const live = now.filter((r) => !["delegated", "reassigned"].includes(r.status));
-    problems.push(...newLogicOrderProblems(all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })), live, logicBefore));
+    problems.push(
+      ...newLogicOrderProblems(
+        all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })),
+        live,
+        logicBefore,
+      ),
+    );
   }
   if (problems.length) throw problemsError("envelope_incomplete", problems);
 
@@ -474,7 +511,13 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   if (!Object.keys(diff).length) throw badRequest("no_changes", "No hay cambios para aplicar");
 
   await db.query(`UPDATE envelopes SET updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
-  await appendEvent(db, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.corrected", actor: a.actor, data: { ...diff, reason: input.reason ?? null } });
+  await appendEvent(db, {
+    tenantId: e.tenant_id,
+    envelopeId: e.id,
+    type: "envelope.corrected",
+    actor: a.actor,
+    data: { ...diff, reason: input.reason ?? null },
+  });
 
   // Ruteo: si se agregó alguien al grupo actual (o se vació), avanzar.
   const group = await currentSignerGroup(db, e.id);
@@ -543,7 +586,9 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
       p,
     ),
     // En curso ahora, sin importar el rango (índice tenant_id, status).
-    db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND status IN ('sent','awaiting_certificates','finalizing')`, [tenantId]),
+    db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND status IN ('sent','awaiting_certificates','finalizing')`, [
+      tenantId,
+    ]),
     db.query<any>(
       `SELECT to_char(date_trunc('month', created_at AT TIME ZONE $4::text), 'YYYY-MM') AS month, status, count(*)::int AS n
        FROM envelopes WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 GROUP BY 1, 2`,
@@ -664,14 +709,29 @@ async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: s
   if (tz) head.push("creado_local", "enviado_local", "completado_local", "vence_local");
   const lines = [head.join(sep)];
   for (const r of rows) {
-    const cells = [r.id, r.subject, r.status, r.created_via, r.created_at, r.sent_at, r.completed_at, r.expires_at, r.sender, r.sender_email, r.recipients];
+    const cells = [
+      r.id,
+      r.subject,
+      r.status,
+      r.created_via,
+      r.created_at,
+      r.sent_at,
+      r.completed_at,
+      r.expires_at,
+      r.sender,
+      r.sender_email,
+      r.recipients,
+    ];
     if (tz) cells.push(r.created_local, r.sent_local, r.completed_local, r.expires_local);
     lines.push(cells.map(csvCell).join(sep));
   }
   if (truncated) {
     const last = rows[rows.length - 1];
     lines.push(
-      ["", `TRUNCADO: se exportaron los ${ENVELOPES_CSV_MAX} sobres más recientes del rango; hay más. Acotá el rango (to=${new Date(last.created_at).toISOString()}) para el resto.`]
+      [
+        "",
+        `TRUNCADO: se exportaron los ${ENVELOPES_CSV_MAX} sobres más recientes del rango; hay más. Acotá el rango (to=${new Date(last.created_at).toISOString()}) para el resto.`,
+      ]
         .map(csvCell)
         .join(sep),
     );
@@ -714,10 +774,12 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       const { ip, userAgent } = clientInfo(req);
       await t.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
       await t.query(`UPDATE recipients SET identity_confirmed_at = NULL WHERE id = $1`, [r.id]);
-      await t.query(
-        `INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person',$3,$4)`,
-        [sha256Hex(session), r.id, ip, expiresAt.toISOString()],
-      );
+      await t.query(`INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person',$3,$4)`, [
+        sha256Hex(session),
+        r.id,
+        ip,
+        expiresAt.toISOString(),
+      ]);
       await appendEvent(t, {
         tenantId: e.tenant_id,
         envelopeId: e.id,
@@ -819,26 +881,30 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
     reportsSummary(s.db, A(req).tenantId, req.query),
   );
 
-  app.get<{ Querystring: { from?: string; to?: string; sep?: string; tz?: string } }>("/v1/reports/envelopes.csv", { preHandler: auth }, async (req, reply: FastifyReply) => {
-    const a = A(req);
-    const csv = await envelopesCsv(s.db, a.tenantId, req.query);
-    // Exportar todos los sobres de la organización (asuntos, destinatarios, correos) queda en la auditoría, como la
-    // exportación de acuerdos y la de la auditoría misma.
-    await auditFromRequest(s.db, req, a, "reports.exported", {
-      targetType: "report",
-      targetId: "envelopes.csv",
-      data: { from: req.query.from ?? null, to: req.query.to ?? null, rows: csv.rows, truncated: csv.truncated },
-    });
-    if (csv.truncated) reply.header("x-truncated", "true");
-    // Zona usada en las columnas *_local (una desconocida cae a UTC).
-    if (csv.timeZone) reply.header("x-time-zone", csv.timeZone);
-    const day = new Date().toISOString().slice(0, 10);
-    reply
-      .header("content-type", "text/csv; charset=utf-8")
-      .header("content-disposition", `attachment; filename="calasign-sobres-${day}.csv"`)
-      .header("cache-control", "private, no-store");
-    return reply.send(csv.body);
-  });
+  app.get<{ Querystring: { from?: string; to?: string; sep?: string; tz?: string } }>(
+    "/v1/reports/envelopes.csv",
+    { preHandler: auth },
+    async (req, reply: FastifyReply) => {
+      const a = A(req);
+      const csv = await envelopesCsv(s.db, a.tenantId, req.query);
+      // Exportar todos los sobres de la organización (asuntos, destinatarios, correos) queda en la auditoría, como la
+      // exportación de acuerdos y la de la auditoría misma.
+      await auditFromRequest(s.db, req, a, "reports.exported", {
+        targetType: "report",
+        targetId: "envelopes.csv",
+        data: { from: req.query.from ?? null, to: req.query.to ?? null, rows: csv.rows, truncated: csv.truncated },
+      });
+      if (csv.truncated) reply.header("x-truncated", "true");
+      // Zona usada en las columnas *_local (una desconocida cae a UTC).
+      if (csv.timeZone) reply.header("x-time-zone", csv.timeZone);
+      const day = new Date().toISOString().slice(0, 10);
+      reply
+        .header("content-type", "text/csv; charset=utf-8")
+        .header("content-disposition", `attachment; filename="calasign-sobres-${day}.csv"`)
+        .header("cache-control", "private, no-store");
+      return reply.send(csv.body);
+    },
+  );
 
   // ───────── Copias del documento final ─────────
 
@@ -853,40 +919,52 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "El destinatario no tiene a dónde enviarle la copia");
       // Se registró solo en un formulario web y no validó su correo: el aviso no saldría (jobs.ts no le escribe).
       if (isUnverifiedSelfRegistered(r)) {
-        throw conflict("unverified_recipient", "Ese destinatario se registró en un formulario web sin validar su correo: no se le envían copias (puede descargarla desde su link)");
+        throw conflict(
+          "unverified_recipient",
+          "Ese destinatario se registró en un formulario web sin validar su correo: no se le envían copias (puede descargarla desde su link)",
+        );
       }
       await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
-      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.copy_resent", actor: a.actor, data: { recipientId: r.id, recipientName: r.name } });
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "envelope.copy_resent",
+        actor: a.actor,
+        data: { recipientId: r.id, recipientName: r.name },
+      });
     });
     return { queued: true, recipientId: req.params.recipientId };
   });
 
-  app.post<TP>("/v1/signing/:token/request-copy", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (req): Promise<CopyQueuedResponse> => {
-    const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
-    await s.db.tx(async (t) => {
-      const e = await lockEnvelope(t, e0.tenant_id, e0.id);
-      if (e.status !== "completed") throw conflict("not_completed", "El documento final todavía no está disponible");
-      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-      if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "No hay a dónde enviarte la copia");
-      // Autoregistrado en un formulario público sin correo validado: no se le manda la copia final (su correo no está
-      // verificado); la descarga está en pantalla. Si no, el formulario más este pedido servían para mandar correos a
-      // una dirección ajena.
-      if (isUnverifiedSelfRegistered(r)) throw forbidden("Descargá la copia desde esta página");
-      // Tope total por destinatario (además de uno cada 10 minutos).
-      const total = await t.one<{ n: number }>(
-        `SELECT count(*)::int AS n FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2`,
-        [e.id, r.id],
-      );
-      if ((total?.n ?? 0) >= 5) throw new AppError(429, "copy_limit_reached", "Ya pediste varias copias. Descargá el documento desde esta página.");
-      const recent = await t.one(
-        `SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2 AND occurred_at > now() - interval '10 minutes'`,
-        [e.id, r.id],
-      );
-      if (recent) throw new AppError(429, "copy_recently_requested", "Ya pediste una copia hace poco. Revisá tu correo o mensajes.");
-      await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
-      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.copy_requested", actor: recipientActor(req, r) });
-    });
-    return { queued: true, recipientId: r0.id };
-  });
+  app.post<TP>(
+    "/v1/signing/:token/request-copy",
+    { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
+    async (req): Promise<CopyQueuedResponse> => {
+      const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
+      await s.db.tx(async (t) => {
+        const e = await lockEnvelope(t, e0.tenant_id, e0.id);
+        if (e.status !== "completed") throw conflict("not_completed", "El documento final todavía no está disponible");
+        const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+        if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "No hay a dónde enviarte la copia");
+        // Autoregistrado en un formulario público sin correo validado: no se le manda la copia final (su correo no está
+        // verificado); la descarga está en pantalla. Si no, el formulario más este pedido servían para mandar correos a
+        // una dirección ajena.
+        if (isUnverifiedSelfRegistered(r)) throw forbidden("Descargá la copia desde esta página");
+        // Tope total por destinatario (además de uno cada 10 minutos).
+        const total = await t.one<{ n: number }>(
+          `SELECT count(*)::int AS n FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2`,
+          [e.id, r.id],
+        );
+        if ((total?.n ?? 0) >= 5) throw new AppError(429, "copy_limit_reached", "Ya pediste varias copias. Descargá el documento desde esta página.");
+        const recent = await t.one(
+          `SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2 AND occurred_at > now() - interval '10 minutes'`,
+          [e.id, r.id],
+        );
+        if (recent) throw new AppError(429, "copy_recently_requested", "Ya pediste una copia hace poco. Revisá tu correo o mensajes.");
+        await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+        await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.copy_requested", actor: recipientActor(req, r) });
+      });
+      return { queued: true, recipientId: r0.id };
+    },
+  );
 }
-

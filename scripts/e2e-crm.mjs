@@ -67,12 +67,16 @@ const hs = {
   revoked: false,
   codes: new Map(),
   deals: {
-    "9001": { amount: "1500.50", dealname: "Renovación ACME", dealstage: "appointmentscheduled", contacts: ["c1"] },
-    "9002": { amount: "980", dealname: "Alta Beta", dealstage: "appointmentscheduled", contacts: ["c2"] },
-    "9003": { amount: "120", dealname: "Gamma en ráfaga", dealstage: "appointmentscheduled", contacts: ["c2"] },
-    "9004": { amount: "50", dealname: "Delta correo roto", dealstage: "appointmentscheduled", contacts: ["c3"] },
+    9001: { amount: "1500.50", dealname: "Renovación ACME", dealstage: "appointmentscheduled", contacts: ["c1"] },
+    9002: { amount: "980", dealname: "Alta Beta", dealstage: "appointmentscheduled", contacts: ["c2"] },
+    9003: { amount: "120", dealname: "Gamma en ráfaga", dealstage: "appointmentscheduled", contacts: ["c2"] },
+    9004: { amount: "50", dealname: "Delta correo roto", dealstage: "appointmentscheduled", contacts: ["c3"] },
   },
-  contacts: { c1: { firstname: "Ana", lastname: "Pérez HS", email: "ana.hs@cliente.test", phone: "+573001112233" }, c2: { firstname: "Bruno", lastname: "Beta HS", email: "bruno.hs@cliente.test" }, c3: { firstname: "Dora", lastname: "Delta HS", email: "dora@" } },
+  contacts: {
+    c1: { firstname: "Ana", lastname: "Pérez HS", email: "ana.hs@cliente.test", phone: "+573001112233" },
+    c2: { firstname: "Bruno", lastname: "Beta HS", email: "bruno.hs@cliente.test" },
+    c3: { firstname: "Dora", lastname: "Delta HS", email: "dora@" },
+  },
   files: [],
   notes: [],
   expire() {
@@ -89,7 +93,9 @@ await serve(P.hs, async ({ req, url, body, json, send }) => {
   if (path === "/oauth/authorize") {
     const code = `hs-code-${randomUUID()}`;
     hs.codes.set(code, url.searchParams.get("redirect_uri"));
-    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+    return send(302, undefined, {
+      location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}`,
+    });
   }
   if (path === "/oauth/v1/token") {
     const f = new URLSearchParams(body.toString());
@@ -144,13 +150,29 @@ const sf = {
   challenges: new Map(),
   expireOnNextData: false,
   opps: { "006A1": { Name: "Contrato Gamma", Amount: 2500, CloseDate: "2026-12-01" } },
-  roles: { "006A1": [{ ContactId: "003X", Role: "Decision Maker", IsPrimary: true, Contact: { Name: "Carla Gamma SF", Email: "carla.sf@cliente.test", MobilePhone: null } }] },
+  roles: {
+    "006A1": [
+      {
+        ContactId: "003X",
+        Role: "Decision Maker",
+        IsPrimary: true,
+        Contact: { Name: "Carla Gamma SF", Email: "carla.sf@cliente.test", MobilePhone: null },
+      },
+    ],
+  },
   versions: [],
 };
 function sfIssue() {
   sf.tokens++;
   sf.token = `sf-at-${sf.tokens}`;
-  return { access_token: sf.token, refresh_token: "sf-rt", instance_url: `http://127.0.0.1:${P.sf}`, id: "https://login/id/00D/005", token_type: "Bearer", issued_at: String(Date.now()) };
+  return {
+    access_token: sf.token,
+    refresh_token: "sf-rt",
+    instance_url: `http://127.0.0.1:${P.sf}`,
+    id: "https://login/id/00D/005",
+    token_type: "Bearer",
+    issued_at: String(Date.now()),
+  };
 }
 await serve(P.sf, async ({ req, url, body, json, send }) => {
   const path = url.pathname;
@@ -158,13 +180,16 @@ await serve(P.sf, async ({ req, url, body, json, send }) => {
     if (url.searchParams.get("code_challenge_method") !== "S256") return send(400, { error: "pkce_required" });
     const code = `sf-code-${randomUUID()}`;
     sf.challenges.set(code, url.searchParams.get("code_challenge"));
-    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+    return send(302, undefined, {
+      location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}`,
+    });
   }
   if (path === "/services/oauth2/token") {
     const f = new URLSearchParams(body.toString());
     if (f.get("grant_type") === "authorization_code") {
       const ch = sf.challenges.get(f.get("code"));
-      if (!ch || s256(f.get("code_verifier") ?? "") !== ch) return send(400, { error: "invalid_grant", error_description: "PKCE verification failed" });
+      if (!ch || s256(f.get("code_verifier") ?? "") !== ch)
+        return send(400, { error: "invalid_grant", error_description: "PKCE verification failed" });
       sf.challenges.delete(f.get("code"));
       return send(200, sfIssue());
     }
@@ -197,14 +222,22 @@ await serve(P.sf, async ({ req, url, body, json, send }) => {
   }
   if (path === "/services/data/v60.0/sobjects/ContentVersion" && req.method === "POST") {
     const v = json();
-    sf.versions.push({ link: v.FirstPublishLocationId, title: v.Title, pdf: Buffer.from(v.VersionData, "base64").subarray(0, 5).toString() === "%PDF-" });
+    sf.versions.push({
+      link: v.FirstPublishLocationId,
+      title: v.Title,
+      pdf: Buffer.from(v.VersionData, "base64").subarray(0, 5).toString() === "%PDF-",
+    });
     return send(201, { id: `068V${sf.versions.length}`, success: true });
   }
   send(404, [{ errorCode: "NOT_FOUND", message: `salesforce mock: ${req.method} ${path}` }]);
 });
 
 // Siigo
-const sg = { failNextPut: 1, puts: [], customers: { "cust-1": { id: "cust-1", identification: "900123456", name: ["ACME S.A.S."], comments: "Cliente VIP", metadata: { created: "x" } } } };
+const sg = {
+  failNextPut: 1,
+  puts: [],
+  customers: { "cust-1": { id: "cust-1", identification: "900123456", name: ["ACME S.A.S."], comments: "Cliente VIP", metadata: { created: "x" } } },
+};
 await serve(P.sg, async ({ req, url, json, send }) => {
   const path = url.pathname;
   if (!req.headers["partner-id"]) return send(400, { Errors: [{ Message: "Partner-Id requerido" }] });
@@ -260,14 +293,34 @@ const pd = {
   tokens: 0,
   refreshes: 0,
   codes: new Map(),
-  deals: { 42: { id: 42, title: "Licencia Pipedrive", value: 2300, currency: "COP", person_id: 7, participants: [7, 8], [PD_NIT]: "900555111", [PD_STATUS]: null } },
+  deals: {
+    42: {
+      id: 42,
+      title: "Licencia Pipedrive",
+      value: 2300,
+      currency: "COP",
+      person_id: 7,
+      participants: [7, 8],
+      [PD_NIT]: "900555111",
+      [PD_STATUS]: null,
+    },
+  },
   persons: {
     7: { id: 7, name: "Paula Principal PD", email: [{ label: "work", value: "paula.pd@cliente.test", primary: true }], phone: [] },
     8: { id: 8, name: "Pedro Participante PD", email: [{ label: "work", value: "pedro.pd@cliente.test", primary: true }], phone: [] },
   },
   fields: [
     { key: "title", name: "Title", field_type: "varchar" },
-    { key: PD_STATUS, name: "Estado CalaSign", field_type: "enum", options: [{ id: 11, label: "Enviado" }, { id: 12, label: "Firmado" }, { id: 13, label: "Rechazado" }] },
+    {
+      key: PD_STATUS,
+      name: "Estado CalaSign",
+      field_type: "enum",
+      options: [
+        { id: 11, label: "Enviado" },
+        { id: 12, label: "Firmado" },
+        { id: 13, label: "Rechazado" },
+      ],
+    },
     { key: PD_NIT, name: "NIT", field_type: "varchar" },
   ],
   files: [],
@@ -277,12 +330,22 @@ const pd = {
 // Dos compañías de Pipedrive: A (5150, acme) y B (6160, beta). Cada token vale para la suya; pd.valid.clear() vence todos.
 pd.valid = new Map();
 pd.nextCompany = "A";
-const PD_COMPANIES = { A: { company_id: 5150, company_name: "ACME", company_domain: "acme", rt: "pd-rt" }, B: { company_id: 6160, company_name: "Beta", company_domain: "beta", rt: "pd-rt-b" } };
+const PD_COMPANIES = {
+  A: { company_id: 5150, company_name: "ACME", company_domain: "acme", rt: "pd-rt" },
+  B: { company_id: 6160, company_name: "Beta", company_domain: "beta", rt: "pd-rt-b" },
+};
 function pdIssue(company = "A") {
   pd.tokens++;
   pd.token = `pd-at-${pd.tokens}`;
   pd.valid.set(pd.token, company);
-  return { access_token: pd.token, refresh_token: PD_COMPANIES[company].rt, expires_in: 3599, token_type: "Bearer", scope: "deals:full,contacts:read", api_domain: `http://127.0.0.1:${P.pd}` };
+  return {
+    access_token: pd.token,
+    refresh_token: PD_COMPANIES[company].rt,
+    expires_in: 3599,
+    token_type: "Bearer",
+    scope: "deals:full,contacts:read",
+    api_domain: `http://127.0.0.1:${P.pd}`,
+  };
 }
 const pdPersonRef = (id) => {
   const p = pd.persons[id];
@@ -294,7 +357,9 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
     if (url.searchParams.get("client_id") !== "pd-client" || url.searchParams.get("client_secret")) return send(400, { error: "invalid_request" });
     const code = `pd-code-${randomUUID()}`;
     pd.codes.set(code, { redirect: url.searchParams.get("redirect_uri"), company: pd.nextCompany });
-    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+    return send(302, undefined, {
+      location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}`,
+    });
   }
   if (path === "/oauth/token") {
     if (req.headers.authorization !== `Basic ${Buffer.from("pd-client:pd-secret").toString("base64")}`) return send(401, { error: "invalid_client" });
@@ -345,7 +410,11 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
   }
   if (path === "/api/v1/files" && req.method === "POST") {
     const raw = body.toString("latin1");
-    pd.files.push({ pdf: raw.includes("%PDF"), dealId: raw.match(/name="deal_id"\r\n\r\n(\d+)/)?.[1] ?? null, personId: raw.match(/name="person_id"\r\n\r\n(\d+)/)?.[1] ?? null });
+    pd.files.push({
+      pdf: raw.includes("%PDF"),
+      dealId: raw.match(/name="deal_id"\r\n\r\n(\d+)/)?.[1] ?? null,
+      personId: raw.match(/name="person_id"\r\n\r\n(\d+)/)?.[1] ?? null,
+    });
     return send(201, { success: true, data: { id: 700 + pd.files.length } });
   }
   if (path === "/api/v1/notes" && req.method === "POST") {
@@ -366,9 +435,22 @@ const rd = {
   refreshes: 0,
   staleRefresh: 0, // refresh con un refresh token ya rotado
   codes: new Map(),
-  deals: { [RD_DEAL]: { id: RD_DEAL, name: "Licença RD Station", one_time_price: 4100, contact_ids: [RD_C1, RD_C2], custom_fields: { cnpj: "12.345.678/0001-90", estado_calasign: "" } } },
+  deals: {
+    [RD_DEAL]: {
+      id: RD_DEAL,
+      name: "Licença RD Station",
+      one_time_price: 4100,
+      contact_ids: [RD_C1, RD_C2],
+      custom_fields: { cnpj: "12.345.678/0001-90", estado_calasign: "" },
+    },
+  },
   contacts: {
-    [RD_C1]: { id: RD_C1, name: "Rita Principal RD", emails: [{ email: "rita.rd@cliente.test" }], phones: [{ phone: "+5511999990000", type: "mobile" }] },
+    [RD_C1]: {
+      id: RD_C1,
+      name: "Rita Principal RD",
+      emails: [{ email: "rita.rd@cliente.test" }],
+      phones: [{ phone: "+5511999990000", type: "mobile" }],
+    },
     [RD_C2]: { id: RD_C2, name: "Rui Segundo RD", emails: [{ email: "rui.rd@cliente.test" }], phones: [] },
   },
   fields: [
@@ -389,7 +471,8 @@ await serve(P.rd, async ({ req, url, body, json, send }) => {
   const path = url.pathname;
   if (path === "/oauth/authorize") {
     const q = url.searchParams;
-    if (q.get("client_id") !== "rd-client" || q.get("response_type") !== "code" || q.get("code_challenge")) return send(400, { error: "invalid_request" });
+    if (q.get("client_id") !== "rd-client" || q.get("response_type") !== "code" || q.get("code_challenge"))
+      return send(400, { error: "invalid_request" });
     const code = `rd-code-${randomUUID()}`;
     rd.codes.set(code, q.get("redirect_uri"));
     return send(302, undefined, { location: `${q.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(q.get("state"))}` });
@@ -452,13 +535,43 @@ const km = {
   tokens: 0,
   refreshes: 0,
   codes: new Map(),
-  leads: { 42: { id: 42, name: "Licencia Kommo", price: 5200, status_id: 1, custom: {}, contacts: [{ id: 8, is_main: false }, { id: 7, is_main: true }] } },
+  leads: {
+    42: {
+      id: 42,
+      name: "Licencia Kommo",
+      price: 5200,
+      status_id: 1,
+      custom: {},
+      contacts: [
+        { id: 8, is_main: false },
+        { id: 7, is_main: true },
+      ],
+    },
+  },
   contacts: {
-    7: { id: 7, name: "Karla Principal KM", custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "karla.km@cliente.test", enum_code: "WORK" }] }] },
-    8: { id: 8, name: "Kike Otro KM", custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "kike.km@cliente.test", enum_code: "WORK" }] }] },
+    7: {
+      id: 7,
+      name: "Karla Principal KM",
+      custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "karla.km@cliente.test", enum_code: "WORK" }] }],
+    },
+    8: {
+      id: 8,
+      name: "Kike Otro KM",
+      custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "kike.km@cliente.test", enum_code: "WORK" }] }],
+    },
   },
   fields: [
-    { id: 501, name: "Estado CalaSign", code: null, type: "select", enums: [{ id: 9001, value: "Enviado" }, { id: 9002, value: "Firmado" }, { id: 9003, value: "Rechazado" }] },
+    {
+      id: 501,
+      name: "Estado CalaSign",
+      code: null,
+      type: "select",
+      enums: [
+        { id: 9001, value: "Enviado" },
+        { id: 9002, value: "Firmado" },
+        { id: 9003, value: "Rechazado" },
+      ],
+    },
     { id: 502, name: "NIT", code: "NIT", type: "text" },
   ],
   sessions: new Map(),
@@ -480,12 +593,15 @@ await serve(P.km, async ({ req, url, body, json, send }) => {
     const code = `km-code-${randomUUID()}`;
     km.codes.set(code, true);
     const back = `${BASE}/v1/crm/oauth/kommo/callback`;
-    return send(302, undefined, { location: `${back}?code=${code}&state=${encodeURIComponent(q.get("state"))}&referer=${encodeURIComponent(KM)}&client_id=km-client` });
+    return send(302, undefined, {
+      location: `${back}?code=${code}&state=${encodeURIComponent(q.get("state"))}&referer=${encodeURIComponent(KM)}&client_id=km-client`,
+    });
   }
   if (path === "/oauth2/access_token") {
     if (!String(req.headers["content-type"]).startsWith("application/json")) return send(400, { hint: "JSON" });
     const b = json();
-    if (b.client_id !== "km-client" || b.client_secret !== "km-secret" || b.redirect_uri !== `${BASE}/v1/crm/oauth/kommo/callback`) return send(401, { hint: "invalid client" });
+    if (b.client_id !== "km-client" || b.client_secret !== "km-secret" || b.redirect_uri !== `${BASE}/v1/crm/oauth/kommo/callback`)
+      return send(401, { hint: "invalid client" });
     if (b.grant_type === "authorization_code" && km.codes.delete(b.code)) return send(200, kmIssue());
     if (b.grant_type === "refresh_token" && b.refresh_token === km.rt) {
       km.refreshes++;
@@ -512,7 +628,8 @@ await serve(P.km, async ({ req, url, body, json, send }) => {
     km.files.push({ uuid, size: got.length, pdf: got.subarray(0, 5).toString("latin1") === "%PDF-", parts: s.chunks.length });
     return send(200, { uuid, version_uuid: randomUUID(), name: s.name, size: got.length });
   }
-  if (path === "/api/v4/account") return send(200, { id: 31337, name: "ACME", subdomain: "acme", ...(url.searchParams.get("with") === "drive_url" ? { drive_url: KM } : {}) });
+  if (path === "/api/v4/account")
+    return send(200, { id: 31337, name: "ACME", subdomain: "acme", ...(url.searchParams.get("with") === "drive_url" ? { drive_url: KM } : {}) });
   if (path === "/api/v4/leads/custom_fields") return send(200, { _embedded: { custom_fields: km.fields }, _links: {} });
   if ((m = path.match(/^\/api\/v4\/leads\/(\d+)$/))) {
     const l = km.leads[m[1]];
@@ -525,7 +642,10 @@ await serve(P.km, async ({ req, url, body, json, send }) => {
     return send(200, { ...rest, custom_fields_values: null, _embedded: { contacts: url.searchParams.get("with") === "contacts" ? contacts : [] } });
   }
   if (path === "/api/v4/contacts") {
-    const list = url.searchParams.getAll("filter[id][]").map((id) => km.contacts[id]).filter(Boolean);
+    const list = url.searchParams
+      .getAll("filter[id][]")
+      .map((id) => km.contacts[id])
+      .filter(Boolean);
     return list.length ? send(200, { _embedded: { contacts: list } }) : send(204);
   }
   if ((m = path.match(/^\/api\/v4\/leads\/(\d+)\/files$/)) && req.method === "PUT") {
@@ -554,7 +674,12 @@ const zo = {
     zc2: { First_Name: "Raúl", Last_Name: "Roles", Full_Name: "Raúl Roles", Email: "raul.legal@cliente.test" },
     zc3: { First_Name: "Bea", Last_Name: "Bigin", Full_Name: "Bea Bigin", Email: "bea.bigin@cliente.test" },
   },
-  roles: { z1: [{ id: "zc2", Full_Name: "Raúl Roles", Email: "raul.legal@cliente.test", Contact_Role: { id: "r1", name: "Legal" } }, { id: "zc1", Full_Name: "Zoe Zoho", Email: "zoe.zoho@cliente.test", Contact_Role: { id: "r2", name: "Decision Maker" } }] },
+  roles: {
+    z1: [
+      { id: "zc2", Full_Name: "Raúl Roles", Email: "raul.legal@cliente.test", Contact_Role: { id: "r1", name: "Legal" } },
+      { id: "zc1", Full_Name: "Zoe Zoho", Email: "zoe.zoho@cliente.test", Contact_Role: { id: "r2", name: "Decision Maker" } },
+    ],
+  },
   puts: [],
   attachments: [],
   notes: [],
@@ -566,12 +691,19 @@ function zoIssue(withRefresh) {
   zo.tokens++;
   const t = `zo-at-${zo.tokens}`;
   zo.valid.add(t);
-  return { access_token: t, ...(withRefresh ? { refresh_token: "zo-rt" } : {}), api_domain: `http://127.0.0.1:${P.zoEu}`, token_type: "Bearer", expires_in: 3600 };
+  return {
+    access_token: t,
+    ...(withRefresh ? { refresh_token: "zo-rt" } : {}),
+    api_domain: `http://127.0.0.1:${P.zoEu}`,
+    token_type: "Bearer",
+    expires_in: 3600,
+  };
 }
 await serve(P.zo, async ({ url, send }) => {
   if (url.pathname === "/oauth/v2/auth") {
     const q = url.searchParams;
-    if (q.get("code_challenge_method") !== "S256" || q.get("access_type") !== "offline" || q.get("response_type") !== "code") return send(400, { error: "bad_request" });
+    if (q.get("code_challenge_method") !== "S256" || q.get("access_type") !== "offline" || q.get("response_type") !== "code")
+      return send(400, { error: "bad_request" });
     const code = `zo-code-${randomUUID()}`;
     zo.codes.set(code, { challenge: q.get("code_challenge"), redirect: q.get("redirect_uri"), scope: q.get("scope") });
     const cb = new URL(q.get("redirect_uri"));
@@ -592,7 +724,8 @@ await serve(P.zoEu, async ({ req, url, body, json, send }) => {
     if (f.get("client_id") !== "zo-client" || f.get("client_secret") !== "zo-secret") return send(200, { error: "invalid_client" });
     if (f.get("grant_type") === "authorization_code") {
       const c = zo.codes.get(f.get("code"));
-      if (!c || c.redirect !== f.get("redirect_uri") || s256(f.get("code_verifier") ?? "") !== c.challenge) return send(200, { error: "invalid_code" });
+      if (!c || c.redirect !== f.get("redirect_uri") || s256(f.get("code_verifier") ?? "") !== c.challenge)
+        return send(200, { error: "invalid_code" });
       zo.codes.delete(f.get("code"));
       return send(200, zoIssue(true));
     }
@@ -622,7 +755,8 @@ await serve(P.zoEu, async ({ req, url, body, json, send }) => {
   if (!sub && req.method === "PUT") {
     const b = json();
     if (!Array.isArray(b.trigger)) return send(400, { code: "MISSING_TRIGGER" });
-    if ("Campo_Inexistente" in b.data[0]) return send(400, { data: [{ code: "INVALID_DATA", details: { api_name: "Campo_Inexistente" }, message: "invalid data", status: "error" }] });
+    if ("Campo_Inexistente" in b.data[0])
+      return send(400, { data: [{ code: "INVALID_DATA", details: { api_name: "Campo_Inexistente" }, message: "invalid data", status: "error" }] });
     Object.assign(rec, b.data[0]);
     zo.puts.push({ api, mod, id, ...b.data[0] });
     return send(200, { data: [{ code: "SUCCESS", details: { id }, message: "record updated", status: "success" }] });
@@ -632,8 +766,16 @@ await serve(P.zoEu, async ({ req, url, body, json, send }) => {
     return list.length ? send(200, { data: list, info: { count: list.length } }) : send(204);
   }
   if (sub === "Attachments" && req.method === "POST") {
-    zo.attachments.push({ api, mod, id, pdf: body.toString("latin1").includes("%PDF"), multipart: String(req.headers["content-type"]).startsWith("multipart/form-data") });
-    return send(200, { data: [{ code: "SUCCESS", details: { id: `att-${zo.attachments.length}` }, message: "attachment uploaded", status: "success" }] });
+    zo.attachments.push({
+      api,
+      mod,
+      id,
+      pdf: body.toString("latin1").includes("%PDF"),
+      multipart: String(req.headers["content-type"]).startsWith("multipart/form-data"),
+    });
+    return send(200, {
+      data: [{ code: "SUCCESS", details: { id: `att-${zo.attachments.length}` }, message: "attachment uploaded", status: "success" }],
+    });
   }
   send(400, { code: "INVALID_URL_PATTERN", message: `${req.method} ${path}`, status: "error" });
 });
@@ -695,7 +837,12 @@ const cleanup = () => {
 process.on("exit", cleanup);
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 process.on("uncaughtException", (e) => {
   console.error(e);
   cleanup();
@@ -787,13 +934,28 @@ async function oauthConnect(provider, name, extra = {}) {
 // ───────────────────────────── Escenario ─────────────────────────────
 
 const stamp = Date.now();
-await api("POST", "/v1/auth/signup", { name: "Admin CRM", email: `crm+${stamp}@example.com`, password: "una-clave-segura-123", organization: `CRM ${stamp}` });
+await api("POST", "/v1/auth/signup", {
+  name: "Admin CRM",
+  email: `crm+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `CRM ${stamp}`,
+});
 
 const prov = await api("GET", "/v1/crm/providers");
 const byP = Object.fromEntries(prov.items.map((p) => [p.provider, p]));
-assert(byP.hubspot.oauthConfigured && byP.salesforce.oauthConfigured && !byP.siigo.oauthConfigured && byP.siigo.tokenSupported && !byP.salesforce.tokenSupported, "proveedores");
+assert(
+  byP.hubspot.oauthConfigured &&
+    byP.salesforce.oauthConfigured &&
+    !byP.siigo.oauthConfigured &&
+    byP.siigo.tokenSupported &&
+    !byP.salesforce.tokenSupported,
+  "proveedores",
+);
 assert(prov.redirectUris.salesforce === `${BASE}/v1/crm/oauth/salesforce/callback`, "redirect URI");
-assert(byP.zoho.oauthConfigured && !byP.zoho.tokenSupported && byP.zoho.kind === "crm" && prov.redirectUris.zoho === `${BASE}/v1/crm/oauth/zoho/callback`, "Zoho por OAuth");
+assert(
+  byP.zoho.oauthConfigured && !byP.zoho.tokenSupported && byP.zoho.kind === "crm" && prov.redirectUris.zoho === `${BASE}/v1/crm/oauth/zoho/callback`,
+  "Zoho por OAuth",
+);
 step("proveedores: OAuth configurado para HubSpot, Salesforce y Zoho; Siigo y Alegra por token");
 assert(byP.pipedrive?.oauthConfigured && !byP.pipedrive.tokenSupported && byP.pipedrive.objectTypes.join() === "deal,contact", "proveedor Pipedrive");
 assert(prov.redirectUris.pipedrive === `${BASE}/v1/crm/oauth/pipedrive/callback`, "redirect URI de Pipedrive");
@@ -809,7 +971,12 @@ fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.
 const tdoc = await api("POST", `/v1/templates/${template.id}/documents`, fd);
 const rC = randomUUID();
 const rV = randomUUID();
-await api("PUT", `/v1/templates/${template.id}/roles`, { roles: [{ id: rC, name: "Cliente", role: "signer", routingOrder: 1 }, { id: rV, name: "Vendedor", role: "signer", routingOrder: 2 }] });
+await api("PUT", `/v1/templates/${template.id}/roles`, {
+  roles: [
+    { id: rC, name: "Cliente", role: "signer", routingOrder: 1 },
+    { id: rV, name: "Vendedor", role: "signer", routingOrder: 2 },
+  ],
+});
 await api("PUT", `/v1/templates/${template.id}/fields`, {
   fields: [
     { documentId: tdoc.id, roleId: rC, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 },
@@ -843,15 +1010,24 @@ const hsMap = await api("POST", "/v1/crm/mappings", {
 const sent = await api("POST", `/v1/crm/mappings/${hsMap.id}/send`, { objectId: "9001" });
 assert(sent.status === "sent", "sobre enviado desde el deal");
 const det = await api("GET", `/v1/envelopes/${sent.envelopeId}`);
-assert(det.recipients.some((r) => r.name === "Ana Pérez HS" && r.email === "ana.hs@cliente.test"), "contacto del deal como Cliente");
-assert(det.fields.some((f) => f.label === "Monto" && f.value === "1500.50"), "monto prellenado desde el deal");
+assert(
+  det.recipients.some((r) => r.name === "Ana Pérez HS" && r.email === "ana.hs@cliente.test"),
+  "contacto del deal como Cliente",
+);
+assert(
+  det.fields.some((f) => f.label === "Monto" && f.value === "1500.50"),
+  "monto prellenado desde el deal",
+);
 assert(det.envelope.metadata.crm?.objectId === "9001", "metadata del sobre con el registro");
 await waitFor(() => hs.deals["9001"].calasign_status === "sent", "write-back sent en HubSpot");
 step("HubSpot: envío desde el deal 9001 (contacto + monto mapeados) y write-back «sent»");
 
 // Un correo mal cargado en el CRM es un error del registro (422), no del servidor (antes: 500).
 const broken = await api("POST", `/v1/crm/mappings/${hsMap.id}/send`, { objectId: "9004" }, { raw: true });
-assert(broken.status === 422 && (await broken.json()).error?.code === "crm_invalid_record", `correo inválido en el CRM → 422 (HTTP ${broken.status})`);
+assert(
+  broken.status === 422 && (await broken.json()).error?.code === "crm_invalid_record",
+  `correo inválido en el CRM → 422 (HTTP ${broken.status})`,
+);
 step("HubSpot: registro con un correo inválido → 422 crm_invalid_record");
 
 hs.expire(); // el access token vence: el próximo uso tiene que refrescar
@@ -877,16 +1053,40 @@ const hsHook = await api("POST", "/v1/crm/mappings", {
   writeBack: { attachPdf: false },
 });
 const hookUrl = `${BASE}/v1/integrations/crm/hubspot/webhook`;
-const events = JSON.stringify([{ eventId: 50001, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9002, propertyName: "dealstage", propertyValue: "contractsent" }]);
+const events = JSON.stringify([
+  {
+    eventId: 50001,
+    subscriptionType: "deal.propertyChange",
+    portalId: 777,
+    objectId: 9002,
+    propertyName: "dealstage",
+    propertyValue: "contractsent",
+  },
+]);
 const ts = String(Date.now());
 const sig = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${events}${ts}`).digest("base64");
-const bad = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": (sig[0] === "x" ? "y" : "x") + sig.slice(1) }, body: events });
+const bad = await fetch(hookUrl, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "x-hubspot-request-timestamp": ts,
+    "x-hubspot-signature-v3": (sig[0] === "x" ? "y" : "x") + sig.slice(1),
+  },
+  body: events,
+});
 assert(bad.status === 401, "webhook con firma inválida → 401");
 for (let i = 0; i < 2; i++) {
-  const r = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": sig }, body: events });
+  const r = await fetch(hookUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": sig },
+    body: events,
+  });
   assert(r.status === 200, `webhook aceptado (${r.status})`);
 }
-const hookRun = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === hsHook.id && r.kind === "send" && r.status === "succeeded"), "envío por webhook");
+const hookRun = await waitFor(
+  async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === hsHook.id && r.kind === "send" && r.status === "succeeded"),
+  "envío por webhook",
+);
 const hookRuns = (await api("GET", "/v1/crm/runs")).items.filter((r) => r.mappingId === hsHook.id && r.kind === "send");
 assert(hookRuns.length === 1 && hookRun.envelopeId && hookRun.objectId === "9002", "un solo envío por evento repetido");
 assert(hookRun.attempts === 1, `un envío por webhook que sale al primer intento cuenta 1 intento (${hookRun.attempts})`);
@@ -895,18 +1095,32 @@ step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma invá
 // Varios eventos distintos del mismo deal en una tanda (la cola los procesa en paralelo): un solo sobre.
 {
   const burst = JSON.stringify(
-    [60001, 60002, 60003].map((eventId) => ({ eventId, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9003, propertyName: "dealstage", propertyValue: "contractsent" })),
+    [60001, 60002, 60003].map((eventId) => ({
+      eventId,
+      subscriptionType: "deal.propertyChange",
+      portalId: 777,
+      objectId: 9003,
+      propertyName: "dealstage",
+      propertyValue: "contractsent",
+    })),
   );
   const tsB = String(Date.now());
   const sigB = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${burst}${tsB}`).digest("base64");
-  const rB = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": tsB, "x-hubspot-signature-v3": sigB }, body: burst });
+  const rB = await fetch(hookUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-hubspot-request-timestamp": tsB, "x-hubspot-signature-v3": sigB },
+    body: burst,
+  });
   assert(rB.status === 200, "tanda de webhooks aceptada");
   const runsB = await waitFor(async () => {
     const items = (await api("GET", "/v1/crm/runs")).items.filter((r) => r.mappingId === hsHook.id && r.kind === "send" && r.objectId === "9003");
     return items.length === 3 && items.every((r) => r.status !== "pending") ? items : null;
   }, "tres ejecuciones del deal 9003");
   const withEnvelope = runsB.filter((r) => r.envelopeId);
-  assert(runsB.every((r) => r.status === "succeeded"), `las tres terminan bien (${runsB.map((r) => r.status + ":" + (r.error ?? "")).join(", ")})`);
+  assert(
+    runsB.every((r) => r.status === "succeeded"),
+    `las tres terminan bien (${runsB.map((r) => r.status + ":" + (r.error ?? "")).join(", ")})`,
+  );
   assert(withEnvelope.length === 1 && runsB.filter((r) => r.detail?.skipped).length === 2, `un solo sobre para el deal (${withEnvelope.length})`);
   step("HubSpot: tres eventos del mismo deal en paralelo crean un solo sobre");
 }
@@ -942,12 +1156,21 @@ step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma invá
   });
   const inesMe = await (await fetch(`${BASE}/v1/me`, { headers: { cookie: ines } })).json();
   await api("DELETE", `/v1/members/${inesMe.user.id}`);
-  const ev2 = JSON.stringify([{ eventId: 50002, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9001, propertyName: "dealstage", propertyValue: "closedwon" }]);
+  const ev2 = JSON.stringify([
+    { eventId: 50002, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9001, propertyName: "dealstage", propertyValue: "closedwon" },
+  ]);
   const ts2 = String(Date.now());
   const sig2 = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${ev2}${ts2}`).digest("base64");
-  const r2 = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts2, "x-hubspot-signature-v3": sig2 }, body: ev2 });
+  const r2 = await fetch(hookUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts2, "x-hubspot-signature-v3": sig2 },
+    body: ev2,
+  });
   assert(r2.status === 200, "webhook aceptado");
-  const failed = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === inesMap.id && r.kind === "send" && r.status === "failed"), "envío rechazado");
+  const failed = await waitFor(
+    async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === inesMap.id && r.kind === "send" && r.status === "failed"),
+    "envío rechazado",
+  );
   assert(!failed.envelopeId && /ya no es miembro/.test(failed.error ?? ""), `sin sobre a nombre de una ex miembro (${failed.error})`);
   step("HubSpot: el webhook no envía a nombre de quien creó el mapeo si ya no es miembro");
 }
@@ -957,7 +1180,11 @@ step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma invá
 {
   const { apiKey, secret } = await api("POST", "/v1/api-keys", { name: `crm key ${stamp}`, role: "admin" });
   const asKey = async (method, path, body) => {
-    const r = await fetch(BASE + path, { method, headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(BASE + path, {
+      method,
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
     return { status: r.status, body: await r.json().catch(() => null) };
   };
   const created = await asKey("POST", "/v1/crm/mappings", {
@@ -976,14 +1203,23 @@ step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma invá
   assert(created.status === 201, `mapeo creado con la API key (${created.status})`);
   const keyMap = created.body;
   const fire = async (eventId) => {
-    const ev = JSON.stringify([{ eventId, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9001, propertyName: "dealstage", propertyValue: "qualifiedtobuy" }]);
+    const ev = JSON.stringify([
+      { eventId, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9001, propertyName: "dealstage", propertyValue: "qualifiedtobuy" },
+    ]);
     const t = String(Date.now());
     const sg = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${ev}${t}`).digest("base64");
-    const r = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": t, "x-hubspot-signature-v3": sg }, body: ev });
+    const r = await fetch(hookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-hubspot-request-timestamp": t, "x-hubspot-signature-v3": sg },
+      body: ev,
+    });
     assert(r.status === 200, "webhook aceptado");
   };
   await fire(50003);
-  const okRun = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === keyMap.id && r.kind === "send" && r.status !== "pending"), "envío con mapeo de la key");
+  const okRun = await waitFor(
+    async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === keyMap.id && r.kind === "send" && r.status !== "pending"),
+    "envío con mapeo de la key",
+  );
   assert(okRun.status === "succeeded" && okRun.envelopeId, `el webhook envió con el mapeo de la key (${okRun.status} ${okRun.error ?? ""})`);
   const seen = await asKey("GET", `/v1/envelopes/${okRun.envelopeId}`);
   assert(seen.status === 200, `la key ve el sobre que mandó su mapeo (${seen.status})`);
@@ -991,10 +1227,16 @@ step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma invá
   await api("DELETE", `/v1/api-keys/${apiKey.id}`);
   await fire(50004);
   const goneRun = await waitFor(
-    async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === keyMap.id && r.kind === "send" && r.id !== okRun.id && r.status !== "pending"),
+    async () =>
+      (await api("GET", "/v1/crm/runs")).items.find(
+        (r) => r.mappingId === keyMap.id && r.kind === "send" && r.id !== okRun.id && r.status !== "pending",
+      ),
     "envío rechazado con la key revocada",
   );
-  assert(goneRun.status === "failed" && !goneRun.envelopeId && /revocada/.test(goneRun.error ?? ""), `con la key revocada no hay sobre (${goneRun.status} ${goneRun.error})`);
+  assert(
+    goneRun.status === "failed" && !goneRun.envelopeId && /revocada/.test(goneRun.error ?? ""),
+    `con la key revocada no hay sobre (${goneRun.status} ${goneRun.error})`,
+  );
   step("HubSpot: mapeo creado con una API key → el sobre es de la key; revocada la key, el webhook no envía");
 }
 
@@ -1016,7 +1258,10 @@ const sfMap = await api("POST", "/v1/crm/mappings", {
 sf.expireOnNextData = true; // la sesión vence en la primera lectura: refresh y reintento
 const sfSent = await api("POST", `/v1/crm/mappings/${sfMap.id}/send`, { objectId: "006A1" });
 assert(sf.refreshes >= 1, "Salesforce: refresh ante INVALID_SESSION_ID");
-assert((await api("GET", `/v1/envelopes/${sfSent.envelopeId}`)).fields.some((f) => f.label === "Monto" && f.value === "2500"), "monto desde Amount");
+assert(
+  (await api("GET", `/v1/envelopes/${sfSent.envelopeId}`)).fields.some((f) => f.label === "Monto" && f.value === "2500"),
+  "monto desde Amount",
+);
 await signAll(sfSent.envelopeId, ["Carla Gamma SF", vendedorSf]);
 await waitFor(() => sf.opps["006A1"].CalaSign_Status__c === "completed" && sf.versions.length === 1, "write-back y ContentVersion");
 assert(sf.versions[0].link === "006A1" && sf.versions[0].pdf, "ContentVersion vinculado a la oportunidad");
@@ -1045,21 +1290,39 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   });
   const zoSent = await api("POST", `/v1/crm/mappings/${zoMap.id}/send`, { objectId: "z1" });
   const zoDet = await api("GET", `/v1/envelopes/${zoSent.envelopeId}`);
-  assert(zoDet.recipients.some((r) => r.name === "Raúl Roles" && r.email === "raul.legal@cliente.test"), "contacto con rol Legal como Cliente");
-  assert(zoDet.fields.some((f) => f.label === "Monto" && f.value === "3200"), "monto prellenado desde Amount");
+  assert(
+    zoDet.recipients.some((r) => r.name === "Raúl Roles" && r.email === "raul.legal@cliente.test"),
+    "contacto con rol Legal como Cliente",
+  );
+  assert(
+    zoDet.fields.some((f) => f.label === "Monto" && f.value === "3200"),
+    "monto prellenado desde Amount",
+  );
   assert(zoDet.envelope.subject.includes("Renovación Zoho"), `asunto con el Deal_Name (${zoDet.envelope.subject})`);
   await waitFor(() => zo.deals.z1.CalaSign_Status === "sent", "write-back sent en Zoho");
   const missing = await api("POST", `/v1/crm/mappings/${zoMap.id}/send`, { objectId: "no-existe" }, { raw: true });
-  assert(missing.status === 404 && (await missing.json()).error?.code === "crm_record_not_found", `Deal inexistente (204 de Zoho) → 404 (HTTP ${missing.status})`);
+  assert(
+    missing.status === 404 && (await missing.json()).error?.code === "crm_record_not_found",
+    `Deal inexistente (204 de Zoho) → 404 (HTTP ${missing.status})`,
+  );
   step("Zoho: envío desde el Deal z1 (rol de contacto Legal + Amount), write-back «sent»; Deal inexistente → 404");
 
   zo.expire(); // el access token vence: el refresh tiene que ir al accounts-server del EU
   const refreshesBefore = zo.refreshes;
   await signAll(zoSent.envelopeId, ["Raúl Roles", vendZo]);
-  await waitFor(() => zo.deals.z1.CalaSign_Status === "Firmado" && zo.attachments.length === 1 && zo.notes.length === 1, "write-back Firmado + adjunto + nota en Zoho");
+  await waitFor(
+    () => zo.deals.z1.CalaSign_Status === "Firmado" && zo.attachments.length === 1 && zo.notes.length === 1,
+    "write-back Firmado + adjunto + nota en Zoho",
+  );
   assert(zo.refreshes > refreshesBefore, "se refrescó el token en el centro de datos de la cuenta");
-  assert(zo.attachments[0].mod === "Deals" && zo.attachments[0].id === "z1" && zo.attachments[0].pdf && zo.attachments[0].multipart, "PDF sellado adjunto al Deal (multipart)");
-  assert(zo.notes[0].Parent_Id?.id === "z1" && zo.notes[0].Parent_Id?.module?.api_name === "Deals" && /SHA-256/.test(zo.notes[0].Note_Content), "nota en el Deal con hash y enlace");
+  assert(
+    zo.attachments[0].mod === "Deals" && zo.attachments[0].id === "z1" && zo.attachments[0].pdf && zo.attachments[0].multipart,
+    "PDF sellado adjunto al Deal (multipart)",
+  );
+  assert(
+    zo.notes[0].Parent_Id?.id === "z1" && zo.notes[0].Parent_Id?.module?.api_name === "Deals" && /SHA-256/.test(zo.notes[0].Note_Content),
+    "nota en el Deal con hash y enlace",
+  );
   const zoLinks = (await api("GET", `/v1/crm/links?envelopeId=${zoSent.envelopeId}`)).items;
   assert(/attachment:att-1/.test(zoLinks[0]?.remoteRef ?? ""), `referencia remota del adjunto (${zoLinks[0]?.remoteRef})`);
   step("Zoho: firmado → token refrescado en el EU, estado «Firmado», PDF adjunto al Deal y nota con hash");
@@ -1077,8 +1340,15 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     writeBack: { statusProperty: "Campo_Inexistente", attachPdf: false },
   });
   const zcSent = await api("POST", `/v1/crm/mappings/${zoContactMap.id}/send`, { objectId: "zc1" });
-  assert((await api("GET", `/v1/envelopes/${zcSent.envelopeId}`)).recipients.some((r) => r.name === "Zoe Zoho" && r.phone === "+573004445566"), "el contacto con su móvil");
-  const zcFail = await waitFor(async () => (await api("GET", `/v1/crm/runs?envelopeId=${zcSent.envelopeId}`)).items.find((r) => r.kind === "write_back" && r.status === "failed"), "write-back rechazado por Zoho");
+  assert(
+    (await api("GET", `/v1/envelopes/${zcSent.envelopeId}`)).recipients.some((r) => r.name === "Zoe Zoho" && r.phone === "+573004445566"),
+    "el contacto con su móvil",
+  );
+  const zcFail = await waitFor(
+    async () =>
+      (await api("GET", `/v1/crm/runs?envelopeId=${zcSent.envelopeId}`)).items.find((r) => r.kind === "write_back" && r.status === "failed"),
+    "write-back rechazado por Zoho",
+  );
   assert(/INVALID_DATA/.test(zcFail.error ?? ""), `error de Zoho visible (${zcFail.error})`);
   await api("POST", `/v1/envelopes/${zcSent.envelopeId}/void`, { reason: "prueba e2e" });
   step("Zoho: envío desde un Contact; un campo de estado inexistente deja el error INVALID_DATA en la actividad");
@@ -1100,10 +1370,19 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     writeBack: { statusProperty: "CalaSign_Status" },
   });
   const biSent = await api("POST", `/v1/crm/mappings/${biMap.id}/send`, { objectId: "b1" });
-  assert((await api("GET", `/v1/envelopes/${biSent.envelopeId}`)).recipients.some((r) => r.name === "Bea Bigin"), "contacto del pipeline");
-  await waitFor(() => zo.pipelines.b1.CalaSign_Status === "sent" && zo.puts.some((p) => p.api === "bigin/v2" && p.mod === "Pipelines"), "write-back en Bigin");
+  assert(
+    (await api("GET", `/v1/envelopes/${biSent.envelopeId}`)).recipients.some((r) => r.name === "Bea Bigin"),
+    "contacto del pipeline",
+  );
+  await waitFor(
+    () => zo.pipelines.b1.CalaSign_Status === "sent" && zo.puts.some((p) => p.api === "bigin/v2" && p.mod === "Pipelines"),
+    "write-back en Bigin",
+  );
   await signAll(biSent.envelopeId, ["Bea Bigin", `VendBI ${stamp}`]);
-  await waitFor(() => zo.attachments.some((a) => a.api === "bigin/v2" && a.mod === "Pipelines" && a.id === "b1" && a.pdf), "PDF adjunto al pipeline de Bigin");
+  await waitFor(
+    () => zo.attachments.some((a) => a.api === "bigin/v2" && a.mod === "Pipelines" && a.id === "b1" && a.pdf),
+    "PDF adjunto al pipeline de Bigin",
+  );
   step("Bigin: OAuth con producto bigin, envío desde un Pipeline, estado y PDF adjunto por la API /bigin/v2");
 
   // Refresh token revocado: el envío pide reconectar.
@@ -1141,9 +1420,18 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   // guardada en la conexión del mapeo.
   const pdSent = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42" });
   const pdDet = await api("GET", `/v1/envelopes/${pdSent.envelopeId}`);
-  assert(pdDet.recipients.some((r) => r.name === "Paula Principal PD" && r.email === "paula.pd@cliente.test"), "persona principal del deal como Cliente");
-  assert(pdDet.recipients.some((r) => r.name === "Pedro Participante PD"), "participante del deal como Vendedor");
-  assert(pdDet.fields.some((f) => f.label === "Monto" && f.value === "2300"), "monto prellenado desde value");
+  assert(
+    pdDet.recipients.some((r) => r.name === "Paula Principal PD" && r.email === "paula.pd@cliente.test"),
+    "persona principal del deal como Cliente",
+  );
+  assert(
+    pdDet.recipients.some((r) => r.name === "Pedro Participante PD"),
+    "participante del deal como Vendedor",
+  );
+  assert(
+    pdDet.fields.some((f) => f.label === "Monto" && f.value === "2300"),
+    "monto prellenado desde value",
+  );
   assert(pdDet.envelope.subject.includes("Licencia Pipedrive"), `asunto con el título del deal (${pdDet.envelope.subject})`);
   await waitFor(() => pd.deals[42][PD_STATUS] === 11, "write-back «Enviado» (opción 11) en Pipedrive");
   step("Pipedrive: envío desde el deal 42 (persona principal + participante, monto) y write-back en un campo de opción única");
@@ -1153,7 +1441,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   await waitFor(() => pd.deals[42][PD_STATUS] === 12 && pd.notes.length === 1, "write-back «Firmado» + nota");
   assert(pd.refreshes >= 1, "Pipedrive: se refrescó el token");
   assert(pd.files.length === 1 && pd.files[0].pdf && pd.files[0].dealId === "42", "PDF sellado subido al deal con la Files API");
-  assert(pd.notes[0].deal_id === 42 && /SHA-256/.test(pd.notes[0].content) && pd.notes[0].content.includes(`/app/envelopes/${pdSent.envelopeId}`), "nota con hash y link en el deal");
+  assert(
+    pd.notes[0].deal_id === 42 && /SHA-256/.test(pd.notes[0].content) && pd.notes[0].content.includes(`/app/envelopes/${pdSent.envelopeId}`),
+    "nota con hash y link en el deal",
+  );
   step("Pipedrive: firmado → token refrescado, estado «Firmado», PDF en Files y nota con hash y link");
 
   // Desde una Person (objectType contact): ella misma es el destinatario principal; queda en borrador.
@@ -1174,7 +1465,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   const pdDraft = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "8", companyId: "5150" });
   assert(pdDraft.status === "draft", "sobre en borrador desde la persona");
   const pdDraftDet = await api("GET", `/v1/envelopes/${pdDraft.envelopeId}`);
-  assert(pdDraftDet.recipients.some((r) => r.name === "Pedro Participante PD" && r.email === "pedro.pd@cliente.test"), "la persona como Cliente");
+  assert(
+    pdDraftDet.recipients.some((r) => r.name === "Pedro Participante PD" && r.email === "pedro.pd@cliente.test"),
+    "la persona como Cliente",
+  );
   const missing = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "999", companyId: "5150" }, { expect: 404 });
   assert(missing.error.code === "crm_record_not_found", "persona inexistente → 404");
   step("Pipedrive: envío desde una Person (borrador) y registro inexistente → 404");
@@ -1190,7 +1484,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     name: "Deals Beta",
     objectType: "deal",
     templateId: template.id,
-    roles: [{ role: "Cliente", source: "contact_role", primary: true }, { role: "Vendedor", source: "contact", index: 1 }],
+    roles: [
+      { role: "Cliente", source: "contact_role", primary: true },
+      { role: "Vendedor", source: "contact", index: 1 },
+    ],
     send: false,
   });
   const forA = (await api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=5150")).items.map((x) => x.id).sort();
@@ -1199,7 +1496,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   assert(forB.length === 1 && forB[0] === pdMapB.id, "con companyId de B solo el de B");
   const allPd = await api("GET", "/v1/crm/mappings?provider=pipedrive");
   assert(allPd.items.length === 3, "sin companyId, todos los de Pipedrive");
-  assert(Array.isArray(allPd.connectionsWithoutAccount) && allPd.connectionsWithoutAccount.length === 0, "sin conexiones de Pipedrive sin compañía guardada");
+  assert(
+    Array.isArray(allPd.connectionsWithoutAccount) && allPd.connectionsWithoutAccount.length === 0,
+    "sin conexiones de Pipedrive sin compañía guardada",
+  );
   const mismatch = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "5150" }, { expect: 409 });
   assert(mismatch.error.code === "company_mismatch", "mapeo de B enviado desde A → 409 company_mismatch");
   const idem = { headers: { "idempotency-key": `pd-6160-${pdMapB.id}-42-run1` } };
@@ -1213,7 +1513,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
 // ── RD Station CRM: OAuth (App Store, refresh token que rota), negociação con contatos, campo de opción, Anexos + anotação ──
 {
   const rdConn = await oauthConnect("rdstation", "RD Station ACME");
-  assert(rdConn?.accountLabel === "RD Station CRM · acme.com.br" && rdConn.authType === "oauth", `conexión RD Station con etiqueta (${rdConn?.accountLabel})`);
+  assert(
+    rdConn?.accountLabel === "RD Station CRM · acme.com.br" && rdConn.authType === "oauth",
+    `conexión RD Station con etiqueta (${rdConn?.accountLabel})`,
+  );
   step("RD Station CRM: OAuth (authorize en accounts, token en la API, sin PKCE) y etiqueta");
 
   await api("POST", "/v1/crm/mappings", { connectionId: rdConn.id, name: "x", objectType: "contact", templateId: template.id }, { expect: 400 });
@@ -1231,9 +1534,18 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   });
   const rdSent = await api("POST", `/v1/crm/mappings/${rdMap.id}/send`, { objectId: RD_DEAL });
   const rdDet = await api("GET", `/v1/envelopes/${rdSent.envelopeId}`);
-  assert(rdDet.recipients.some((r) => r.name === "Rita Principal RD" && r.email === "rita.rd@cliente.test"), "contato principal como Cliente");
-  assert(rdDet.recipients.some((r) => r.name === "Rui Segundo RD"), "segundo contato como Vendedor");
-  assert(rdDet.fields.some((f) => f.label === "Monto" && f.value === "4100"), "monto prellenado desde one_time_price");
+  assert(
+    rdDet.recipients.some((r) => r.name === "Rita Principal RD" && r.email === "rita.rd@cliente.test"),
+    "contato principal como Cliente",
+  );
+  assert(
+    rdDet.recipients.some((r) => r.name === "Rui Segundo RD"),
+    "segundo contato como Vendedor",
+  );
+  assert(
+    rdDet.fields.some((f) => f.label === "Monto" && f.value === "4100"),
+    "monto prellenado desde one_time_price",
+  );
   assert(rdDet.envelope.subject.includes("Licença RD Station"), `asunto con el nombre de la negociação (${rdDet.envelope.subject})`);
   await waitFor(() => rd.deals[RD_DEAL].custom_fields.estado_calasign === "Enviado", "write-back «Enviado» en RD Station");
   step("RD Station CRM: envío desde la negociação (contatos en orden, monto) y write-back en un campo de opción");
@@ -1242,7 +1554,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   await signAll(rdSent.envelopeId, ["Rita Principal RD", "Rui Segundo RD"]);
   await waitFor(() => rd.deals[RD_DEAL].custom_fields.estado_calasign === "Assinado" && rd.notes.length === 1, "write-back «Assinado» + anotação");
   assert(rd.refreshes >= 1 && rd.staleRefresh === 0, `RD Station: refresh con el refresh token vigente (${rd.refreshes}/${rd.staleRefresh})`);
-  assert(rd.files.length === 1 && rd.files[0].pdf && rd.files[0].field && rd.files[0].dealId === RD_DEAL, "PDF sellado en Anexos de la negociação (data[file])");
+  assert(
+    rd.files.length === 1 && rd.files[0].pdf && rd.files[0].field && rd.files[0].dealId === RD_DEAL,
+    "PDF sellado en Anexos de la negociação (data[file])",
+  );
   const rdNote = rd.notes[0].data?.description ?? "";
   assert(/SHA-256/.test(rdNote) && rdNote.includes(`/app/envelopes/${rdSent.envelopeId}`), "anotação con hash y link");
   step("RD Station CRM: firmado → token refrescado, estado «Assinado», PDF en Anexos y anotação con hash y link");
@@ -1268,8 +1583,14 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   const { authorizeUrl: kmAuth } = await api("POST", "/v1/crm/oauth/kommo/start", { name: "Kommo malo" });
   const kmState = new URL(kmAuth).searchParams.get("state");
   const tokensBefore = km.tokens;
-  const evil = await fetch(`${BASE}/v1/crm/oauth/kommo/callback?code=km-code-y&state=${encodeURIComponent(kmState)}&referer=evil.test`, { headers: { cookie }, redirect: "manual" });
-  assert((evil.headers.get("location") ?? "").includes("error=token_exchange_failed") && km.tokens === tokensBefore, "referer ajeno a Kommo → rechazado sin pedir token");
+  const evil = await fetch(`${BASE}/v1/crm/oauth/kommo/callback?code=km-code-y&state=${encodeURIComponent(kmState)}&referer=evil.test`, {
+    headers: { cookie },
+    redirect: "manual",
+  });
+  assert(
+    (evil.headers.get("location") ?? "").includes("error=token_exchange_failed") && km.tokens === tokensBefore,
+    "referer ajeno a Kommo → rechazado sin pedir token",
+  );
   step("Kommo: OAuth con referer (token en el subdominio, JSON) y etiqueta; instalación sin state no conecta; referer ajeno rechazado");
 
   const kmMap = await api("POST", "/v1/crm/mappings", {
@@ -1286,9 +1607,18 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   });
   const kmSent = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "42", companyId: "31337" });
   const kmDet = await api("GET", `/v1/envelopes/${kmSent.envelopeId}`);
-  assert(kmDet.recipients.some((r) => r.name === "Karla Principal KM" && r.email === "karla.km@cliente.test"), "contacto principal del lead como Cliente");
-  assert(kmDet.recipients.some((r) => r.name === "Kike Otro KM"), "otro contacto del lead como Vendedor");
-  assert(kmDet.fields.some((f) => f.label === "Monto" && f.value === "5200"), "monto prellenado desde price");
+  assert(
+    kmDet.recipients.some((r) => r.name === "Karla Principal KM" && r.email === "karla.km@cliente.test"),
+    "contacto principal del lead como Cliente",
+  );
+  assert(
+    kmDet.recipients.some((r) => r.name === "Kike Otro KM"),
+    "otro contacto del lead como Vendedor",
+  );
+  assert(
+    kmDet.fields.some((f) => f.label === "Monto" && f.value === "5200"),
+    "monto prellenado desde price",
+  );
   await waitFor(() => km.leads[42].custom[501]?.enum_id === 9001, "write-back «Enviado» (enum 9001) en Kommo");
   step("Kommo: envío desde el lead 42 (contacto principal + otro, monto) y write-back en un campo de lista");
 
@@ -1298,8 +1628,15 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   assert(km.refreshes >= 1, "Kommo: se refrescó el token");
   assert(km.files.length === 1 && km.files[0].pdf, "PDF sellado subido al drive");
   assert(km.linked.length === 1 && km.linked[0].leadId === "42" && km.linked[0].files[0].file_uuid === km.files[0].uuid, "archivo vinculado al lead");
-  assert(km.notes[0].entity_id === 42 && /SHA-256/.test(km.notes[0].params.text) && km.notes[0].params.text.includes(`/app/envelopes/${kmSent.envelopeId}`), "nota con hash y link en el lead");
-  step(`Kommo: firmado → token refrescado, estado «Firmado», PDF por la Files API (${km.files[0].parts} parte/s) vinculado al lead y nota con hash y link`);
+  assert(
+    km.notes[0].entity_id === 42 &&
+      /SHA-256/.test(km.notes[0].params.text) &&
+      km.notes[0].params.text.includes(`/app/envelopes/${kmSent.envelopeId}`),
+    "nota con hash y link en el lead",
+  );
+  step(
+    `Kommo: firmado → token refrescado, estado «Firmado», PDF por la Files API (${km.files[0].parts} parte/s) vinculado al lead y nota con hash y link`,
+  );
 
   const kmMissing = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "999", companyId: "31337" }, { expect: 404 });
   assert(kmMissing.error.code === "crm_record_not_found", "lead inexistente (204) → 404");
@@ -1307,12 +1644,34 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
 }
 
 // ── ERP: Siigo y Alegra por token ──
-await api("POST", "/v1/crm/connections", { provider: "siigo", name: "Siigo", username: "api@acme.test", accessKey: "mala-clave-123" }, { expect: 400 });
-const sgConn = await api("POST", "/v1/crm/connections", { provider: "siigo", name: "Siigo ACME", username: "api@acme.test", accessKey: "siigo-access-key" });
+await api(
+  "POST",
+  "/v1/crm/connections",
+  { provider: "siigo", name: "Siigo", username: "api@acme.test", accessKey: "mala-clave-123" },
+  { expect: 400 },
+);
+const sgConn = await api("POST", "/v1/crm/connections", {
+  provider: "siigo",
+  name: "Siigo ACME",
+  username: "api@acme.test",
+  accessKey: "siigo-access-key",
+});
 const alConn = await api("POST", "/v1/crm/connections", { provider: "alegra", name: "Alegra ACME", email: "admin@acme.test", token: "alegra-token" });
 await api("POST", "/v1/crm/mappings", { connectionId: sgConn.id, name: "x", objectType: "customer", trigger: "manual" }, { expect: 400 });
-await api("POST", "/v1/crm/mappings", { connectionId: sgConn.id, name: "Clientes Siigo", objectType: "customer", trigger: "on_completion", triggerConfig: { matchBy: "recipient_id_document", templateId: template.id } });
-await api("POST", "/v1/crm/mappings", { connectionId: alConn.id, name: "Contactos Alegra", objectType: "contact", trigger: "on_completion", triggerConfig: { matchBy: "recipient_id_document" } });
+await api("POST", "/v1/crm/mappings", {
+  connectionId: sgConn.id,
+  name: "Clientes Siigo",
+  objectType: "customer",
+  trigger: "on_completion",
+  triggerConfig: { matchBy: "recipient_id_document", templateId: template.id },
+});
+await api("POST", "/v1/crm/mappings", {
+  connectionId: alConn.id,
+  name: "Contactos Alegra",
+  objectType: "contact",
+  trigger: "on_completion",
+  triggerConfig: { matchBy: "recipient_id_document" },
+});
 step("ERP: conexiones Siigo (clave inválida rechazada) y Alegra probadas al crearlas; mapeos al completarse");
 
 const cliente = `Cliente ERP ${stamp}`;
@@ -1325,25 +1684,48 @@ const erpEnv = await api("POST", "/v1/envelopes/from-template", {
   ],
 });
 await signAll(erpEnv.envelope.id, [cliente, vendedorErp]);
-const sgRun = await waitFor(async () => (await api("GET", `/v1/crm/runs?envelopeId=${erpEnv.envelope.id}`)).items.find((r) => r.connectionId === sgConn.id && r.status === "succeeded"), "Siigo (con un reintento)", 40_000);
+const sgRun = await waitFor(
+  async () =>
+    (await api("GET", `/v1/crm/runs?envelopeId=${erpEnv.envelope.id}`)).items.find((r) => r.connectionId === sgConn.id && r.status === "succeeded"),
+  "Siigo (con un reintento)",
+  40_000,
+);
 assert(sgRun.attempts >= 2, "Siigo: falló una vez (500) y la cola reintentó");
-assert(sg.puts.length === 1 && sg.puts[0].comments.startsWith("Cliente VIP\nCalaSign:") && !("id" in sg.puts[0]), "comments del cliente con la referencia, sin pisar lo anterior");
+assert(
+  sg.puts.length === 1 && sg.puts[0].comments.startsWith("Cliente VIP\nCalaSign:") && !("id" in sg.puts[0]),
+  "comments del cliente con la referencia, sin pisar lo anterior",
+);
 await waitFor(() => al.attachments.some((a) => a.kind === "contacts" && a.id === "55" && a.pdf), "adjunto al contacto de Alegra");
 step("ERP: al completarse se busca por identificación; Siigo reintenta tras un 500 y agrega la referencia; Alegra recibe el PDF");
 
 // ── Vínculo manual + token revocado + reintento manual ──
 al.revoked = true;
 const link = await api("POST", "/v1/crm/links", { connectionId: alConn.id, envelopeId: sent.envelopeId, objectType: "invoice", objectId: "777" });
-const failed = await waitFor(async () => (await api("GET", `/v1/crm/runs?envelopeId=${sent.envelopeId}`)).items.find((r) => r.connectionId === alConn.id && r.objectId === "777" && r.status === "failed"), "error de credenciales");
+const failed = await waitFor(
+  async () =>
+    (await api("GET", `/v1/crm/runs?envelopeId=${sent.envelopeId}`)).items.find(
+      (r) => r.connectionId === alConn.id && r.objectId === "777" && r.status === "failed",
+    ),
+  "error de credenciales",
+);
 assert(/volver a conectarla|HTTP 401/.test(failed.error ?? ""), `error de credenciales visible (${failed.error})`);
 const conns = (await api("GET", "/v1/crm/connections")).items;
 assert(conns.find((c) => c.id === alConn.id).lastError, "la conexión muestra el último error");
 await sleep(1500);
-assert((await api("GET", `/v1/crm/runs?envelopeId=${sent.envelopeId}`)).items.find((r) => r.id === failed.id).attempts === 1, "sin acceso: no se reintenta solo");
+assert(
+  (await api("GET", `/v1/crm/runs?envelopeId=${sent.envelopeId}`)).items.find((r) => r.id === failed.id).attempts === 1,
+  "sin acceso: no se reintenta solo",
+);
 al.revoked = false;
 await api("POST", `/v1/crm/runs/${failed.id}/retry`, {}, { expect: 202 });
-await waitFor(async () => (await api("GET", `/v1/crm/runs?envelopeId=${sent.envelopeId}`)).items.find((r) => r.id === failed.id)?.status === "succeeded", "reintento manual");
-assert(al.attachments.some((a) => a.kind === "invoices" && a.id === "777"), "factura con el PDF");
+await waitFor(
+  async () => (await api("GET", `/v1/crm/runs?envelopeId=${sent.envelopeId}`)).items.find((r) => r.id === failed.id)?.status === "succeeded",
+  "reintento manual",
+);
+assert(
+  al.attachments.some((a) => a.kind === "invoices" && a.id === "777"),
+  "factura con el PDF",
+);
 assert(link.objectType === "invoice", "vínculo manual");
 step("Vínculo manual a una factura de Alegra: credenciales rechazadas → error visible, sin reintento automático; reintento manual OK");
 

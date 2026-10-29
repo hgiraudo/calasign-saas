@@ -16,8 +16,8 @@ function calasignTemplateForm(schema) {
       spec: [
         { name: "name", label: "Name", type: "text", required: true },
         { name: "email", label: "Email", type: "email" },
-        { name: "phone", label: "Phone (WhatsApp, E.164)", type: "text" }
-      ]
+        { name: "phone", label: "Phone (WhatsApp, E.164)", type: "text" },
+      ],
     });
   }
   for (i = 0; i < (schema.fields || []).length; i++) {
@@ -48,7 +48,7 @@ function calasignRecipients(signers, sequential) {
       name: s.name,
       email: s.email || null,
       phone: s.phone || null,
-      channels: s.email ? ["email"] : ["whatsapp"]
+      channels: s.email ? ["email"] : ["whatsapp"],
     });
   }
   return out;
@@ -63,7 +63,12 @@ function calasignFields(recipients, documentId, pageCount, placement) {
   var rows = Math.ceil(signers.length / 2);
   for (i = 0; i < signers.length; i++) {
     if (placement === "anchors") {
-      out.push({ documentId: documentId, recipientId: signers[i].id, type: "signature", anchor: { text: "\\firma" + (i + 1) + "\\", offsetX: 0, offsetY: 0, width: 150, height: 40 } });
+      out.push({
+        documentId: documentId,
+        recipientId: signers[i].id,
+        type: "signature",
+        anchor: { text: "\\firma" + (i + 1) + "\\", offsetX: 0, offsetY: 0, width: 150, height: 40 },
+      });
     } else {
       var row = Math.floor(i / 2);
       var y = Math.max(0.02, 0.93 - (rows - row) * (0.06 + 0.025));
@@ -75,7 +80,7 @@ function calasignFields(recipients, documentId, pageCount, placement) {
         x: i % 2 === 0 ? 0.07 : 0.53,
         y: Math.round(y * 10000) / 10000,
         width: 0.4,
-        height: 0.06
+        height: 0.06,
       });
     }
   }
@@ -102,7 +107,7 @@ function calasignFlattenEvent(ev) {
     recipient_name: r ? r.name : null,
     recipient_email: r ? r.email : null,
     reason: (ev.data && ev.data.reason) || null,
-    recipients: env.recipients || []
+    recipients: env.recipients || [],
   };
 }
 
@@ -156,7 +161,6 @@ function calasignShouldSend(status, send) {
   return status === "draft" && send !== false;
 }
 
-
 /**
  * ¿Se acepta la entrega del webhook? Descarta webhook.test y verifica `CalaSign-Signature: t=<unix>,v1=<hex>[,v1=…]`
  * (HMAC-SHA256 del secreto sobre "<t>.<cuerpo>"; durante una rotación llegan dos v1). A diferencia de Zapier y n8n NO
@@ -182,7 +186,13 @@ function calasignAcceptEvent(body, headers, secret) {
     if (k < 0) continue;
     var name = parts[i].slice(0, k).trim();
     if (name === "t") t = parts[i].slice(k + 1).trim();
-    else if (name === "v1") v1.push(parts[i].slice(k + 1).trim().toLowerCase());
+    else if (name === "v1")
+      v1.push(
+        parts[i]
+          .slice(k + 1)
+          .trim()
+          .toLowerCase(),
+      );
   }
   if (!t || !v1.length || !isFinite(Number(t))) return false;
   // HMAC-SHA256 en ES5 (el sandbox de Make no tiene crypto).
@@ -192,7 +202,14 @@ function calasignAcceptEvent(body, headers, secret) {
     for (var n = 0; n < str.length; n++) out.push(str.charCodeAt(n));
     return out;
   }
-  var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  var K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
   function sha256(bytes) {
     var H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
     var m = bytes.slice();
@@ -210,16 +227,36 @@ function calasignAcceptEvent(body, headers, secret) {
         var s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
         w[a] = (w[a - 16] + s0 + w[a - 7] + s1) | 0;
       }
-      var A = H[0], B = H[1], C = H[2], D = H[3], E = H[4], F = H[5], G = H[6], I = H[7];
+      var A = H[0],
+        B = H[1],
+        C = H[2],
+        D = H[3],
+        E = H[4],
+        F = H[5],
+        G = H[6],
+        I = H[7];
       for (a = 0; a < 64; a++) {
         var S1 = ((E >>> 6) | (E << 26)) ^ ((E >>> 11) | (E << 21)) ^ ((E >>> 25) | (E << 7));
         var t1 = (I + S1 + ((E & F) ^ (~E & G)) + K[a] + w[a]) | 0;
         var S0 = ((A >>> 2) | (A << 30)) ^ ((A >>> 13) | (A << 19)) ^ ((A >>> 22) | (A << 10));
         var t2 = (S0 + ((A & B) ^ (A & C) ^ (B & C))) | 0;
-        I = G; G = F; F = E; E = (D + t1) | 0; D = C; C = B; B = A; A = (t1 + t2) | 0;
+        I = G;
+        G = F;
+        F = E;
+        E = (D + t1) | 0;
+        D = C;
+        C = B;
+        B = A;
+        A = (t1 + t2) | 0;
       }
-      H[0] = (H[0] + A) | 0; H[1] = (H[1] + B) | 0; H[2] = (H[2] + C) | 0; H[3] = (H[3] + D) | 0;
-      H[4] = (H[4] + E) | 0; H[5] = (H[5] + F) | 0; H[6] = (H[6] + G) | 0; H[7] = (H[7] + I) | 0;
+      H[0] = (H[0] + A) | 0;
+      H[1] = (H[1] + B) | 0;
+      H[2] = (H[2] + C) | 0;
+      H[3] = (H[3] + D) | 0;
+      H[4] = (H[4] + E) | 0;
+      H[5] = (H[5] + F) | 0;
+      H[6] = (H[6] + G) | 0;
+      H[7] = (H[7] + I) | 0;
     }
     var out = [];
     for (a = 0; a < 8; a++) out.push((H[a] >>> 24) & 0xff, (H[a] >>> 16) & 0xff, (H[a] >>> 8) & 0xff, H[a] & 0xff);
@@ -255,7 +292,8 @@ function calasignAcceptEvent(body, headers, secret) {
 function calasignErrorType(statusCode, headers, body) {
   var code = body && body.error ? body.error.code : null;
   var h = headers || {};
-  if (statusCode === 429 && (h["retry-after"] || h["Retry-After"] || !code || code === "rate_limited" || code === "bad_request")) return "RateLimitError";
+  if (statusCode === 429 && (h["retry-after"] || h["Retry-After"] || !code || code === "rate_limited" || code === "bad_request"))
+    return "RateLimitError";
   if (statusCode === 409 && code === "idempotency_in_progress") return "ConnectionError";
   if (statusCode === 401) return "InvalidAccessTokenError";
   return "RuntimeError";

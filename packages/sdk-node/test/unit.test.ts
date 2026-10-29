@@ -63,7 +63,9 @@ describe("expectedUpdatedAt y void", () => {
   it("con expectedUpdatedAt no reintenta un PUT ante red/5xx, pero sí ante 503", async () => {
     const f = fakeFetch([new TypeError("fetch failed")]);
     const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 2 });
-    await expect(cs.envelopes.setFields("e1", [], { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" })).rejects.toMatchObject({ code: "network_error" });
+    await expect(cs.envelopes.setFields("e1", [], { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" })).rejects.toMatchObject({
+      code: "network_error",
+    });
     expect(f.calls).toHaveLength(1);
     const g = fakeFetch([json(500, { error: { code: "internal", message: "x" } })]);
     const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 2 });
@@ -86,7 +88,11 @@ describe("expectedUpdatedAt y void", () => {
     const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 2 });
     await expect(cs.envelopes.void("e1", "r")).rejects.toMatchObject({ code: "not_voidable" });
     expect(f.calls).toHaveLength(2);
-    const g = fakeFetch([json(502, {}, { "retry-after": "0.01" }), json(409, { error: { code: "not_voidable", message: "x" } }), json(200, { envelope: { id: "e1", status: "voided" } })]);
+    const g = fakeFetch([
+      json(502, {}, { "retry-after": "0.01" }),
+      json(409, { error: { code: "not_voidable", message: "x" } }),
+      json(200, { envelope: { id: "e1", status: "voided" } }),
+    ]);
     const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 2 });
     const d = await cs2.envelopes.void("e1", "r");
     expect(d.envelope.status).toBe("voided");
@@ -96,10 +102,7 @@ describe("expectedUpdatedAt y void", () => {
 
 describe("paginación", () => {
   it("iterate recorre todas las páginas con el cursor", async () => {
-    const f = fakeFetch([
-      json(200, { items: [{ id: "a" }, { id: "b" }], nextCursor: "c1" }),
-      json(200, { items: [{ id: "c" }], nextCursor: null }),
-    ]);
+    const f = fakeFetch([json(200, { items: [{ id: "a" }, { id: "b" }], nextCursor: "c1" }), json(200, { items: [{ id: "c" }], nextCursor: null })]);
     const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
     const ids: string[] = [];
     for await (const e of cs.envelopes.iterate({ status: ["sent", "completed"], limit: 2 })) ids.push(e.id);
@@ -260,7 +263,6 @@ describe("ampliaciones de la API", () => {
   });
 });
 
-
 describe("idempotencia en curso, descargas y respuestas raras", () => {
   it("las esperas por idempotency_in_progress no gastan maxRetries; el error lleva la Idempotency-Key", async () => {
     const busy = () => json(409, { error: { code: "idempotency_in_progress", message: "en curso" } });
@@ -284,7 +286,10 @@ describe("idempotencia en curso, descargas y respuestas raras", () => {
 
   it("un corte al leer una descarga se reintenta en el GET y si no, es network_error", async () => {
     const broken = () =>
-      new Response(new ReadableStream({ start: (c) => c.error(new TypeError("terminated")) }), { status: 200, headers: { "content-type": "application/pdf" } });
+      new Response(new ReadableStream({ start: (c) => c.error(new TypeError("terminated")) }), {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      });
     const f = fakeFetch([broken(), new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "application/pdf" } })]);
     const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 1 });
     expect(Array.from(await cs.envelopes.downloadSigned("e1"))).toEqual([1, 2, 3]);
@@ -313,7 +318,11 @@ describe("idempotencia en curso, descargas y respuestas raras", () => {
 
 describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
   const wrongCell = (baseUrl: string | null) =>
-    json(421, { error: { code: "wrong_cell", message: "otra región", details: { cell: "eu", baseUrl } } }, baseUrl ? { location: `${baseUrl}/v1/x` } : {});
+    json(
+      421,
+      { error: { code: "wrong_cell", message: "otra región", details: { cell: "eu", baseUrl } } },
+      baseUrl ? { location: `${baseUrl}/v1/x` } : {},
+    );
 
   it("reintenta una vez contra details.baseUrl (también un POST sin idempotencia) y la recuerda", async () => {
     const f = fakeFetch([wrongCell("https://eu.calasign.com/"), json(200, { notified: 1 }), json(200, { items: [], nextCursor: null })]);
@@ -353,7 +362,12 @@ describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
 
   it("pedidos concurrentes que reciben 421: el segundo reintenta contra la celda aunque el primero ya la cambió", async () => {
     // Los dos pedidos salen contra la celda original antes de que llegue el primer 421.
-    const responses = [wrongCell("https://eu.calasign.com"), wrongCell("https://eu.calasign.com"), json(200, { envelope: { id: "e1" } }), json(200, { envelope: { id: "e2" } })];
+    const responses = [
+      wrongCell("https://eu.calasign.com"),
+      wrongCell("https://eu.calasign.com"),
+      json(200, { envelope: { id: "e1" } }),
+      json(200, { envelope: { id: "e2" } }),
+    ];
     const calls: string[] = [];
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
@@ -420,7 +434,12 @@ describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
       json(200, { access_token: "t2", expires_in: 3600 }),
       json(200, { envelope: { id: "e1" } }),
     ]);
-    const cs4 = new CalaSign({ oauth: { clientId: "c", clientSecret: "s" }, baseUrl: "https://api.calasign.com", fetch: h.fn, allowedCellHosts: ["eu.calasign-cloud.net"] });
+    const cs4 = new CalaSign({
+      oauth: { clientId: "c", clientSecret: "s" },
+      baseUrl: "https://api.calasign.com",
+      fetch: h.fn,
+      allowedCellHosts: ["eu.calasign-cloud.net"],
+    });
     await cs4.envelopes.get("e1");
     await cs4.envelopes.get("e1");
     expect(h.calls.map((c) => c.url)).toEqual([

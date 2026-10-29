@@ -16,6 +16,8 @@ export async function build(ctx) {
   for (const f of files) if (f.name.endsWith(".json")) JSON.parse(f.data.toString("utf8"));
   return {
     files,
-    artifacts: [{ name: "calasign-power-automate-connector.zip", entries: files, description: "Power Automate / Logic Apps: conector personalizado (zip)" }],
+    artifacts: [
+      { name: "calasign-power-automate-connector.zip", entries: files, description: "Power Automate / Logic Apps: conector personalizado (zip)" },
+    ],
   };
 }

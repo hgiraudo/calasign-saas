@@ -292,7 +292,7 @@ async function regenerateAppearances(doc: PDFDocument, acro: PDFDict, strict: bo
   for (const field of fields) {
     if (!(field instanceof PDFTextField || field instanceof PDFDropdown || field instanceof PDFOptionList)) continue;
     try {
-      const value = field instanceof PDFTextField ? field.getText() ?? "" : field.getSelected().join("");
+      const value = field instanceof PDFTextField ? (field.getText() ?? "") : field.getSelected().join("");
       const missing = field.acroField.getWidgets().some((w) => !(w.getAppearances()?.normal instanceof PDFStream));
       if (!need && !(missing && value)) continue;
       font ??= await doc.embedFont(StandardFonts.Helvetica);
@@ -472,7 +472,8 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
 const A85_INLINE = /\/(?:F|Filter)\s*(?:\[\s*)?\/(?:A85|ASCII85Decode)(?![^\s\/\[\]<>()%{}])/;
 
 const isWhite = (c: number) => c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
-const isDelim = (c: number) => c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
+const isDelim = (c: number) =>
+  c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
 
 /**
  * Secuencias de contenido marcado (BDC/BMC) que un content stream abre y no cierra con EMC. Tokeniza lo justo: saltea
@@ -547,7 +548,12 @@ export function unclosedMarkedContent(data: Uint8Array): number {
         inlineStart = -1;
         while (
           i < n &&
-          !(data[i] === 0x45 && data[i + 1] === 0x49 && (isWhite(data[i - 1]) || i === a85End) && (i + 2 >= n || isWhite(data[i + 2]) || isDelim(data[i + 2])))
+          !(
+            data[i] === 0x45 &&
+            data[i + 1] === 0x49 &&
+            (isWhite(data[i - 1]) || i === a85End) &&
+            (i + 2 >= n || isWhite(data[i + 2]) || isDelim(data[i + 2]))
+          )
         ) {
           i++;
         }
@@ -631,7 +637,9 @@ function undoPredictor(ctx: PDFContext, parms: PDFDict, data: Uint8Array, predic
       else if (type === 2) p = b;
       else if (type === 3) p = (a + b) >> 1;
       else if (type === 4) {
-        const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+        const pa = Math.abs(b - c),
+          pb = Math.abs(a - c),
+          pc = Math.abs(a + b - 2 * c);
         p = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
       } else if (type !== 0) return out.subarray(0, o); // tipo de fila inválido: pdf.js deja de leer ahí
       row[i] = (raw[i] + p) & 0xff;
@@ -797,7 +805,12 @@ export function closeMarkedContent(doc: PDFDocument): void {
     if (missing > 0) {
       page.node.set(
         N("Contents"),
-        ctx.obj([ctx.getPushGraphicsStateContentStream(), ...refs, ctx.getPopGraphicsStateContentStream(), ctx.register(ctx.flateStream("EMC\n".repeat(missing)))]),
+        ctx.obj([
+          ctx.getPushGraphicsStateContentStream(),
+          ...refs,
+          ctx.getPopGraphicsStateContentStream(),
+          ctx.register(ctx.flateStream("EMC\n".repeat(missing))),
+        ]),
       );
     }
   }

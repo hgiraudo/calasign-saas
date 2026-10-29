@@ -67,7 +67,8 @@ export function NegotiationsPage() {
                   </td>
                   <td className="small">{ta("neg.version", { n: n.currentVersion })}</td>
                   <td className="small">
-                    {n.pendingProposals > 0 && <span className="badge badge-expired">{n.pendingProposals} ✎</span>} {n.openComments > 0 && <span className="badge">{n.openComments} 💬</span>}
+                    {n.pendingProposals > 0 && <span className="badge badge-expired">{n.pendingProposals} ✎</span>}{" "}
+                    {n.openComments > 0 && <span className="badge">{n.openComments} 💬</span>}
                   </td>
                   <td>
                     <NegStatus status={n.status} />
@@ -79,12 +80,22 @@ export function NegotiationsPage() {
           </table>
         </div>
       )}
-      {creating && <CreateNegotiationModal kind={creating} onClose={() => setCreating(null)} onCreated={(v) => nav(`/app/negotiations/${v.negotiation.id}`)} />}
+      {creating && (
+        <CreateNegotiationModal kind={creating} onClose={() => setCreating(null)} onCreated={(v) => nav(`/app/negotiations/${v.negotiation.id}`)} />
+      )}
     </div>
   );
 }
 
-function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template" | "pdf"; onClose: () => void; onCreated: (v: NegotiationView) => void }) {
+function CreateNegotiationModal({
+  kind,
+  onClose,
+  onCreated,
+}: {
+  kind: "template" | "pdf";
+  onClose: () => void;
+  onCreated: (v: NegotiationView) => void;
+}) {
   const ta = useAgrText();
   const { t } = useI18n();
   const [templates, setTemplates] = useState<DocumentTemplateSummary[]>([]);
@@ -118,7 +129,9 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const parts = participants.filter((p) => p.name.trim() && p.email.trim()).map((p) => ({ name: p.name.trim(), email: p.email.trim(), role: p.role.trim() || null }));
+    const parts = participants
+      .filter((p) => p.name.trim() && p.email.trim())
+      .map((p) => ({ name: p.name.trim(), email: p.email.trim(), role: p.role.trim() || null }));
     try {
       if (kind === "pdf") {
         if (!file) return;
@@ -193,7 +206,11 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
             </label>
             <label className="field">
               <span>{ta("neg.negotiable")}</span>
-              <input value={negotiable} onChange={(e) => setNegotiable(e.target.value)} placeholder={tpl?.analysis?.variables.slice(0, 3).join(", ")} />
+              <input
+                value={negotiable}
+                onChange={(e) => setNegotiable(e.target.value)}
+                placeholder={tpl?.analysis?.variables.slice(0, 3).join(", ")}
+              />
             </label>
           </>
         )}
@@ -201,7 +218,13 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
           <legend>{ta("neg.participants")}</legend>
           {participants.map((p, i) => (
             <div key={i} className="agr-subrow">
-              <input aria-label={ta("ag.name")} placeholder={ta("ag.name")} value={p.name} onChange={(e) => setParticipants(participants.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} required />
+              <input
+                aria-label={ta("ag.name")}
+                placeholder={ta("ag.name")}
+                value={p.name}
+                onChange={(e) => setParticipants(participants.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                required
+              />
               <input
                 aria-label={ta("ag.email")}
                 placeholder={ta("ag.email")}
@@ -211,7 +234,11 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
                 required
               />
               {kind === "template" && (
-                <select aria-label={ta("neg.role")} value={p.role} onChange={(e) => setParticipants(participants.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)))}>
+                <select
+                  aria-label={ta("neg.role")}
+                  value={p.role}
+                  onChange={(e) => setParticipants(participants.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)))}
+                >
                   <option value="">—</option>
                   {(tpl?.analysis?.roles ?? []).map((r) => (
                     <option key={r}>{r}</option>
@@ -220,7 +247,12 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
               )}
               {/* Nombre y correo son obligatorios: una fila agregada de más bloqueaba el alta y no había forma de quitarla. */}
               {participants.length > 1 && (
-                <button type="button" className="btn btn-sm btn-ghost" aria-label={t("common.delete")} onClick={() => setParticipants(participants.filter((_, j) => j !== i))}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  aria-label={t("common.delete")}
+                  onClick={() => setParticipants(participants.filter((_, j) => j !== i))}
+                >
                   ×
                 </button>
               )}
@@ -418,14 +450,26 @@ export function NegotiationPanel({
                 className="stack"
                 onSubmit={async (e) => {
                   e.preventDefault();
-                  const v = await call("/comments", { body: comment.trim(), quote: sel?.quote ?? null, start: sel?.start ?? null, end: sel?.end ?? null, expectedVersion: n.currentVersion });
+                  const v = await call("/comments", {
+                    body: comment.trim(),
+                    quote: sel?.quote ?? null,
+                    start: sel?.start ?? null,
+                    end: sel?.end ?? null,
+                    expectedVersion: n.currentVersion,
+                  });
                   if (v) {
                     setComment("");
                     setSel(null);
                   }
                 }}
               >
-                <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} placeholder={ta("neg.commentPlaceholder")} aria-label={ta("neg.commentPlaceholder")} />
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  rows={2}
+                  placeholder={ta("neg.commentPlaceholder")}
+                  aria-label={ta("neg.commentPlaceholder")}
+                />
                 <div className="row-end">
                   <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !comment.trim()}>
                     {sel ? ta("neg.commentOnSelection") : ta("neg.send")}
@@ -448,7 +492,11 @@ export function NegotiationPanel({
                   <div>{c.body}</div>
                   {mode === "sender" && open && (
                     <div className="row-end">
-                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => call(`/comments/${c.id}`, { resolved: !c.resolved }, "PATCH")}>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => call(`/comments/${c.id}`, { resolved: !c.resolved }, "PATCH")}
+                      >
                         {c.resolved ? ta("neg.reopen") : ta("neg.resolve")}
                       </button>
                     </div>
@@ -460,11 +508,15 @@ export function NegotiationPanel({
           <div className="card pad stack">
             <div className="row-between">
               <strong>{ta("neg.proposals")}</strong>
-              {mode === "participant" && open && n.source === "template" && view.me?.canPropose && (view.variables.length > 0 || view.clauses.length > 0) && (
-                <button type="button" className="btn btn-sm" onClick={() => setProposing(true)}>
-                  {ta("neg.propose")}
-                </button>
-              )}
+              {mode === "participant" &&
+                open &&
+                n.source === "template" &&
+                view.me?.canPropose &&
+                (view.variables.length > 0 || view.clauses.length > 0) && (
+                  <button type="button" className="btn btn-sm" onClick={() => setProposing(true)}>
+                    {ta("neg.propose")}
+                  </button>
+                )}
             </div>
             {view.proposals.length === 0 && <span className="muted small">{ta("neg.noProposals")}</span>}
             {view.proposals.map((p) => (
@@ -473,22 +525,41 @@ export function NegotiationPanel({
                   <span>
                     <strong>{p.author.name}</strong> · <code>{p.kind === "clause" ? ta("neg.clauseKey", { key: p.key }) : p.key}</code>
                   </span>
-                  <span className={`badge ${p.status === "accepted" ? "badge-completed" : p.status === "rejected" ? "badge-declined" : "badge-expired"}`}>{ta(`neg.${p.status}` as AgreementsTextKey)}</span>
+                  <span
+                    className={`badge ${p.status === "accepted" ? "badge-completed" : p.status === "rejected" ? "badge-declined" : "badge-expired"}`}
+                  >
+                    {ta(`neg.${p.status}` as AgreementsTextKey)}
+                  </span>
                 </div>
                 {p.kind === "variable" ? (
                   <div>
                     <span className="agr-old">{p.oldValue || "—"}</span> → <span className="agr-new">{p.newValue}</span>
                   </div>
                 ) : (
-                  <DiffView parts={[{ op: "del", text: p.oldValue }, { op: "ins", text: `\n${p.newValue}` }]} />
+                  <DiffView
+                    parts={[
+                      { op: "del", text: p.oldValue },
+                      { op: "ins", text: `\n${p.newValue}` },
+                    ]}
+                  />
                 )}
                 {p.comment && <div className="muted">“{p.comment}”</div>}
                 {mode === "sender" && view.canManage !== false && open && p.status === "pending" && (
                   <div className="row-wrap">
-                    <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => call(`/proposals/${p.id}/decision`, { accept: true })}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={busy}
+                      onClick={() => call(`/proposals/${p.id}/decision`, { accept: true })}
+                    >
                       {ta("neg.accept")}
                     </button>
-                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => call(`/proposals/${p.id}/decision`, { accept: false })}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() => call(`/proposals/${p.id}/decision`, { accept: false })}
+                    >
                       {ta("neg.reject")}
                     </button>
                   </div>
@@ -583,7 +654,8 @@ function ProposeModal({
   const { t } = useI18n();
   const [kind, setKind] = useState<"variable" | "clause">(view.variables.length ? "variable" : "clause");
   const [key, setKey] = useState(view.variables[0]?.path ?? view.clauses[0]?.slug ?? "");
-  const current = kind === "variable" ? view.variables.find((v) => v.path === key)?.value ?? "" : view.clauses.find((c) => c.slug === key)?.text ?? "";
+  const current =
+    kind === "variable" ? (view.variables.find((v) => v.path === key)?.value ?? "") : (view.clauses.find((c) => c.slug === key)?.text ?? "");
   const [value, setValue] = useState(current);
   const [reason, setReason] = useState("");
   useEffect(() => setValue(current), [kind, key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -626,14 +698,22 @@ function ProposeModal({
             </button>
           )}
         </div>
-        <select value={key} onChange={(e) => setKey(e.target.value)} aria-label={kind === "variable" ? ta("neg.proposeVariable") : ta("neg.proposeClause")}>
+        <select
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          aria-label={kind === "variable" ? ta("neg.proposeVariable") : ta("neg.proposeClause")}
+        >
           {(kind === "variable" ? view.variables.map((v) => v.path) : view.clauses.map((c) => c.slug)).map((k) => (
             <option key={k}>{k}</option>
           ))}
         </select>
         <label className="field">
           <span>{ta("neg.newValue")}</span>
-          {kind === "clause" ? <textarea className="agr-json" value={value} onChange={(e) => setValue(e.target.value)} rows={8} /> : <input value={value} onChange={(e) => setValue(e.target.value)} />}
+          {kind === "clause" ? (
+            <textarea className="agr-json" value={value} onChange={(e) => setValue(e.target.value)} rows={8} />
+          ) : (
+            <input value={value} onChange={(e) => setValue(e.target.value)} />
+          )}
         </label>
         <label className="field">
           <span>{ta("neg.reason")}</span>

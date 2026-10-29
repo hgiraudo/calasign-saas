@@ -72,7 +72,8 @@ export interface ResolvedBrand {
 
 // ───────────────────────────── Combinación ─────────────────────────────
 
-const pick = <T>(over: T | null | undefined, base: T | null | undefined): T | null => (over !== undefined && over !== null && (over as unknown) !== "" ? over : base ?? null);
+const pick = <T>(over: T | null | undefined, base: T | null | undefined): T | null =>
+  over !== undefined && over !== null && (over as unknown) !== "" ? over : (base ?? null);
 
 /** Sub-marca sobre la marca por defecto: lo que la sub-marca no define (null o ausente) se hereda. */
 export function mergeConfig(base: BrandConfigInput, over: BrandConfigInput): BrandConfigInput {
@@ -128,7 +129,10 @@ export function defaultConfigOf(b: StoredTenantBranding): { config: BrandConfigI
 export async function brandBaseUrl(db: Db, tenantId: string, brandId: string | null | undefined): Promise<string> {
   // Sin dominios propios servidos en este entorno (CUSTOM_DOMAINS_SERVING), los links quedan en la plataforma.
   if (brandId && customDomainsServing()) {
-    const d = await db.one<{ domain: string }>(`SELECT domain FROM brand_domains WHERE brand_id = $1 AND tenant_id = $2 AND status = 'verified'`, [brandId, tenantId]);
+    const d = await db.one<{ domain: string }>(`SELECT domain FROM brand_domains WHERE brand_id = $1 AND tenant_id = $2 AND status = 'verified'`, [
+      brandId,
+      tenantId,
+    ]);
     if (d) return `https://${d.domain}`;
   }
   return tenantBaseUrl(db, tenantId);
@@ -165,7 +169,10 @@ export async function brandForHost(db: Db, host: string | undefined): Promise<Ho
     hostBrandCache.set(h, hit);
     return hit.value;
   }
-  const b = await db.one<{ tenant_id: string; brand_id: string }>(`SELECT tenant_id, brand_id FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [h]);
+  const b = await db.one<{ tenant_id: string; brand_id: string }>(
+    `SELECT tenant_id, brand_id FROM brand_domains WHERE domain = $1 AND status = 'verified'`,
+    [h],
+  );
   let value: HostBrand;
   if (b) value = { tenantId: b.tenant_id, brandId: b.brand_id };
   else {
@@ -183,8 +190,16 @@ export async function brandForHost(db: Db, host: string | undefined): Promise<Ho
 /**
  * Marca efectiva. `override`: configuración propia sin guardar (vista previa) en lugar de la guardada de esa marca.
  */
-export async function resolveBrand(db: Db, tenantId: string, brandId?: string | null, opts: { override?: BrandConfigInput } = {}): Promise<ResolvedBrand> {
-  const t = await db.one<{ slug: string; name: string; branding: StoredTenantBranding | null }>(`SELECT slug, name, branding FROM tenants WHERE id = $1`, [tenantId]);
+export async function resolveBrand(
+  db: Db,
+  tenantId: string,
+  brandId?: string | null,
+  opts: { override?: BrandConfigInput } = {},
+): Promise<ResolvedBrand> {
+  const t = await db.one<{ slug: string; name: string; branding: StoredTenantBranding | null }>(
+    `SELECT slug, name, branding FROM tenants WHERE id = $1`,
+    [tenantId],
+  );
   const stored = t?.branding ?? {};
   const isSub = Boolean(brandId && /^[0-9a-f-]{36}$/i.test(brandId));
   const def = defaultConfigOf(!isSub && opts.override ? { ...stored, whiteLabel: opts.override } : stored);
@@ -229,7 +244,7 @@ export async function resolveBrand(db: Db, tenantId: string, brandId?: string | 
     brandId: id,
     key: id ?? t?.slug ?? "",
     label,
-    name: cfg.displayName || (id ? label : t?.name ?? ""),
+    name: cfg.displayName || (id ? label : (t?.name ?? "")),
     orgName: t?.name ?? "",
     productName: cfg.productName ?? null,
     whiteLabel: Boolean(cfg.hidePoweredBy),

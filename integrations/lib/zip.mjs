@@ -56,7 +56,7 @@ export function makeZip(entries) {
     central.writeUInt16LE(0, 32); // comentario
     central.writeUInt16LE(0, 34); // disco
     central.writeUInt16LE(0, 36); // atributos internos
-    central.writeUInt32LE((((e.executable ? 0o100755 : 0o100644) << 16) >>> 0), 38);
+    central.writeUInt32LE(((e.executable ? 0o100755 : 0o100644) << 16) >>> 0, 38);
     central.writeUInt32LE(offset, 42);
     centrals.push(central, name);
 

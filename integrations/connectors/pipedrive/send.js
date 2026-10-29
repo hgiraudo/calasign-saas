@@ -18,8 +18,10 @@ var CalaSignPipedrive = (function () {
       noRecords: "Pipedrive no indicó ningún registro. Abrí esta acción desde un deal o una persona.",
       badResource: "Esta acción funciona desde Deals y Persons.",
       noMappings: "No hay mapeos activos de Pipedrive para este tipo de registro. Crealos en CalaSign → Ajustes → CRM y ERP.",
-      noAccount: "Pipedrive no indicó desde qué compañía se abrió la acción (companyId), así que no se ofrecen mapeos (podrían ser de otra compañía). Volvé a abrirla desde Pipedrive.",
-      accountUnknown: "Hay conexiones de Pipedrive sin su compañía guardada: sus mapeos no aparecen. Probá la conexión en CalaSign → Ajustes → CRM y ERP para habilitarla.",
+      noAccount:
+        "Pipedrive no indicó desde qué compañía se abrió la acción (companyId), así que no se ofrecen mapeos (podrían ser de otra compañía). Volvé a abrirla desde Pipedrive.",
+      accountUnknown:
+        "Hay conexiones de Pipedrive sin su compañía guardada: sus mapeos no aparecen. Probá la conexión en CalaSign → Ajustes → CRM y ERP para habilitarla.",
       mapping: "Mapeo (plantilla)",
       sendNow: "Enviar ya (si no, queda en borrador para revisarlo)",
       records: "Registros",
@@ -29,7 +31,8 @@ var CalaSignPipedrive = (function () {
       open: "Ver en CalaSign",
       failed: "No se pudo",
       settings: "Ajustes de CRM",
-      truncated: "Pipedrive mandó {total} registros y se envían como máximo 20 por vez: {n} quedan SIN enviar. Después, volvé a abrir la acción con los restantes.",
+      truncated:
+        "Pipedrive mandó {total} registros y se envían como máximo 20 por vez: {n} quedan SIN enviar. Después, volvé a abrir la acción con los restantes.",
     },
     en: {
       title: "Send for signature with CalaSign",
@@ -40,8 +43,10 @@ var CalaSignPipedrive = (function () {
       noRecords: "Pipedrive did not pass any record. Open this action from a deal or a person.",
       badResource: "This action works from Deals and Persons.",
       noMappings: "There are no active Pipedrive mappings for this record type. Create one in CalaSign → Settings → CRM and ERP.",
-      noAccount: "Pipedrive did not say which company the action was opened from (companyId), so no mappings are offered (they could belong to another company). Open it again from Pipedrive.",
-      accountUnknown: "Some Pipedrive connections have no stored company: their mappings are not shown. Test the connection in CalaSign → Settings → CRM and ERP to enable it.",
+      noAccount:
+        "Pipedrive did not say which company the action was opened from (companyId), so no mappings are offered (they could belong to another company). Open it again from Pipedrive.",
+      accountUnknown:
+        "Some Pipedrive connections have no stored company: their mappings are not shown. Test the connection in CalaSign → Settings → CRM and ERP to enable it.",
       mapping: "Mapping (template)",
       sendNow: "Send now (otherwise it stays as a draft to review)",
       records: "Records",
@@ -51,7 +56,8 @@ var CalaSignPipedrive = (function () {
       open: "Open in CalaSign",
       failed: "Failed",
       settings: "CRM settings",
-      truncated: "Pipedrive passed {total} records and at most 20 are sent at a time: {n} will NOT be sent. Afterwards, open the action again with the remaining ones.",
+      truncated:
+        "Pipedrive passed {total} records and at most 20 are sent at a time: {n} will NOT be sent. Afterwards, open the action again with the remaining ones.",
     },
     pt: {
       title: "Enviar para assinatura com CalaSign",
@@ -62,8 +68,10 @@ var CalaSignPipedrive = (function () {
       noRecords: "O Pipedrive não informou nenhum registro. Abra esta ação a partir de um deal ou de uma pessoa.",
       badResource: "Esta ação funciona a partir de Deals e Persons.",
       noMappings: "Não há mapeamentos ativos do Pipedrive para este tipo de registro. Crie um em CalaSign → Configurações → CRM e ERP.",
-      noAccount: "O Pipedrive não informou de qual empresa a ação foi aberta (companyId), então nenhum mapeamento é oferecido (poderiam ser de outra empresa). Abra-a de novo a partir do Pipedrive.",
-      accountUnknown: "Há conexões do Pipedrive sem a empresa salva: os mapeamentos delas não aparecem. Teste a conexão em CalaSign → Configurações → CRM e ERP para habilitá-la.",
+      noAccount:
+        "O Pipedrive não informou de qual empresa a ação foi aberta (companyId), então nenhum mapeamento é oferecido (poderiam ser de outra empresa). Abra-a de novo a partir do Pipedrive.",
+      accountUnknown:
+        "Há conexões do Pipedrive sem a empresa salva: os mapeamentos delas não aparecem. Teste a conexão em CalaSign → Configurações → CRM e ERP para habilitá-la.",
       mapping: "Mapeamento (modelo)",
       sendNow: "Enviar agora (senão fica como rascunho para revisar)",
       records: "Registros",
@@ -73,7 +81,8 @@ var CalaSignPipedrive = (function () {
       open: "Ver no CalaSign",
       failed: "Falhou",
       settings: "Configurações de CRM",
-      truncated: "O Pipedrive enviou {total} registros e no máximo 20 são enviados por vez: {n} NÃO serão enviados. Depois, abra a ação de novo com os restantes.",
+      truncated:
+        "O Pipedrive enviou {total} registros e no máximo 20 são enviados por vez: {n} NÃO serão enviados. Depois, abra a ação de novo com os restantes.",
     },
   };
 
@@ -99,7 +108,15 @@ var CalaSignPipedrive = (function () {
     ids = ids.filter(function (x) {
       return seen[x] ? false : (seen[x] = true);
     });
-    return { resource: resource, objectType: objectType, ids: ids.slice(0, 20), truncated: ids.length > 20, total: ids.length, skipped: Math.max(0, ids.length - 20), companyId: /^\d{1,18}$/.test(q.get("companyId") || "") ? q.get("companyId") : null };
+    return {
+      resource: resource,
+      objectType: objectType,
+      ids: ids.slice(0, 20),
+      truncated: ids.length > 20,
+      total: ids.length,
+      skipped: Math.max(0, ids.length - 20),
+      companyId: /^\d{1,18}$/.test(q.get("companyId") || "") ? q.get("companyId") : null,
+    };
   }
 
   /** Mapeos activos con plantilla para ese tipo de registro (la API ya filtra por conexiones activas de Pipedrive). */
@@ -145,7 +162,10 @@ var CalaSignPipedrive = (function () {
       return fetchImpl(base + path, {
         method: method,
         credentials: "include",
-        headers: Object.assign(body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" }, extraHeaders || {}),
+        headers: Object.assign(
+          body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
+          extraHeaders || {},
+        ),
         body: body ? JSON.stringify(body) : undefined,
       }).then(function (res) {
         return res.text().then(function (text) {
@@ -175,7 +195,12 @@ var CalaSignPipedrive = (function () {
     var chain = Promise.resolve();
     ids.forEach(function (id) {
       chain = chain.then(function () {
-        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send }, runId ? { "Idempotency-Key": idempotencyKey(companyId, mappingId, id, runId) } : null).then(
+        return api(
+          "POST",
+          "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send",
+          companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send },
+          runId ? { "Idempotency-Key": idempotencyKey(companyId, mappingId, id, runId) } : null,
+        ).then(
           function (r) {
             out.push({ id: id, ok: true, envelopeId: r.envelopeId, status: r.status });
           },
@@ -252,12 +277,18 @@ var CalaSignPipedrive = (function () {
         if (r.state === "login") {
           var retry = el(doc, "button", { type: "button", text: T.retry });
           retry.addEventListener("click", start);
-          render([head(), el(doc, "p", { text: T.login }), el(doc, "p", {}, [el(doc, "a", { href: base + "/login", target: "_blank", rel: "noopener", text: T.loginLink })]), retry]);
+          render([
+            head(),
+            el(doc, "p", { text: T.login }),
+            el(doc, "p", {}, [el(doc, "a", { href: base + "/login", target: "_blank", rel: "noopener", text: T.loginLink })]),
+            retry,
+          ]);
           return;
         }
         if (r.state === "error") {
           var parts = [head(), el(doc, "p", { class: "error", text: r.key ? T[r.key] : r.message })];
-          if (r.key === "noMappings" || r.key === "accountUnknown") parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
+          if (r.key === "noMappings" || r.key === "accountUnknown")
+            parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
           render(parts);
           return;
         }
@@ -291,7 +322,13 @@ var CalaSignPipedrive = (function () {
         select,
         el(doc, "label", { class: "check" }, [sendNow, doc.createTextNode(" " + T.sendNow)]),
         // Tope de 20 por vez: se avisa cuántos quedan afuera (antes se cortaba sin decir nada).
-        params.skipped ? el(doc, "p", { class: "error", role: "alert", text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)) }) : null,
+        params.skipped
+          ? el(doc, "p", {
+              class: "error",
+              role: "alert",
+              text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)),
+            })
+          : null,
         el(doc, "p", { class: "muted", text: T.records + ": " + params.ids.join(", ") }),
         accountUnknown ? el(doc, "p", { class: "muted", role: "status", text: T.accountUnknown }) : null,
         btn,
@@ -304,7 +341,10 @@ var CalaSignPipedrive = (function () {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));
-            if (o.ok) li.appendChild(el(doc, "a", { href: base + "/app/envelopes/" + encodeURIComponent(o.envelopeId), target: "_blank", rel: "noopener", text: T.open }));
+            if (o.ok)
+              li.appendChild(
+                el(doc, "a", { href: base + "/app/envelopes/" + encodeURIComponent(o.envelopeId), target: "_blank", rel: "noopener", text: T.open }),
+              );
             results.appendChild(li);
           });
           pending = out
@@ -326,6 +366,16 @@ var CalaSignPipedrive = (function () {
 
   if (typeof window !== "undefined" && window.document && window.document.getElementById("app")) mount(window);
 
-  return { parseParams: parseParams, eligibleMappings: eligibleMappings, apiFactory: apiFactory, sendAll: sendAll, load: load, lang: lang, idempotencyKey: idempotencyKey, runIdFor: runIdFor, TEXT: TEXT };
+  return {
+    parseParams: parseParams,
+    eligibleMappings: eligibleMappings,
+    apiFactory: apiFactory,
+    sendAll: sendAll,
+    load: load,
+    lang: lang,
+    idempotencyKey: idempotencyKey,
+    runIdFor: runIdFor,
+    TEXT: TEXT,
+  };
 })();
 if (typeof module !== "undefined") module.exports = CalaSignPipedrive;

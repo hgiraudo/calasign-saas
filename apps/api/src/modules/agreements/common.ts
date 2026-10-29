@@ -17,7 +17,10 @@ export interface Deps {
 export function fold(s: string): string {
   // Sin NUL: pdf.js lo devuelve para glifos sin mapeo a Unicode y Postgres rechaza \u0000 en columnas de texto (la
   // subida o la ingesta del acuerdo fallaban siempre con ese PDF).
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\u0000/g, "");
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\u0000/g, "");
 }
 
 /** Texto de una línea con variables ({{cliente.nombre}}), para títulos, asuntos y destinatarios. */
@@ -94,7 +97,10 @@ export function mergeDataPatch(base: Record<string, unknown>, patch: Record<stri
     if (v === null) delete out[k];
     else if (typeof v === "object" && !Array.isArray(v)) {
       const prev = out[k];
-      out[k] = mergeDataPatch(prev != null && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {}, v as Record<string, unknown>);
+      out[k] = mergeDataPatch(
+        prev != null && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {},
+        v as Record<string, unknown>,
+      );
     } else out[k] = v;
   }
   return out;
@@ -124,8 +130,7 @@ export function toIsoDate(v: unknown, locale = "es"): string | null {
   else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) {
     const [a, b] = /^en\b/i.test(locale) ? [m[2], m[1]] : [m[1], m[2]];
     [y, mo, d] = [m[3], b.padStart(2, "0"), a.padStart(2, "0")];
-  }
-  else return null;
+  } else return null;
   // Tiene que ser una fecha que exista ("31/02/2027" no): si no, Postgres la rechaza al guardarla como date y la
   // ingesta del acuerdo o el paso del workflow fallan.
   const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
@@ -204,7 +209,10 @@ export async function refreshSearchVector(db: Db, agreementId: string) {
     .filter(Boolean)
     .join(" ");
   const docText = `${fold(meta)}\n${r.text_folded ?? ""}`.slice(0, 900_000);
-  await db.query(`UPDATE agreements SET search_vector = to_tsvector('spanish', $2) || to_tsvector('portuguese', $2) WHERE id = $1`, [agreementId, docText]);
+  await db.query(`UPDATE agreements SET search_vector = to_tsvector('spanish', $2) || to_tsvector('portuguese', $2) WHERE id = $1`, [
+    agreementId,
+    docText,
+  ]);
 }
 
 // ───────────────────────────── CSV ─────────────────────────────

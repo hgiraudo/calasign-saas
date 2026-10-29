@@ -28,7 +28,11 @@ export function useFieldLogic(session: SigningSession, values: Record<string, st
           hasSignature,
           hasInitials,
           autoValue: (t) =>
-            t === "name" ? session.recipient.name : t === "email" ? (session.recipient.email ?? "") : formatSigningDate(new Date(), session.recipient.locale),
+            t === "name"
+              ? session.recipient.name
+              : t === "email"
+                ? (session.recipient.email ?? "")
+                : formatSigningDate(new Date(), session.recipient.locale),
         });
         if (fixed !== undefined) return fixed;
         if (f.type === "checkbox") return values[id] === "true" ? "true" : "false";

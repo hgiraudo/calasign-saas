@@ -93,10 +93,7 @@ export function App() {
         <Route path="/forgot" element={<ForgotPasswordPage />} />
         <Route path="/reset/:token" element={<ResetPasswordPage />} />
         <Route path="/s/:token" element={<SignerPage />} />
-        <Route
-          path="/developers/*"
-          element={<DevelopersPage />}
-        />
+        <Route path="/developers/*" element={<DevelopersPage />} />
         <Route path="/verify" element={<VerifyPage />} />
         <Route path="/firmador" element={<FirmadorPage />} />
         <Route path="/invite/:token" element={<InviteAcceptPage />} />

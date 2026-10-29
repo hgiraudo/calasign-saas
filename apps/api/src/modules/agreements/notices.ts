@@ -12,7 +12,14 @@ import type { Deps } from "./common";
 
 export type NoticeJob =
   | { kind: "expiry_notice"; agreementId: string; expiryDate: string }
-  | { kind: "negotiation_notice"; negotiationId: string; event: "invite" | "version"; version: number; summary?: string | null; acceptedKey?: string | null }
+  | {
+      kind: "negotiation_notice";
+      negotiationId: string;
+      event: "invite" | "version";
+      version: number;
+      summary?: string | null;
+      acceptedKey?: string | null;
+    }
   | { kind: "proposal_notice"; negotiationId: string; proposalId: string }
   | { kind: "workflow_approval_notice"; runId: string; stepIndex: number; attempt: number };
 
@@ -20,11 +27,24 @@ export type NoticeJob =
 export const expiryNoticeKey = (agreementId: string, expiryDate: string) => `agr:expiry:${agreementId}:${expiryDate}`;
 
 /** Encola el aviso a las contrapartes de una negociación (dentro de la transacción del cambio: outbox). */
-export async function enqueueNegotiationNotice(t: Db, negotiationId: string, event: "invite" | "version", version: number, extra: { summary?: string | null; acceptedKey?: string | null } = {}) {
+export async function enqueueNegotiationNotice(
+  t: Db,
+  negotiationId: string,
+  event: "invite" | "version",
+  version: number,
+  extra: { summary?: string | null; acceptedKey?: string | null } = {},
+) {
   await enqueue(
     t,
     "agreements",
-    { kind: "negotiation_notice", negotiationId, event, version, summary: extra.summary ?? null, acceptedKey: extra.acceptedKey ?? null } satisfies NoticeJob,
+    {
+      kind: "negotiation_notice",
+      negotiationId,
+      event,
+      version,
+      summary: extra.summary ?? null,
+      acceptedKey: extra.acceptedKey ?? null,
+    } satisfies NoticeJob,
     { dedupeKey: `neg:${event}:${negotiationId}:${version}` },
   );
 }
@@ -41,7 +61,9 @@ export async function enqueueWorkflowApprovalNotice(t: Db, runId: string, stepIn
 
 /** Encola el aviso al remitente de una propuesta de cambio de una contraparte. */
 export async function enqueueProposalNotice(t: Db, negotiationId: string, proposalId: string) {
-  await enqueue(t, "agreements", { kind: "proposal_notice", negotiationId, proposalId } satisfies NoticeJob, { dedupeKey: `neg:proposal:${proposalId}` });
+  await enqueue(t, "agreements", { kind: "proposal_notice", negotiationId, proposalId } satisfies NoticeJob, {
+    dedupeKey: `neg:proposal:${proposalId}`,
+  });
 }
 
 const ACCEPTED = {
@@ -87,14 +109,28 @@ async function sendAll(
     const out = await sendTracked(
       d.db,
       { tenantId, template: kind, jobId, log: d.log },
-      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link: u.link, locale, tenantId, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom },
+      {
+        channel: "email",
+        to: u.email,
+        subject: m.subject,
+        text: m.text,
+        html: m.html,
+        link: u.link,
+        locale,
+        tenantId,
+        from: sendAs.from,
+        replyTo: sendAs.replyTo,
+        dkim: sendAs.dkim,
+        fallbackFrom: sendAs.fallbackFrom,
+      },
     );
     if (out.status === "failed") {
       if (out.transient) transient.push(out.error);
       else permanent++;
     }
   }
-  if (permanent) d.log.warn({ tenantId, template: kind, failed: permanent }, "aviso no entregado a algunos destinos (error permanente, no se reintenta)");
+  if (permanent)
+    d.log.warn({ tenantId, template: kind, failed: permanent }, "aviso no entregado a algunos destinos (error permanente, no se reintenta)");
   // Sin destinos en el error (termina en jobs.last_error y en los logs).
   if (transient.length) throw new Error(`no se pudo avisar (${transient.length}): ${transient.join("; ")}`);
 }
@@ -120,10 +156,16 @@ async function alreadyNotified(db: Db, tenantId: string, kind: string, email: st
 /** Responsables de un acuerdo o negociación: el dueño si sigue en la organización; si no, los propietarios. */
 async function staffFor(db: Db, tenantId: string, userId: string | null) {
   let to = userId
-    ? await db.query<any>(`SELECT u.email, u.name, u.locale FROM users u JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $2 WHERE u.id = $1`, [userId, tenantId])
+    ? await db.query<any>(
+        `SELECT u.email, u.name, u.locale FROM users u JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $2 WHERE u.id = $1`,
+        [userId, tenantId],
+      )
     : [];
   if (!to.length) {
-    to = await db.query<any>(`SELECT u.email, u.name, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`, [tenantId]);
+    to = await db.query<any>(
+      `SELECT u.email, u.name, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`,
+      [tenantId],
+    );
   }
   return to as { email: string; name: string; locale: string | null }[];
 }
@@ -217,7 +259,13 @@ async function workflowApprovalNotice(d: Deps, p: Extract<NoticeJob, { kind: "wo
     run.tenant_id,
     "workflow_approval",
     [{ email: approver.email, name: approver.name, locale: approver.locale, link, vars: {} }],
-    { senderName: org?.name ?? "", organizationName: org?.name ?? "", subject: wf?.name ?? "workflow", detail: step.name ?? "", message: step.config?.message || null },
+    {
+      senderName: org?.name ?? "",
+      organizationName: org?.name ?? "",
+      subject: wf?.name ?? "workflow",
+      detail: step.name ?? "",
+      message: step.config?.message || null,
+    },
     jobId,
     { kind: "workflow_approval_notice", runId: p.runId, stepIndex: p.stepIndex, attempt: p.attempt },
   );

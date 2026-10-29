@@ -191,7 +191,13 @@ export async function signIn() {
     throw new Error(result.error_description || result.error);
   }
   if (result.state !== state) throw new Error(t("loginState"));
-  const tok = await tokenRequest({ grant_type: "authorization_code", code: result.code, redirect_uri: REDIRECT_URI, client_id: cid, code_verifier: verifier });
+  const tok = await tokenRequest({
+    grant_type: "authorization_code",
+    code: result.code,
+    redirect_uri: REDIRECT_URI,
+    client_id: cid,
+    code_verifier: verifier,
+  });
   saveTokens(tok);
   return tok;
 }
@@ -207,7 +213,12 @@ async function tokenRequest(form) {
     if (body.error === "invalid_client") forgetClient();
     throw Object.assign(new Error(body.error_description || body.error || `HTTP ${res.status}`), { status: res.status, oauthError: body.error });
   }
-  return { kind: "oauth", access_token: body.access_token, refresh_token: body.refresh_token ?? null, expires_at: Date.now() + (body.expires_in ?? 3600) * 1000 };
+  return {
+    kind: "oauth",
+    access_token: body.access_token,
+    refresh_token: body.refresh_token ?? null,
+    expires_at: Date.now() + (body.expires_in ?? 3600) * 1000,
+  };
 }
 
 let refreshing = null;
@@ -248,7 +259,8 @@ async function doRefresh(stale) {
   } catch (e) {
     // Solo un rechazo del servidor (refresh token vencido, revocado o reusado) cierra la sesión, y solo si nadie guardó
     // otra mientras tanto. Un error de red o un 5xx es pasajero: se conserva el refresh token para reintentar después.
-    if ((e?.oauthError === "invalid_grant" || e?.oauthError === "invalid_client") && currentTokens()?.refresh_token === t.refresh_token) saveTokens(null);
+    if ((e?.oauthError === "invalid_grant" || e?.oauthError === "invalid_client") && currentTokens()?.refresh_token === t.refresh_token)
+      saveTokens(null);
     return null;
   }
 }

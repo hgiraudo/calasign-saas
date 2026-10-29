@@ -27,7 +27,9 @@ const md5 = (...parts: Buffer[]) => createHash("md5").update(Buffer.concat(parts
 
 /** Algoritmo 2.B de ISO 32000-2 (R6) con contraseña vacía. */
 function hash2B(salt: Buffer, udata: Buffer): Buffer {
-  let k = createHash("sha256").update(Buffer.concat([salt, udata])).digest();
+  let k = createHash("sha256")
+    .update(Buffer.concat([salt, udata]))
+    .digest();
   for (let i = 0; ; ) {
     const k1 = Buffer.concat(Array(64).fill(Buffer.concat([k, udata])));
     const c = createCipheriv("aes-128-cbc", k.subarray(0, 16), k.subarray(16, 32));
@@ -35,7 +37,9 @@ function hash2B(salt: Buffer, udata: Buffer): Buffer {
     const e = Buffer.concat([c.update(k1), c.final()]);
     let sum = 0;
     for (let j = 0; j < 16; j++) sum += e[j];
-    k = createHash(["sha256", "sha384", "sha512"][sum % 3]).update(e).digest();
+    k = createHash(["sha256", "sha384", "sha512"][sum % 3])
+      .update(e)
+      .digest();
     i++;
     if (i >= 64 && e[e.length - 1] <= i - 32) break;
   }
@@ -71,7 +75,7 @@ export function opensWithoutPassword(doc: PDFDocument): boolean {
     pBuf.writeInt32LE(p | 0);
     const idRaw = ctx.trailerInfo.ID as PDFObject | undefined;
     const idArr = idRaw instanceof PDFRef ? ctx.lookup(idRaw) : idRaw;
-    const id0 = idArr instanceof PDFArray ? bytesOf(idArr.get(0)) ?? Buffer.alloc(0) : Buffer.alloc(0);
+    const id0 = idArr instanceof PDFArray ? (bytesOf(idArr.get(0)) ?? Buffer.alloc(0)) : Buffer.alloc(0);
     const encryptMetadata = enc.get(PDFName.of("EncryptMetadata"));
     const noMeta = r >= 4 && encryptMetadata instanceof PDFBool && !encryptMetadata.asBoolean();
     const lengths = r === 2 ? [40] : keyLengthCandidates(ctx, enc, r);

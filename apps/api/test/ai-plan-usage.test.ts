@@ -51,7 +51,11 @@ async function used(tenantId: string, tokens: number) {
   );
 }
 
-const code = async (p: Promise<unknown>) => p.then(() => "ok", (e) => `${e.status}:${e.code}`);
+const code = async (p: Promise<unknown>) =>
+  p.then(
+    () => "ok",
+    (e) => `${e.status}:${e.code}`,
+  );
 
 function line(id: string, text: string, y: number): TextLine {
   return { id, text, x: 72, y, width: text.length * 5, height: 10, spans: [{ text, x: 72, width: text.length * 5 }] };
@@ -134,10 +138,13 @@ describe("cupo del firmante y llamadas fallidas", () => {
     const rid = await svc.assertAiAvailable(db, t, { estimate: 100 });
     const usage = { provider: "anthropic" as const, model: "m", inputTokens: 1200, outputTokens: 16000, promptSha256: "x" };
     const err = await svc
-      .withAiReservation(db, { tenantId: t, reservationId: rid, envelopeId: null, feature: "ask", actor: { type: "recipient", id: recipientId }, recipientId }, () =>
-        svc.callModel(async () => {
-          throw new P.AiOutputError("cortada", usage);
-        }),
+      .withAiReservation(
+        db,
+        { tenantId: t, reservationId: rid, envelopeId: null, feature: "ask", actor: { type: "recipient", id: recipientId }, recipientId },
+        () =>
+          svc.callModel(async () => {
+            throw new P.AiOutputError("cortada", usage);
+          }),
       )
       .catch((e) => e);
     expect(err.status).toBe(502);
@@ -160,9 +167,11 @@ describe("cupo del firmante y llamadas fallidas", () => {
     expect(await db.query(`SELECT id FROM ai_usage WHERE tenant_id = $1`, [t])).toEqual([]);
 
     const est = { provider: "anthropic" as const, model: "m", inputTokens: 5000, outputTokens: 16000, promptSha256: "y", estimated: true };
-    const e = await svc.callModel(async () => {
-      throw new P.AiTimeoutError("timeout", est);
-    }).catch((x) => x);
+    const e = await svc
+      .callModel(async () => {
+        throw new P.AiTimeoutError("timeout", est);
+      })
+      .catch((x) => x);
     expect(`${e.status}:${e.code}`).toBe("504:ai_timeout");
     expect(svc.aiUsageOf(e)).toMatchObject({ inputTokens: 5000, estimated: true });
   });
@@ -238,10 +247,23 @@ describe("texto enviado e ids de línea", () => {
 
 describe("playbook", () => {
   it("un resultado por regla enviada, en su orden; las que faltan quedan not_found y las inventadas se ignoran", () => {
-    const f = (ruleIndex: number | null, rule: string, status: "ok" | "violation" | "not_found") => ({ ruleIndex, rule, status, severity: "low" as const, explanation: "e", page: null, quote: null });
+    const f = (ruleIndex: number | null, rule: string, status: "ok" | "violation" | "not_found") => ({
+      ruleIndex,
+      rule,
+      status,
+      severity: "low" as const,
+      explanation: "e",
+      page: null,
+      quote: null,
+    });
     const out = H.pairPlaybookFindings(
       ["Jurisdicción Bogotá", "Plazo <= 12 meses", "Sin penalidades"],
-      [f(3, "Sin penalidades", "violation"), f(9, "Regla inventada", "ok"), f(null, "Jurisdicción Bogotá", "ok"), f(3, "Sin penalidades (otra vez)", "ok")],
+      [
+        f(3, "Sin penalidades", "violation"),
+        f(9, "Regla inventada", "ok"),
+        f(null, "Jurisdicción Bogotá", "ok"),
+        f(3, "Sin penalidades (otra vez)", "ok"),
+      ],
     );
     expect(out.map((x) => `${x.rule}:${x.status}`)).toEqual(["Jurisdicción Bogotá:ok", "Plazo <= 12 meses:not_found", "Sin penalidades:violation"]);
   });
@@ -255,10 +277,11 @@ describe("barrido de extracción automática", () => {
     const user = uuidv7();
     await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, 'Ana', 'x')`, [user, `ana-${user.slice(-6)}@x.com`]);
     const env = uuidv7();
-    await db.query(
-      `INSERT INTO envelopes (id, tenant_id, subject, status, created_by, completed_at) VALUES ($1, $2, 'S', 'completed', $3, now())`,
-      [env, t, user],
-    );
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by, completed_at) VALUES ($1, $2, 'S', 'completed', $3, now())`, [
+      env,
+      t,
+      user,
+    ]);
     // Una reserva en curso grande: esta llamada no entra (429 sin presupuesto agotado).
     await db.query(
       `INSERT INTO ai_usage (id, tenant_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type) VALUES ($1,$2,'_reserved','reserva','-',900,0,'','system')`,
@@ -286,7 +309,9 @@ describe("barrido de extracción automática", () => {
     } finally {
       P.setAiProviderForTests(undefined);
     }
-    const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_first_attempt_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [env]);
+    const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_first_attempt_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [
+      env,
+    ]);
     expect(a).toEqual({ ai_metadata_attempted_at: null, ai_metadata_first_attempt_at: null, ai_metadata_retry_at: null });
   }, 60_000);
 
@@ -294,7 +319,10 @@ describe("barrido de extracción automática", () => {
     const t = await tenant("business");
     await db.query(`UPDATE tenants SET ai_auto_extract = true WHERE id = $1`, [t]);
     const env = uuidv7();
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', 'completed', now() - interval '100 days')`, [env, t]);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', 'completed', now() - interval '100 days')`,
+      [env, t],
+    );
     const blobs = { get: async () => new Uint8Array() } as any;
     const log = { warn: () => {}, info: () => {} };
     // Los sobres de otras pruebas (misma base) quedan fuera de la tanda.
@@ -310,7 +338,8 @@ describe("barrido de extracción automática", () => {
         },
       }),
     );
-    const expire = () => db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() - interval '1 minute' WHERE id = $1 AND ai_metadata_retry_at IS NOT NULL`, [env]);
+    const expire = () =>
+      db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() - interval '1 minute' WHERE id = $1 AND ai_metadata_retry_at IS NOT NULL`, [env]);
     try {
       await runAiSweep({ db, blobs, log });
       const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_retry_at, ai_metadata_failures FROM envelopes WHERE id = $1`, [env]);
@@ -413,7 +442,10 @@ describe("barrido de extracción automática", () => {
     } finally {
       P.setAiProviderForTests(undefined);
     }
-    const jobs = await db.query<any>(`SELECT id, payload, dedupe_key FROM jobs WHERE payload->>'envelopeId' = $1 AND payload->>'kind' = 'ai_renewal_alert'`, [env]);
+    const jobs = await db.query<any>(
+      `SELECT id, payload, dedupe_key FROM jobs WHERE payload->>'envelopeId' = $1 AND payload->>'kind' = 'ai_renewal_alert'`,
+      [env],
+    );
     expect(jobs.map((j) => j.dedupe_key)).toEqual([`ai-renewal:${env}:${date}`]);
     // El job del aviso: dirección suprimida → no sale (antes se mandaba igual, con deliver directo).
     const { notifyAiRenewalAlert } = await import("../src/modules/ai/sweep");
@@ -448,7 +480,9 @@ describe("uso de mensajes y alertas BYOK", () => {
     await db.query(`UPDATE tenants SET byok_key_arn = 'arn:k', byok_status = 'active' WHERE id = $1`, [t]);
     await Promise.all([markKeyFailing(db, t, "arn:k", "denied"), markKeyFailing(db, t, "arn:k", "denied")]);
     await markKeyFailing(db, t, "arn:k", "denied"); // ya fallando y alertada hace menos de 6 h: sin alerta
-    const n = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'byok.key_failing'`, [t]);
+    const n = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'byok.key_failing'`, [
+      t,
+    ]);
     expect(n?.n).toBe(1);
     expect((await db.one<any>(`SELECT byok_status FROM tenants WHERE id = $1`, [t]))?.byok_status).toBe("failing");
   });

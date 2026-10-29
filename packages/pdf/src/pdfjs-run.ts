@@ -130,7 +130,10 @@ function release(slot: Slot) {
 const tooHeavy = () => new InvalidPdfError("unreadable", "El PDF es demasiado pesado para leer su texto");
 
 /** Texto en bruto de las páginas (hasta maxPages, o hasta juntar maxChars caracteres). */
-export async function readPdfTextPages(pdf: Uint8Array, opts: { maxPages?: number; maxChars?: number } = {}): Promise<{ numPages: number; pages: RawTextPage[] }> {
+export async function readPdfTextPages(
+  pdf: Uint8Array,
+  opts: { maxPages?: number; maxChars?: number } = {},
+): Promise<{ numPages: number; pages: RawTextPage[] }> {
   await assertTextReadable(pdf);
   const slot = await acquire();
   const { worker } = slot;
@@ -151,7 +154,12 @@ export async function readPdfTextPages(pdf: Uint8Array, opts: { maxPages?: numbe
       else discard(slot);
       fn();
     };
-    const onMessage = (m: { ok: boolean; result?: { numPages: number; pages: RawTextPage[]; tooMuch: boolean }; message?: string; name?: string }) => {
+    const onMessage = (m: {
+      ok: boolean;
+      result?: { numPages: number; pages: RawTextPage[]; tooMuch: boolean };
+      message?: string;
+      name?: string;
+    }) => {
       if (!m.ok) return finish(true, () => reject(Object.assign(new Error(m.message), { name: m.name })));
       const r = m.result!;
       finish(true, () => (r.tooMuch ? reject(tooHeavy()) : resolve({ numPages: r.numPages, pages: r.pages })));

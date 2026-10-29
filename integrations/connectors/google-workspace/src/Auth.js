@@ -8,10 +8,10 @@
 //  2. Alternativa: una API key de CalaSign pegada por el usuario (propiedades del usuario).
 // Tokens y API key quedan en PropertiesService.getUserProperties(): solo los lee este script para ese usuario.
 
-var CS_OAUTH_SCOPES = 'envelopes:read envelopes:write offline_access';
-var CS_PROP_CLIENT_ID = 'CALASIGN_CLIENT_ID';
-var CS_PROP_CLIENT_BASE = 'CALASIGN_CLIENT_BASE_URL';
-var CS_PROP_API_KEY = 'calasign.apiKey';
+var CS_OAUTH_SCOPES = "envelopes:read envelopes:write offline_access";
+var CS_PROP_CLIENT_ID = "CALASIGN_CLIENT_ID";
+var CS_PROP_CLIENT_BASE = "CALASIGN_CLIENT_BASE_URL";
+var CS_PROP_API_KEY = "calasign.apiKey";
 
 /** client_id de CalaSign para este script: el configurado o uno nuevo por registro dinámico. */
 function ensureClientId_() {
@@ -26,16 +26,16 @@ function ensureClientId_() {
     id = props.getProperty(CS_PROP_CLIENT_ID);
     base = props.getProperty(CS_PROP_CLIENT_BASE);
     if (id && (!base || base === CS_BASE_URL)) return id;
-    var res = UrlFetchApp.fetch(CS_BASE_URL + '/oauth/register', {
-      method: 'post',
-      contentType: 'application/json',
+    var res = UrlFetchApp.fetch(CS_BASE_URL + "/oauth/register", {
+      method: "post",
+      contentType: "application/json",
       payload: JSON.stringify({
-        client_name: 'CalaSign para Google Workspace',
+        client_name: "CalaSign para Google Workspace",
         client_uri: CS_BASE_URL,
         redirect_uris: [OAuth2.getRedirectUri(ScriptApp.getScriptId())],
-        grant_types: ['authorization_code', 'refresh_token'],
-        response_types: ['code'],
-        token_endpoint_auth_method: 'none',
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
         scope: CS_OAUTH_SCOPES,
       }),
       muteHttpExceptions: true,
@@ -44,7 +44,7 @@ function ensureClientId_() {
     var code = res.getResponseCode();
     var body = parseJson_(res.getContentText());
     if (code < 200 || code >= 300 || !body || !body.client_id) {
-      throw new Error('registro OAuth ' + code + (body && body.error_description ? ': ' + body.error_description : ''));
+      throw new Error("registro OAuth " + code + (body && body.error_description ? ": " + body.error_description : ""));
     }
     props.setProperties({ CALASIGN_CLIENT_ID: body.client_id, CALASIGN_CLIENT_BASE_URL: CS_BASE_URL });
     return body.client_id;
@@ -55,23 +55,26 @@ function ensureClientId_() {
 
 /** Servicio OAuth2 de CalaSign (PKCE S256, refresh automático, tokens por usuario). */
 function getOAuthService_() {
-  return OAuth2.createService('calasign')
-    .setAuthorizationBaseUrl(CS_BASE_URL + '/oauth/authorize')
-    .setTokenUrl(CS_BASE_URL + '/oauth/token')
-    .setClientId(ensureClientId_())
-    .setCallbackFunction('authCallback')
-    .setPropertyStore(PropertiesService.getUserProperties())
-    .setCache(CacheService.getUserCache())
-    .setLock(LockService.getUserLock())
-    .setScope(CS_OAUTH_SCOPES)
-    .generateCodeVerifier()
-    .setCodeChallengeMethod('S256')
-    // Cliente público: la librería manda client_secret aunque no haya; se quita para no enviar "undefined".
-    .setTokenPayloadHandler(stripEmptySecret_);
+  return (
+    OAuth2.createService("calasign")
+      .setAuthorizationBaseUrl(CS_BASE_URL + "/oauth/authorize")
+      .setTokenUrl(CS_BASE_URL + "/oauth/token")
+      .setClientId(ensureClientId_())
+      .setCallbackFunction("authCallback")
+      .setPropertyStore(PropertiesService.getUserProperties())
+      .setCache(CacheService.getUserCache())
+      .setLock(LockService.getUserLock())
+      .setScope(CS_OAUTH_SCOPES)
+      .generateCodeVerifier()
+      .setCodeChallengeMethod("S256")
+      // Cliente público: la librería manda client_secret aunque no haya; se quita para no enviar "undefined".
+      .setTokenPayloadHandler(stripEmptySecret_)
+  );
 }
 
 function stripEmptySecret_(payload) {
-  if (payload && (payload.client_secret === undefined || payload.client_secret === null || payload.client_secret === '')) delete payload.client_secret;
+  if (payload && (payload.client_secret === undefined || payload.client_secret === null || payload.client_secret === ""))
+    delete payload.client_secret;
   return payload;
 }
 
@@ -85,7 +88,10 @@ function authCallback(request) {
     ok = false;
   }
   return HtmlService.createHtmlOutput(
-    '<p style="font-family:sans-serif">' + escapeHtml_(t_(lang, ok ? 'authDone' : 'authDenied')) + '</p>' + (ok ? '<script>setTimeout(function(){top.window.close()},800)</script>' : ''),
+    '<p style="font-family:sans-serif">' +
+      escapeHtml_(t_(lang, ok ? "authDone" : "authDenied")) +
+      "</p>" +
+      (ok ? "<script>setTimeout(function(){top.window.close()},800)</script>" : ""),
   );
 }
 
@@ -125,8 +131,8 @@ function signOut_() {
   var tok = svc.getToken();
   if (tok && tok.refresh_token) {
     try {
-      UrlFetchApp.fetch(CS_BASE_URL + '/oauth/revoke', {
-        method: 'post',
+      UrlFetchApp.fetch(CS_BASE_URL + "/oauth/revoke", {
+        method: "post",
         payload: { token: tok.refresh_token, client_id: clientId },
         muteHttpExceptions: true,
       });
@@ -149,11 +155,11 @@ function forgetCredentials_() {
 
 /** Guarda una API key si CalaSign la acepta. */
 function saveApiKey_(key) {
-  key = String(key || '').trim();
+  key = String(key || "").trim();
   if (!/^cs_(live|test)_[A-Za-z0-9_-]{8,}$/.test(key)) return false;
-  var res = UrlFetchApp.fetch(CS_BASE_URL + '/v1/envelopes?limit=1', {
-    method: 'get',
-    headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' },
+  var res = UrlFetchApp.fetch(CS_BASE_URL + "/v1/envelopes?limit=1", {
+    method: "get",
+    headers: { Authorization: "Bearer " + key, Accept: "application/json" },
     muteHttpExceptions: true,
     followRedirects: false,
   });

@@ -78,7 +78,7 @@ var CalaSign = (function () {
         status.setValue(prevStatus);
         notify(form, "ERROR", "No se pudo guardar: " + (err && err.message ? err.message : err));
         return false;
-      }
+      },
     );
   }
 

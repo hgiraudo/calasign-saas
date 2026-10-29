@@ -78,7 +78,13 @@ export async function startUi(initial: { api?: string | null; code?: string | nu
         if (path === "/sign") {
           // Un servidor que no es de CalaSign solo se acepta con la confirmación explícita del usuario.
           if (!trustedHost && body.confirmHost !== host) {
-            return send(409, { error: { code: "confirm_host", message: `${host} no es un servidor de CalaSign conocido. ¿Confiás en él para firmar este documento?`, details: { host } } });
+            return send(409, {
+              error: {
+                code: "confirm_host",
+                message: `${host} no es un servidor de CalaSign conocido. ¿Confiás en él para firmar este documento?`,
+                details: { host },
+              },
+            });
           }
           const entry = certs.find((c) => c.id === body.certId);
           if (!entry) return send(400, { error: { message: "Elegí un certificado" } });
@@ -91,7 +97,9 @@ export async function startUi(initial: { api?: string | null; code?: string | nu
       return send(404, { error: "not_found" });
     } catch (e) {
       const err = e as CertsignError;
-      return send(err.status && err.status >= 400 ? err.status : 400, { error: { code: err.code ?? "error", message: err.message, details: err.details } });
+      return send(err.status && err.status >= 400 ? err.status : 400, {
+        error: { code: err.code ?? "error", message: err.message, details: err.details },
+      });
     }
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -101,7 +109,8 @@ export async function startUi(initial: { api?: string | null; code?: string | nu
 }
 
 function openBrowser(url: string) {
-  const cmd = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  const cmd =
+    process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
   execFile(cmd[0] as string, cmd[1] as string[], () => {});
 }
 

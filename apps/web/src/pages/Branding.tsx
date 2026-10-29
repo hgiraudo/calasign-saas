@@ -103,7 +103,15 @@ function clean(c: BrandConfigInput): BrandConfigInput {
 }
 
 /** HTML de la vista previa de la página de firma (iframe sin scripts). */
-function signerMockHtml(o: { css: string; fontCssUrl: string | null; name: string; logo: string | null; powered: string | null; w: (k: WlKey) => string; theme: Theme }) {
+function signerMockHtml(o: {
+  css: string;
+  fontCssUrl: string | null;
+  name: string;
+  logo: string | null;
+  powered: string | null;
+  w: (k: WlKey) => string;
+  theme: Theme;
+}) {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
   const bar = o.theme.primaryColor && HEX.test(o.theme.primaryColor) ? o.theme.primaryColor : "#0b1f3a";
   return `<!doctype html><html><head><meta charset="utf-8">${o.fontCssUrl ? `<link rel="stylesheet" href="${esc(o.fontCssUrl)}">` : ""}<style>
@@ -146,8 +154,7 @@ function usesWhiteLabel(c: BrandConfigInput): boolean {
 /** Si la configuración nueva agrega o cambia algo respecto de la guardada (vaciar, apagar o dejar igual no cuenta). */
 function addsConfig(next: unknown, prev: unknown, literal = false): boolean {
   // En textos y plantillas un "" sí es un valor (reemplaza al texto original por uno vacío): no cuenta como quitar.
-  const unset = (v: unknown) =>
-    v === undefined || v === null || (v === "" && !literal) || v === false || (Array.isArray(v) && v.length === 0);
+  const unset = (v: unknown) => v === undefined || v === null || (v === "" && !literal) || v === false || (Array.isArray(v) && v.length === 0);
   if (unset(next)) return false;
   if (Array.isArray(next) || typeof next !== "object") return JSON.stringify(next) !== JSON.stringify(prev);
   const p = prev && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {};
@@ -256,7 +263,10 @@ export function BrandingPage() {
         setBrands((list) => (list ?? []).map((x) => (x.isDefault ? { ...x, name: n } : x)));
       }
       if (dirty) {
-        const b = await api<Brand>(`/v1/settings/brands/${sel}`, { method: "PUT", body: { config: clean(cfg), ...(sel !== "default" && name.trim() ? { name: name.trim() } : {}) } });
+        const b = await api<Brand>(`/v1/settings/brands/${sel}`, {
+          method: "PUT",
+          body: { config: clean(cfg), ...(sel !== "default" && name.trim() ? { name: name.trim() } : {}) },
+        });
         replaceBrand(b);
         setCfg(b.config);
         setDirty(false);
@@ -264,7 +274,11 @@ export function BrandingPage() {
       const low = lowContrastPairs(effectiveTheme);
       setContrastWarn(
         low.length
-          ? w("contrast.warn", { pairs: low.map((p) => w(`contrast.${p.key}`, { ratio: formatNumber(Math.floor(p.ratio * 10) / 10, locale, { maximumFractionDigits: 1 }) })).join("; ") })
+          ? w("contrast.warn", {
+              pairs: low
+                .map((p) => w(`contrast.${p.key}`, { ratio: formatNumber(Math.floor(p.ratio * 10) / 10, locale, { maximumFractionDigits: 1 }) }))
+                .join("; "),
+            })
           : null,
       );
       setSaved(true);
@@ -339,7 +353,7 @@ export function BrandingPage() {
         ? `@font-face{font-family:"${effectiveTheme.fontFamily}";src:url("${brand.effective.fontUrl}")}`
         : null;
     // Una sub-marca suma su CSS al de la organización (mergeConfig los concatena).
-    const css = [themeToCss(effectiveTheme as never, { fontFace }), inheritedCss, cssProblem ? "" : cfg.customCss ?? ""].join("\n");
+    const css = [themeToCss(effectiveTheme as never, { fontFace }), inheritedCss, cssProblem ? "" : (cfg.customCss ?? "")].join("\n");
     const google =
       effectiveTheme.fontFamily && (effectiveTheme.fontSource === "google" || (!effectiveTheme.fontSource && !brand.effective.fontUrl))
         ? `https://fonts.googleapis.com/css2?family=${encodeURIComponent(effectiveTheme.fontFamily).replace(/%20/g, "+")}:wght@400;600;700&display=swap`
@@ -356,13 +370,18 @@ export function BrandingPage() {
     });
   }, [brand, effectiveTheme, cfg.customCss, cfg.displayName, inheritedCss, inheritedName, hidePowered, cssProblem, product, w]);
 
-  if (!brands || !brand) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
+  if (!brands || !brand)
+    return error ? (
+      <div className="page">
+        <ErrorBox error={error} />
+      </div>
+    ) : (
+      <Spinner />
+    );
 
   // Guardar algo que agrega funciones fuera del plan respondería 402: se avisa y no se ofrece.
   const blockedByPlan =
-    dirty &&
-    addsConfig(clean(cfg), brand.config ?? {}) &&
-    (!hasBranding || ((usesWhiteLabel(clean(cfg)) || !brand.isDefault) && !hasWhiteLabel));
+    dirty && addsConfig(clean(cfg), brand.config ?? {}) && (!hasBranding || ((usesWhiteLabel(clean(cfg)) || !brand.isDefault) && !hasWhiteLabel));
   // Subir archivos: el logo de la marca de la organización pide marca propia; el resto (y en sub-marcas), marca blanca.
   const canUpload = (kind: BrandAssetKind) => hasBranding && (hasWhiteLabel || (kind === "logo" && brand.isDefault));
 
@@ -374,7 +393,11 @@ export function BrandingPage() {
           <p className="muted">{w("intro")}</p>
         </div>
       </div>
-      {hasBranding ? <PlanNotice feature="white_label" text={w("plan.whiteLabel", { plan: access?.planName ?? "" })} /> : <PlanNotice feature="branding" />}
+      {hasBranding ? (
+        <PlanNotice feature="white_label" text={w("plan.whiteLabel", { plan: access?.planName ?? "" })} />
+      ) : (
+        <PlanNotice feature="branding" />
+      )}
       <ErrorBox error={error} />
 
       <div className="card pad row-wrap" style={{ marginBottom: "1rem" }}>
@@ -457,41 +480,114 @@ export function BrandingPage() {
                   return (
                     <Field key={k} label={w(`color.${k}` as WlKey)}>
                       <div className="row-wrap">
-                        <input type="color" className="color-input" value={HEX.test(v) ? v : ((defaultBrand?.effective.theme[k] as string | null | undefined) ?? "#ffffff")} onChange={(e) => setIn("theme", k, e.target.value)} aria-label={w(`color.${k}` as WlKey)} />
-                        <input className="color-text" value={v} placeholder="#RRGGBB" maxLength={7} aria-label={w("color.hex", { color: w(`color.${k}` as WlKey) })} onChange={(e) => setIn("theme", k, e.target.value.trim())} />
+                        <input
+                          type="color"
+                          className="color-input"
+                          value={HEX.test(v) ? v : ((defaultBrand?.effective.theme[k] as string | null | undefined) ?? "#ffffff")}
+                          onChange={(e) => setIn("theme", k, e.target.value)}
+                          aria-label={w(`color.${k}` as WlKey)}
+                        />
+                        <input
+                          className="color-text"
+                          value={v}
+                          placeholder="#RRGGBB"
+                          maxLength={7}
+                          aria-label={w("color.hex", { color: w(`color.${k}` as WlKey) })}
+                          onChange={(e) => setIn("theme", k, e.target.value.trim())}
+                        />
                       </div>
                     </Field>
                   );
                 })}
               </div>
               <Field label={`${w("radius")}: ${theme.borderRadius ?? "—"} px`}>
-                <input type="range" min={0} max={24} value={effectiveTheme.borderRadius ?? 10} onChange={(e) => setIn("theme", "borderRadius", Number(e.target.value))} />
+                <input
+                  type="range"
+                  min={0}
+                  max={24}
+                  value={effectiveTheme.borderRadius ?? 10}
+                  onChange={(e) => setIn("theme", "borderRadius", Number(e.target.value))}
+                />
               </Field>
 
               <h3>{w("font")}</h3>
               <div className="row-wrap">
-                <select aria-label={w("font.source")} value={theme.fontSource ?? "system"} onChange={(e) => setIn("theme", "fontSource", e.target.value)}>
+                <select
+                  aria-label={w("font.source")}
+                  value={theme.fontSource ?? "system"}
+                  onChange={(e) => setIn("theme", "fontSource", e.target.value)}
+                >
                   <option value="system">{w("font.system")}</option>
                   <option value="google">{w("font.google")}</option>
                   <option value="upload">{w("font.upload")}</option>
                 </select>
                 {theme.fontSource && theme.fontSource !== "system" && (
-                  <input aria-label={w("font.family")} placeholder={w("font.family")} value={theme.fontFamily ?? ""} maxLength={60} onChange={(e) => setIn("theme", "fontFamily", e.target.value)} />
+                  <input
+                    aria-label={w("font.family")}
+                    placeholder={w("font.family")}
+                    value={theme.fontFamily ?? ""}
+                    maxLength={60}
+                    onChange={(e) => setIn("theme", "fontFamily", e.target.value)}
+                  />
                 )}
               </div>
               {theme.fontSource === "google" && <small className="muted">{w("font.googleNote")}</small>}
-              {theme.fontSource === "upload" && <Asset label={w("asset.font")} kind="font" url={brand.assets.fontUrl} accept=".woff2,.woff,.ttf,.otf" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />}
+              {theme.fontSource === "upload" && (
+                <Asset
+                  label={w("asset.font")}
+                  kind="font"
+                  url={brand.assets.fontUrl}
+                  accept=".woff2,.woff,.ttf,.otf"
+                  onUpload={upload}
+                  onRemove={removeAsset}
+                  busy={busy}
+                  canUpload={canUpload}
+                />
+              )}
 
               <h3>{w("assets")}</h3>
-              <Asset label={w("asset.logo")} kind="logo" url={brand.assets.logoUrl} accept="image/png,image/jpeg,image/svg+xml" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />
-              <Asset label={w("asset.logoDark")} kind="logoDark" url={brand.assets.logoDarkUrl} dark accept="image/png,image/jpeg,image/svg+xml" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />
-              <Asset label={w("asset.favicon")} kind="favicon" url={brand.assets.faviconUrl} accept="image/png,image/svg+xml,image/x-icon,.ico" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />
+              <Asset
+                label={w("asset.logo")}
+                kind="logo"
+                url={brand.assets.logoUrl}
+                accept="image/png,image/jpeg,image/svg+xml"
+                onUpload={upload}
+                onRemove={removeAsset}
+                busy={busy}
+                canUpload={canUpload}
+              />
+              <Asset
+                label={w("asset.logoDark")}
+                kind="logoDark"
+                url={brand.assets.logoDarkUrl}
+                dark
+                accept="image/png,image/jpeg,image/svg+xml"
+                onUpload={upload}
+                onRemove={removeAsset}
+                busy={busy}
+                canUpload={canUpload}
+              />
+              <Asset
+                label={w("asset.favicon")}
+                kind="favicon"
+                url={brand.assets.faviconUrl}
+                accept="image/png,image/svg+xml,image/x-icon,.ico"
+                onUpload={upload}
+                onRemove={removeAsset}
+                busy={busy}
+                canUpload={canUpload}
+              />
 
               <h3>{w("links")}</h3>
               <div className="grid-2">
                 {LINK_KEYS.map((k) => (
                   <Field key={k} label={w(`link.${k}` as WlKey)}>
-                    <input type="url" placeholder="https://" value={(cfg.links?.[k] as string | null | undefined) ?? ""} onChange={(e) => setIn("links", k, e.target.value.trim())} />
+                    <input
+                      type="url"
+                      placeholder="https://"
+                      value={(cfg.links?.[k] as string | null | undefined) ?? ""}
+                      onChange={(e) => setIn("links", k, e.target.value.trim())}
+                    />
                   </Field>
                 ))}
               </div>
@@ -507,7 +603,14 @@ export function BrandingPage() {
           {tab === "advanced" && (
             <>
               <Field label={w("css")} hint={w("css.hint")}>
-                <textarea rows={12} className="mono" value={cfg.customCss ?? ""} maxLength={20000} onChange={(e) => set("customCss", e.target.value)} spellCheck={false} />
+                <textarea
+                  rows={12}
+                  className="mono"
+                  value={cfg.customCss ?? ""}
+                  maxLength={20000}
+                  onChange={(e) => set("customCss", e.target.value)}
+                  spellCheck={false}
+                />
               </Field>
               {cssProblem && <p className="small error-text">{w(`css.problem.${cssProblem}` as WlKey)}</p>}
               {!brand.isDefault && (
@@ -526,7 +629,11 @@ export function BrandingPage() {
               {/* Una sola región viva, montada desde el principio: un role="status" que aparece junto con su texto no
                   siempre se anuncia. El aviso de contraste reemplaza al "Guardado" en la misma región. */}
               <span role="status" className="small">
-                {saved && contrastWarn ? <span className="warn-text">⚠ {contrastWarn}</span> : saved ? <span className="muted">✓ {w("saved")}</span> : null}
+                {saved && contrastWarn ? (
+                  <span className="warn-text">⚠ {contrastWarn}</span>
+                ) : saved ? (
+                  <span className="muted">✓ {w("saved")}</span>
+                ) : null}
               </span>
               {blockedByPlan && <span className="muted small">{w("plan.unsaved")}</span>}
             </div>
@@ -571,8 +678,20 @@ function Asset(p: {
     <div className="field">
       <span>{p.label}</span>
       <div className="row-wrap">
-        {p.url && p.kind !== "font" ? <img className="logo-thumb" src={p.url} alt="" style={p.dark ? { background: "#0b1f3a" } : undefined} /> : p.url ? <span className="small">✓</span> : <span className="muted small">—</span>}
-        <button type="button" className="btn btn-sm" aria-label={`${w("asset.upload")}: ${p.label}`} disabled={p.busy || !p.canUpload(p.kind)} onClick={() => ref.current?.click()}>
+        {p.url && p.kind !== "font" ? (
+          <img className="logo-thumb" src={p.url} alt="" style={p.dark ? { background: "#0b1f3a" } : undefined} />
+        ) : p.url ? (
+          <span className="small">✓</span>
+        ) : (
+          <span className="muted small">—</span>
+        )}
+        <button
+          type="button"
+          className="btn btn-sm"
+          aria-label={`${w("asset.upload")}: ${p.label}`}
+          disabled={p.busy || !p.canUpload(p.kind)}
+          onClick={() => ref.current?.click()}
+        >
           {w("asset.upload")}
         </button>
         <input
@@ -631,9 +750,28 @@ function TextsEditor({ cfg, onChange }: { cfg: BrandConfigInput; onChange: (v: B
       </datalist>
       {rows.map(([k, v], i) => (
         <div key={i} className="row-wrap">
-          <input list="wl-text-keys" aria-label={w("texts.key")} placeholder={w("texts.key")} value={k} maxLength={80} onChange={(e) => setKey(i, e.target.value)} />
-          <input className="grow" aria-label={w("texts.value")} placeholder={w("texts.value")} value={v} maxLength={1000} onChange={(e) => update(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
-          <button type="button" className="btn btn-ghost btn-sm" aria-label={tc("common.delete")} onClick={() => update(rows.filter((_, j) => j !== i))}>
+          <input
+            list="wl-text-keys"
+            aria-label={w("texts.key")}
+            placeholder={w("texts.key")}
+            value={k}
+            maxLength={80}
+            onChange={(e) => setKey(i, e.target.value)}
+          />
+          <input
+            className="grow"
+            aria-label={w("texts.value")}
+            placeholder={w("texts.value")}
+            value={v}
+            maxLength={1000}
+            onChange={(e) => update(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))}
+          />
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-label={tc("common.delete")}
+            onClick={() => update(rows.filter((_, j) => j !== i))}
+          >
             ✕
           </button>
         </div>
@@ -657,7 +795,10 @@ function EmailEditor(p: {
   const [locale, setLocale] = useState<Locale>(uiLocale);
   const tpl = p.cfg.templates?.[event]?.[locale] ?? {};
   const setTpl = (field: "subject" | "body" | "cta", v: string) =>
-    p.set("templates", { ...(p.cfg.templates ?? {}), [event]: { ...(p.cfg.templates?.[event] ?? {}), [locale]: { ...tpl, [field]: v } } } as BrandConfigInput["templates"]);
+    p.set("templates", {
+      ...(p.cfg.templates ?? {}),
+      [event]: { ...(p.cfg.templates?.[event] ?? {}), [locale]: { ...tpl, [field]: v } },
+    } as BrandConfigInput["templates"]);
   return (
     <>
       <h3>{w("email.sender")}</h3>
@@ -754,7 +895,10 @@ function EmailPreview({ brandId, cfg }: { brandId: string; cfg: BrandConfigInput
     // Solo vale la respuesta del último pedido: una más lenta de un pedido anterior dejaba la vista previa vieja.
     let stale = false;
     const id = window.setTimeout(() => {
-      api<BrandEmailPreview>(`/v1/settings/brands/${brandId}/preview`, { method: "POST", body: { kind: "email", event: target.event, locale: target.locale, config: JSON.parse(body) } })
+      api<BrandEmailPreview>(`/v1/settings/brands/${brandId}/preview`, {
+        method: "POST",
+        body: { kind: "email", event: target.event, locale: target.locale, config: JSON.parse(body) },
+      })
         .then((p) => {
           if (stale) return;
           setPrev(p);
@@ -820,12 +964,22 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
       ) : (
         <>
           <div className="row-wrap">
-            <input aria-label={w("domains.webLabel")} placeholder={w("domains.webPlaceholder")} value={web} onChange={(e) => setWeb(e.target.value.trim().toLowerCase())} />
-            <button type="button" className="btn btn-sm" disabled={busy || !web || !canAdd} onClick={() => {
+            <input
+              aria-label={w("domains.webLabel")}
+              placeholder={w("domains.webPlaceholder")}
+              value={web}
+              onChange={(e) => setWeb(e.target.value.trim().toLowerCase())}
+            />
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy || !web || !canAdd}
+              onClick={() => {
                 // Reemplaza el dominio actual (quizás ya verificado): se confirma antes.
                 if (d && web !== d.domain && !confirmAction()) return;
                 void run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "PUT", body: { domain: web } }), refreshBrand()));
-              }}>
+              }}
+            >
               {w("domains.add")}
             </button>
           </div>
@@ -840,14 +994,30 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
                   {w("domains.notServing")}
                 </p>
               )}
-              <code className="break">TXT {d.txtName} = {d.txtValue}</code>
-              <code className="break">CNAME {d.domain} → {d.cnameTarget}</code>
+              <code className="break">
+                TXT {d.txtName} = {d.txtValue}
+              </code>
+              <code className="break">
+                CNAME {d.domain} → {d.cnameTarget}
+              </code>
               {d.lastError && <p className="error-text">{d.lastError}</p>}
               <div className="row-wrap">
-                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/brands/${brand.id}/domain/verify`, { method: "POST" }), refreshBrand()))}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busy}
+                  onClick={() => run(async () => (await api(`/v1/settings/brands/${brand.id}/domain/verify`, { method: "POST" }), refreshBrand()))}
+                >
                   {w("domains.verify")}
                 </button>
-                <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "DELETE" }), refreshBrand()))}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={busy}
+                  onClick={() =>
+                    confirmAction() && run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "DELETE" }), refreshBrand()))
+                  }
+                >
                   {w("domains.remove")}
                 </button>
               </div>
@@ -859,8 +1029,20 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
       <h3>{w("domains.mail")}</h3>
       <p className="muted small">{w("domains.mailHint")}</p>
       <div className="row-wrap">
-        <input aria-label={w("domains.mailLabel")} placeholder={w("domains.mailPlaceholder")} value={newMail} onChange={(e) => setNewMail(e.target.value.trim().toLowerCase())} />
-        <button type="button" className="btn btn-sm" disabled={busy || !newMail || !canAdd} onClick={() => run(async () => (await api("/v1/settings/email-domains", { method: "POST", body: { domain: newMail } }), setNewMail(""), reload()))}>
+        <input
+          aria-label={w("domains.mailLabel")}
+          placeholder={w("domains.mailPlaceholder")}
+          value={newMail}
+          onChange={(e) => setNewMail(e.target.value.trim().toLowerCase())}
+        />
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={busy || !newMail || !canAdd}
+          onClick={() =>
+            run(async () => (await api("/v1/settings/email-domains", { method: "POST", body: { domain: newMail } }), setNewMail(""), reload()))
+          }
+        >
           {w("domains.add")}
         </button>
       </div>
@@ -875,7 +1057,9 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
                 <tr key={r.purpose}>
                   <td>
                     <span aria-hidden="true">{r.ok === true ? "✓" : r.ok === false ? "✕" : "·"}</span>
-                    <span className="sr-only">{w(r.ok === true ? "domains.recordOk" : r.ok === false ? "domains.recordFail" : "domains.recordUnchecked")}</span>
+                    <span className="sr-only">
+                      {w(r.ok === true ? "domains.recordOk" : r.ok === false ? "domains.recordFail" : "domains.recordUnchecked")}
+                    </span>
                   </td>
                   <td>
                     {r.type} <code className="break">{r.name}</code>
@@ -890,10 +1074,25 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
           {m.lastError && <p className="error-text">{m.lastError}</p>}
           {m.sesIdentityErrorAt && <p className="error-text">{w("domains.sesIdentityError")}</p>}
           <div className="row-wrap">
-            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), await reload(), refreshBrand()))}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() =>
+                run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), await reload(), refreshBrand()))
+              }
+            >
               {w("domains.verify")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), await reload(), refreshBrand()))}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={busy}
+              onClick={() =>
+                confirmAction() &&
+                run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), await reload(), refreshBrand()))
+              }
+            >
               {w("domains.remove")}
             </button>
           </div>

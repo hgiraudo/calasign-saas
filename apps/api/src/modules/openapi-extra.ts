@@ -116,7 +116,8 @@ const INPUT_RULES: Record<string, string> = {
   FieldCondition: "Condición de visibilidad: el campo se muestra (y exige) solo si se cumplen todas. equals y not_equals requieren value.",
   TemplateRecipientInput:
     "Destinatario real para un rol de la plantilla (roleId o el nombre del rol en role). Reglas: email o phone; el canal email requiere email y whatsapp requiere phone; solo telegram requiere telegramChatId.",
-  TemplateFieldInput: "Reglas: x + width ≤ 1 y y + height ≤ 1; un dropdown necesita options; solo un campo number puede tener formula. roleId tiene que ser un rol signer.",
+  TemplateFieldInput:
+    "Reglas: x + width ≤ 1 y y + height ≤ 1; un dropdown necesita options; solo un campo number puede tener formula. roleId tiene que ser un rol signer.",
   BulkRowInput:
     "Una fila: un destinatario por rol (role = nombre del rol, o roleId). Los datos se validan por fila como en POST /v1/envelopes/from-template; sin channels, se usa email si hay correo y si no whatsapp.",
 };
@@ -140,7 +141,10 @@ export function componentSchemas(examples: Record<string, unknown>): Record<stri
     type: "object",
     description: "Error de los endpoints /oauth/* (RFC 6749 §5.2). No usa el formato { error: { code, message } }.",
     properties: {
-      error: { type: "string", enum: ["invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope"] },
+      error: {
+        type: "string",
+        enum: ["invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope"],
+      },
       error_description: { type: "string" },
     },
     required: ["error", "error_description"],
@@ -180,7 +184,12 @@ export const ERRORS: Record<string, Err> = {
     summary: "Cuerpo o parámetros inválidos. `details` lista cada problema con su ruta (path con puntos).",
   },
   invalid_id: { status: 400, code: "invalid_id", message: "Identificador inválido", summary: "Un id de la ruta o del cuerpo no es un UUID" },
-  invalid_idempotency_key: { status: 400, code: "invalid_idempotency_key", message: "Idempotency-Key demasiado larga", summary: "Idempotency-Key de más de 200 caracteres" },
+  invalid_idempotency_key: {
+    status: 400,
+    code: "invalid_idempotency_key",
+    message: "Idempotency-Key demasiado larga",
+    summary: "Idempotency-Key de más de 200 caracteres",
+  },
   file_required: { status: 400, code: "file_required", message: "Falta el archivo (campo 'file')", summary: "Falta el campo file del multipart" },
   not_pdf: {
     status: 400,
@@ -193,7 +202,8 @@ export const ERRORS: Record<string, Err> = {
     status: 400,
     code: "pdf_restricted",
     message: "El PDF tiene restricciones de uso (permisos): volvé a exportarlo o imprimilo a PDF y subilo de nuevo.",
-    summary: "PDF cifrado solo con permisos (abre sin contraseña, pero no se puede procesar): volver a exportarlo o imprimirlo a PDF. Con contraseña de apertura el código es encrypted",
+    summary:
+      "PDF cifrado solo con permisos (abre sin contraseña, pero no se puede procesar): volver a exportarlo o imprimirlo a PDF. Con contraseña de apertura el código es encrypted",
   },
   pdf_hidden_layers: {
     status: 400,
@@ -205,13 +215,15 @@ export const ERRORS: Record<string, Err> = {
     status: 400,
     code: "pdf_form_unsupported",
     message: "El PDF tiene un formulario cuyos campos no se pueden fijar tal como se ven: imprimilo a PDF y volvé a subirlo.",
-    summary: "Los campos de formulario del PDF se fijan en la página al subirlo; uno no se pudo dibujar tal como lo muestra un lector (p. ej. NeedAppearances con caracteres que la fuente estándar no tiene). Imprimirlo a PDF",
+    summary:
+      "Los campos de formulario del PDF se fijan en la página al subirlo; uno no se pudo dibujar tal como lo muestra un lector (p. ej. NeedAppearances con caracteres que la fuente estándar no tiene). Imprimirlo a PDF",
   },
   pdf_page_size: {
     status: 400,
     code: "pdf_page_size",
     message: "El PDF tiene una página de tamaño inválido (cada lado tiene que medir entre 3 y 14400 puntos)",
-    summary: "Una página del PDF tiene área cero, medidas no finitas o un lado fuera de 3..14400 puntos (el rango de la especificación PDF). Una página sin MediaBox se toma como Carta (612×792), como los lectores",
+    summary:
+      "Una página del PDF tiene área cero, medidas no finitas o un lado fuera de 3..14400 puntos (el rango de la especificación PDF). Una página sin MediaBox se toma como Carta (612×792), como los lectores",
   },
   pdf_busy: {
     status: 503,
@@ -222,22 +234,33 @@ export const ERRORS: Record<string, Err> = {
   unknown_part: {
     status: 400,
     code: "unknown_part",
-    message: "Parte \"datos\" desconocida: el JSON va en la parte \"payload\"",
+    message: 'Parte "datos" desconocida: el JSON va en la parte "payload"',
     summary: "multipart/form-data con un campo de texto que no es `payload`",
   },
-  duplicate_part: { status: 400, code: "duplicate_part", message: "La parte \"contrato\" está repetida", summary: "Dos partes del multipart con el mismo nombre (también `payload` repetida)" },
-  invalid_json: { status: 400, code: "invalid_json", message: "La parte \"payload\" no es JSON válido", summary: "La parte `payload` del multipart no es JSON" },
+  duplicate_part: {
+    status: 400,
+    code: "duplicate_part",
+    message: 'La parte "contrato" está repetida',
+    summary: "Dos partes del multipart con el mismo nombre (también `payload` repetida)",
+  },
+  invalid_json: {
+    status: 400,
+    code: "invalid_json",
+    message: 'La parte "payload" no es JSON válido',
+    summary: "La parte `payload` del multipart no es JSON",
+  },
   too_many_documents: {
     status: 400,
     code: "too_many_documents",
     message: "Hasta 10 documentos por llamada",
     details: { max: 10 },
-    summary: "Más documentos que los admitidos (el tope va en details.max): 10 en POST /v1/envelopes y 30 por sobre o plantilla al agregar uno (también too_many_pages: más de 1000 páginas en total)",
+    summary:
+      "Más documentos que los admitidos (el tope va en details.max): 10 en POST /v1/envelopes y 30 por sobre o plantilla al agregar uno (también too_many_pages: más de 1000 páginas en total)",
   },
   duplicate_document: {
     status: 400,
     code: "duplicate_document",
-    message: "documents[1]: la parte \"contrato\" ya se usó en otro documento",
+    message: 'documents[1]: la parte "contrato" ya se usó en otro documento',
     summary: "Dos documentos citan con `file` la misma parte del multipart",
   },
   too_many_fields: {
@@ -246,14 +269,24 @@ export const ERRORS: Record<string, Err> = {
     message: "Las anclas generan más de 500 campos",
     summary: "Las anclas de texto (`anchor`) generan más de 500 campos (una por aparición: usar un texto más específico)",
   },
-  unreadable_pdf: { status: 400, code: "unreadable_pdf", message: "No se pudo leer el PDF: Invalid PDF structure", summary: "El PDF no se pudo analizar para validar sus firmas" },
+  unreadable_pdf: {
+    status: 400,
+    code: "unreadable_pdf",
+    message: "No se pudo leer el PDF: Invalid PDF structure",
+    summary: "El PDF no se pudo analizar para validar sus firmas",
+  },
   xml_sign_failed: {
     status: 400,
     code: "xml_sign_failed",
     message: "No se pudo firmar el XML: no se encontró el nodo ext:ExtensionContent",
     summary: "El XML no se pudo firmar con el perfil pedido (estructura que el perfil no admite)",
   },
-  phone_required: { status: 400, code: "phone_required", message: "El teléfono es obligatorio", summary: "El formulario pide teléfono (collectPhone) y no vino" },
+  phone_required: {
+    status: 400,
+    code: "phone_required",
+    message: "El teléfono es obligatorio",
+    summary: "El formulario pide teléfono (collectPhone) y no vino",
+  },
   invalid_form_token: {
     status: 400,
     code: "invalid_form_token",
@@ -261,14 +294,24 @@ export const ERRORS: Record<string, Err> = {
     details: { retryAfterSeconds: 3 },
     summary: "formToken vencido, ajeno o ya usado: pedir uno nuevo con GET y reenviar pasado details.retryAfterSeconds",
   },
-  invalid_event: { status: 400, code: "invalid_event", message: "Evento desconocido: envelope.archived", summary: "`event` que no es un tipo de evento de webhook" },
+  invalid_event: {
+    status: 400,
+    code: "invalid_event",
+    message: "Evento desconocido: envelope.archived",
+    summary: "`event` que no es un tipo de evento de webhook",
+  },
   invalid_target: {
     status: 400,
     code: "invalid_target",
     message: "Recurso desconocido: usá https://app.calasign.com/mcp",
     summary: "`resource` (RFC 8707) distinto del servidor MCP de CalaSign",
   },
-  public_client: { status: 400, code: "public_client", message: "Un cliente público no tiene secreto", summary: "La app es un cliente público (sin secreto): no hay secreto que rotar" },
+  public_client: {
+    status: 400,
+    code: "public_client",
+    message: "Un cliente público no tiene secreto",
+    summary: "La app es un cliente público (sin secreto): no hay secreto que rotar",
+  },
   document_fetch_failed: {
     status: 400,
     code: "document_fetch_failed",
@@ -278,21 +321,51 @@ export const ERRORS: Record<string, Err> = {
   file_part_missing: {
     status: 400,
     code: "file_part_missing",
-    message: "documents[0]: no llegó la parte de archivo \"contrato\" (multipart/form-data)",
+    message: 'documents[0]: no llegó la parte de archivo "contrato" (multipart/form-data)',
     summary: "Un documento cita con `file` una parte del multipart que no llegó",
   },
-  unused_file_part: { status: 400, code: "unused_file_part", message: "Partes de archivo que no cita ningún documento: anexo", summary: "Con `documents`, cada archivo del multipart tiene que estar citado" },
-  payload_required: { status: 400, code: "payload_required", message: "Falta la parte \"payload\" con el JSON del sobre", summary: "multipart/form-data sin la parte JSON `payload`" },
-  duplicate_ref: { status: 400, code: "duplicate_ref", message: "Hay destinatarios con el mismo ref", summary: "Dos documentos o dos destinatarios con el mismo `ref`" },
+  unused_file_part: {
+    status: 400,
+    code: "unused_file_part",
+    message: "Partes de archivo que no cita ningún documento: anexo",
+    summary: "Con `documents`, cada archivo del multipart tiene que estar citado",
+  },
+  payload_required: {
+    status: 400,
+    code: "payload_required",
+    message: 'Falta la parte "payload" con el JSON del sobre',
+    summary: "multipart/form-data sin la parte JSON `payload`",
+  },
+  duplicate_ref: {
+    status: 400,
+    code: "duplicate_ref",
+    message: "Hay destinatarios con el mismo ref",
+    summary: "Dos documentos o dos destinatarios con el mismo `ref`",
+  },
   invalid_cursor: { status: 400, code: "invalid_cursor", message: "Cursor inválido", summary: "cursor que no salió de nextCursor" },
-  invalid_range: { status: 400, code: "invalid_range", message: "Fechas inválidas (usar ISO 8601)", summary: "from/to inválidos, invertidos o rango mayor a 3 años" },
-  invalid_query: { status: 400, code: "invalid_query", message: "'from' no es una fecha válida", summary: "Filtro de fecha inválido o `sep` distinto de `,` / `;`" },
+  invalid_range: {
+    status: 400,
+    code: "invalid_range",
+    message: "Fechas inválidas (usar ISO 8601)",
+    summary: "from/to inválidos, invertidos o rango mayor a 3 años",
+  },
+  invalid_query: {
+    status: 400,
+    code: "invalid_query",
+    message: "'from' no es una fecha válida",
+    summary: "Filtro de fecha inválido o `sep` distinto de `,` / `;`",
+  },
   duplicate_ids: { status: 400, code: "duplicate_ids", message: "Ids de destinatarios repetidos", summary: "Ids repetidos en la lista" },
-  invalid_field: { status: 400, code: "invalid_field", message: "Campo 1: el destinatario no es firmante de este sobre", summary: "Campo con documento, página o destinatario inválido" },
+  invalid_field: {
+    status: 400,
+    code: "invalid_field",
+    message: "Campo 1: el destinatario no es firmante de este sobre",
+    summary: "Campo con documento, página o destinatario inválido",
+  },
   anchor_not_found: {
     status: 400,
     code: "anchor_not_found",
-    message: "Campo 1: no se encontró el texto ancla \"[firma_cliente]\"",
+    message: 'Campo 1: no se encontró el texto ancla "[firma_cliente]"',
     details: { anchor: "[firma_cliente]" },
     summary: "Ancla de texto que no aparece en el PDF (sin ignoreIfNotPresent)",
   },
@@ -302,17 +375,57 @@ export const ERRORS: Record<string, Err> = {
     message: "Origen no autorizado en la configuración de la organización: https://otra.app",
     summary: "frameAncestors fuera de los orígenes autorizados",
   },
-  invalid_origin: { status: 400, code: "invalid_origin", message: "Solo orígenes https fuera del entorno local", summary: "Origen http fuera del entorno local" },
-  invalid_url: { status: 400, code: "invalid_url", message: "La URL del webhook debe ser https", summary: "URL no https, con credenciales o a un destino local" },
-  too_many_webhooks: { status: 400, code: "too_many_webhooks", message: "Máximo 20 webhooks por organización", summary: "Tope de 20 endpoints (activos o desactivados en los últimos 30 días)" },
+  invalid_origin: {
+    status: 400,
+    code: "invalid_origin",
+    message: "Solo orígenes https fuera del entorno local",
+    summary: "Origen http fuera del entorno local",
+  },
+  invalid_url: {
+    status: 400,
+    code: "invalid_url",
+    message: "La URL del webhook debe ser https",
+    summary: "URL no https, con credenciales o a un destino local",
+  },
+  too_many_webhooks: {
+    status: 400,
+    code: "too_many_webhooks",
+    message: "Máximo 20 webhooks por organización",
+    summary: "Tope de 20 endpoints (activos o desactivados en los últimos 30 días)",
+  },
   template_empty: { status: 400, code: "template_empty", message: "La plantilla no tiene documentos", summary: "Plantilla sin documentos" },
   unknown_role: { status: 400, code: "unknown_role", message: "Rol desconocido: Garante", summary: "roleId/role que no existe en la plantilla" },
-  duplicate_role: { status: 400, code: "duplicate_role", message: "El rol Cliente tiene más de un destinatario", summary: "Dos destinatarios para el mismo rol" },
-  unknown_prefill: { status: 400, code: "unknown_prefill", message: "No hay ningún campo \"Monto\" en la plantilla", summary: "Clave de prefill que no es id ni etiqueta de un campo" },
-  readonly_field: { status: 400, code: "readonly_field", message: "El campo \"Precio\" es de solo lectura en la plantilla", summary: "Prefill de un campo de solo lectura" },
-  invalid_prefill: { status: 400, code: "invalid_prefill", message: "Campo \"Cantidad\": valor prellenado inválido (no es un número)", summary: "Valor de prefill inválido para el tipo de campo" },
+  duplicate_role: {
+    status: 400,
+    code: "duplicate_role",
+    message: "El rol Cliente tiene más de un destinatario",
+    summary: "Dos destinatarios para el mismo rol",
+  },
+  unknown_prefill: {
+    status: 400,
+    code: "unknown_prefill",
+    message: 'No hay ningún campo "Monto" en la plantilla',
+    summary: "Clave de prefill que no es id ni etiqueta de un campo",
+  },
+  readonly_field: {
+    status: 400,
+    code: "readonly_field",
+    message: 'El campo "Precio" es de solo lectura en la plantilla',
+    summary: "Prefill de un campo de solo lectura",
+  },
+  invalid_prefill: {
+    status: 400,
+    code: "invalid_prefill",
+    message: 'Campo "Cantidad": valor prellenado inválido (no es un número)',
+    summary: "Valor de prefill inválido para el tipo de campo",
+  },
   duplicate_roles: { status: 400, code: "duplicate_roles", message: "Hay dos roles con el mismo nombre", summary: "Nombres de rol repetidos" },
-  certificate_not_applicable: { status: 400, code: "certificate_not_applicable", message: "Solo un rol firmante puede firmar con certificado", summary: "signatureType certificate en un rol que no firma" },
+  certificate_not_applicable: {
+    status: 400,
+    code: "certificate_not_applicable",
+    message: "Solo un rol firmante puede firmar con certificado",
+    summary: "signatureType certificate en un rol que no firma",
+  },
   no_rows: { status: 400, code: "no_rows", message: "No hay filas para enviar", summary: "CSV o rows vacío" },
   too_many_rows: { status: 400, code: "too_many_rows", message: "Máximo 5000 filas por envío", summary: "Más de 5000 filas" },
   invalid_form: {
@@ -321,39 +434,81 @@ export const ERRORS: Record<string, Err> = {
     message: "La plantilla no queda completa con esta configuración: Faltan destinatarios para: Testigo",
     summary: "Configuración que no completa la plantilla (también invalid_role)",
   },
-  storage_provider_not_configured: { status: 409, code: "provider_not_configured", message: "Este proveedor no está configurado en el servidor", summary: "Proveedor de almacenamiento sin credenciales OAuth en el servidor" },
+  storage_provider_not_configured: {
+    status: 409,
+    code: "provider_not_configured",
+    message: "Este proveedor no está configurado en el servidor",
+    summary: "Proveedor de almacenamiento sin credenciales OAuth en el servidor",
+  },
   site_required: { status: 400, code: "site_required", message: "Indicá la URL del sitio de SharePoint", summary: "SharePoint sin siteUrl" },
-  too_many_connections: { status: 400, code: "too_many_connections", message: "Máximo 20 conexiones de almacenamiento por organización", summary: "Tope de 20 conexiones de almacenamiento" },
+  too_many_connections: {
+    status: 400,
+    code: "too_many_connections",
+    message: "Máximo 20 conexiones de almacenamiento por organización",
+    summary: "Tope de 20 conexiones de almacenamiento",
+  },
   storage_reconnect_required: {
     status: 409,
     code: "storage_reconnect_required",
     message: "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo",
     summary: "Reactivar una conexión OAuth desactivada porque quien la conectó dejó la organización",
   },
-  provider_not_configured: { status: 400, code: "provider_not_configured", message: "El proveedor stripe no está configurado en este entorno", summary: "Proveedor de cobro no configurado" },
+  provider_not_configured: {
+    status: 400,
+    code: "provider_not_configured",
+    message: "El proveedor stripe no está configurado en este entorno",
+    summary: "Proveedor de cobro no configurado",
+  },
   payment_webhook_not_configured: {
     status: 400,
     code: "payment_webhook_not_configured",
-    message: "El proveedor de cobro stripe no tiene configurado el secreto del webhook (STRIPE_WEBHOOK_SECRET) en este entorno: el pago no se podría confirmar. Quitá el cobro del sobre o elegí otro proveedor",
+    message:
+      "El proveedor de cobro stripe no tiene configurado el secreto del webhook (STRIPE_WEBHOOK_SECRET) en este entorno: el pago no se podría confirmar. Quitá el cobro del sobre o elegí otro proveedor",
     summary: "Proveedor de cobro con credenciales pero sin el secreto del webhook (el pago no se confirmaría)",
   },
   identity_level_not_supported: {
     status: 409,
     code: "identity_level_not_supported",
-    message: "La integración de Veriff declara el nivel document y el destinatario pide document_selfie: … Reiniciar no lo resuelve: elegí otro nivel o proveedor (provider/level en el pedido) o corregí la configuración",
+    message:
+      "La integración de Veriff declara el nivel document y el destinatario pide document_selfie: … Reiniciar no lo resuelve: elegí otro nivel o proveedor (provider/level en el pedido) o corregí la configuración",
     summary: "El proveedor no puede hacer el nivel pedido: reiniciar con otro nivel o proveedor",
   },
-  invalid_payer: { status: 400, code: "invalid_payer", message: "El pagador tiene que ser un firmante", summary: "payerRecipientId no es un firmante del sobre" },
-  invalid_logo: { status: 400, code: "invalid_logo", message: "El logo tiene que ser PNG, JPG o SVG", summary: "Formato no admitido o SVG con scripts/referencias externas" },
+  invalid_payer: {
+    status: 400,
+    code: "invalid_payer",
+    message: "El pagador tiene que ser un firmante",
+    summary: "payerRecipientId no es un firmante del sobre",
+  },
+  invalid_logo: {
+    status: 400,
+    code: "invalid_logo",
+    message: "El logo tiene que ser PNG, JPG o SVG",
+    summary: "Formato no admitido o SVG con scripts/referencias externas",
+  },
   identity_provider_unavailable: {
     status: 400,
     code: "identity_provider_unavailable",
     message: "El proveedor veriff no está configurado",
     summary: "Proveedor de verificación no configurado",
   },
-  invalid_role: { status: 400, code: "invalid_role", message: "Rol inexistente", summary: "Rol inválido o inexistente (una API key no puede ser owner)" },
-  invalid_group: { status: 400, code: "invalid_group", message: "Algún grupo no existe", summary: "groupIds con grupos de otra organización o inexistentes" },
-  invalid_member: { status: 400, code: "invalid_member", message: "Algún usuario no es miembro de la organización", summary: "memberIds con usuarios que no son miembros" },
+  invalid_role: {
+    status: 400,
+    code: "invalid_role",
+    message: "Rol inexistente",
+    summary: "Rol inválido o inexistente (una API key no puede ser owner)",
+  },
+  invalid_group: {
+    status: 400,
+    code: "invalid_group",
+    message: "Algún grupo no existe",
+    summary: "groupIds con grupos de otra organización o inexistentes",
+  },
+  invalid_member: {
+    status: 400,
+    code: "invalid_member",
+    message: "Algún usuario no es miembro de la organización",
+    summary: "memberIds con usuarios que no son miembros",
+  },
   invalid_text: {
     status: 400,
     code: "invalid_text",
@@ -361,9 +516,17 @@ export const ERRORS: Record<string, Err> = {
     summary: "Un texto del pedido trae el carácter NUL (\\u0000), que no se puede guardar. Puede pasar en cualquier ruta que guarda texto",
   },
 
-  unauthorized: { status: 401, code: "unauthorized", message: "Autenticación requerida", summary: "Falta la credencial o no es válida (API key revocada, token vencido)" },
+  unauthorized: {
+    status: 401,
+    code: "unauthorized",
+    message: "Autenticación requerida",
+    summary: "Falta la credencial o no es válida (API key revocada, token vencido)",
+  },
 
-  plan_limit_api: { ...planFeature("api", "El acceso por API", "starter"), summary: "El plan no incluye acceso por API (toda llamada con API key u OAuth)" },
+  plan_limit_api: {
+    ...planFeature("api", "El acceso por API", "starter"),
+    summary: "El plan no incluye acceso por API (toda llamada con API key u OAuth)",
+  },
   plan_limit_envelopes: {
     status: 402,
     code: "plan_limit",
@@ -409,12 +572,18 @@ export const ERRORS: Record<string, Err> = {
     message: "Este endpoint no está disponible con tokens OAuth",
     summary: "Ruta no disponible con tokens OAuth (solo API key o sesión)",
   },
-  session_required: { status: 403, code: "session_required", message: "Esta operación requiere iniciar sesión en la web", summary: "Solo con sesión web (no API key ni OAuth)" },
+  session_required: {
+    status: 403,
+    code: "session_required",
+    message: "Esta operación requiere iniciar sesión en la web",
+    summary: "Solo con sesión web (no API key ni OAuth)",
+  },
   two_factor_setup_required: {
     status: 403,
     code: "two_factor_setup_required",
     message: "Tu organización exige verificación en dos pasos: activala para continuar",
-    summary: "La organización exige 2FA y el usuario todavía no lo activó (todo responde esto salvo /v1/me, /v1/me/* —incluido /v1/me/2fa/*— y /v1/auth/*). Aplica a la sesión web y a los tokens OAuth de usuario (authorization_code); no aplica a API keys, a tokens client_credentials ni a sesiones o tokens OAuth obtenidos con SSO (el segundo factor lo gestiona el proveedor de identidad)",
+    summary:
+      "La organización exige 2FA y el usuario todavía no lo activó (todo responde esto salvo /v1/me, /v1/me/* —incluido /v1/me/2fa/*— y /v1/auth/*). Aplica a la sesión web y a los tokens OAuth de usuario (authorization_code); no aplica a API keys, a tokens client_credentials ni a sesiones o tokens OAuth obtenidos con SSO (el segundo factor lo gestiona el proveedor de identidad)",
   },
   bad_origin: {
     status: 403,
@@ -422,7 +591,12 @@ export const ERRORS: Record<string, Err> = {
     message: "Origen no permitido",
     summary: "Pedido que modifica con la cookie de sesión desde otro origen (header Origin ajeno, defensa CSRF). Con `Authorization` no aplica",
   },
-  ai_disabled: { status: 403, code: "ai_disabled", message: "La IA no está habilitada para esta organización", summary: "La IA está deshabilitada en la organización (Ajustes → IA)" },
+  ai_disabled: {
+    status: 403,
+    code: "ai_disabled",
+    message: "La IA no está habilitada para esta organización",
+    summary: "La IA está deshabilitada en la organización (Ajustes → IA)",
+  },
   ai_notice_required: {
     status: 403,
     code: "ai_notice_required",
@@ -439,8 +613,10 @@ export const ERRORS: Record<string, Err> = {
   metadata_changed: {
     status: 409,
     code: "metadata_changed",
-    message: "Los metadatos del contrato cambiaron mientras se extraían (alguien los editó o los volvió a extraer): revisalos y, si hace falta, volvé a extraerlos",
-    summary: "Los metadatos del contrato cambiaron (edición manual u otra extracción) mientras el modelo respondía: el resultado no se guardó (el consumo de IA se registra igual)",
+    message:
+      "Los metadatos del contrato cambiaron mientras se extraían (alguien los editó o los volvió a extraer): revisalos y, si hace falta, volvé a extraerlos",
+    summary:
+      "Los metadatos del contrato cambiaron (edición manual u otra extracción) mientras el modelo respondía: el resultado no se guardó (el consumo de IA se registra igual)",
   },
   payment_required: {
     status: 402,
@@ -449,9 +625,24 @@ export const ERRORS: Record<string, Err> = {
     details: { amount: 15000, currency: "COP", description: "Honorarios" },
     summary: "Cobro before_sign pendiente",
   },
-  identity_required: { status: 403, code: "identity_required", message: "Hace falta verificar tu identidad para continuar", summary: "Falta la verificación de identidad del firmante" },
-  invalid_brand: { status: 400, code: "invalid_brand", message: "La marca no existe en esta organización", summary: "brandId no es una sub-marca de la organización" },
-  not_found: { status: 404, code: "not_found", message: "Sobre no encontrado", summary: "No existe o la credencial no puede verlo (el mensaje nombra el recurso)" },
+  identity_required: {
+    status: 403,
+    code: "identity_required",
+    message: "Hace falta verificar tu identidad para continuar",
+    summary: "Falta la verificación de identidad del firmante",
+  },
+  invalid_brand: {
+    status: 400,
+    code: "invalid_brand",
+    message: "La marca no existe en esta organización",
+    summary: "brandId no es una sub-marca de la organización",
+  },
+  not_found: {
+    status: 404,
+    code: "not_found",
+    message: "Sobre no encontrado",
+    summary: "No existe o la credencial no puede verlo (el mensaje nombra el recurso)",
+  },
   envelope_closed: {
     status: 410,
     code: "envelope_closed",
@@ -462,7 +653,8 @@ export const ERRORS: Record<string, Err> = {
     status: 410,
     code: "form_inactive",
     message: "Este formulario ya no está disponible",
-    summary: "El formulario se desactivó o quien lo creó ya no puede crear sobres (o el plan ya no incluye formularios web). También form_expired (venció) y form_exhausted (llegó a su máximo de envíos)",
+    summary:
+      "El formulario se desactivó o quien lo creó ya no puede crear sobres (o el plan ya no incluye formularios web). También form_expired (venció) y form_exhausted (llegó a su máximo de envíos)",
   },
   form_unavailable: {
     status: 410,
@@ -503,7 +695,12 @@ export const ERRORS: Record<string, Err> = {
     message: "El mapeo es de otra cuenta de pipedrive (12345), no de la cuenta 67890 desde la que se envía",
     summary: "`companyId` no es la cuenta del CRM de la conexión del mapeo",
   },
-  delivery_pending: { status: 409, code: "delivery_pending", message: "La entrega ya se está reintentando", summary: "La entrega tiene un intento en curso o un reintento manual ya pedido" },
+  delivery_pending: {
+    status: 409,
+    code: "delivery_pending",
+    message: "La entrega ya se está reintentando",
+    summary: "La entrega tiene un intento en curso o un reintento manual ya pedido",
+  },
   endpoint_inactive: {
     status: 409,
     code: "endpoint_inactive",
@@ -513,7 +710,8 @@ export const ERRORS: Record<string, Err> = {
   template_has_forms: {
     status: 409,
     code: "template_has_forms",
-    message: "La plantilla tiene formularios web activos (Alta de clientes): quien los creó o un administrador tiene que desactivarlos o borrarlos antes",
+    message:
+      "La plantilla tiene formularios web activos (Alta de clientes): quien los creó o un administrador tiene que desactivarlos o borrarlos antes",
     details: { webForms: 1, names: ["Alta de clientes"] },
     summary: "La plantilla tiene formularios web activos (se borrarían con ella)",
   },
@@ -530,7 +728,12 @@ export const ERRORS: Record<string, Err> = {
     summary: "Se pidieron frameAncestors para un firmante con código OTP (sin frameAncestors la URL sale para pestaña)",
   },
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },
-  not_editable: { status: 409, code: "not_editable", message: "El sobre ya está finalizado", summary: "El sobre ya no admite cambios de sello o nivel de firma (solo borrador o enviado; trabado en la finalización, solo el sello)" },
+  not_editable: {
+    status: 409,
+    code: "not_editable",
+    message: "El sobre ya está finalizado",
+    summary: "El sobre ya no admite cambios de sello o nivel de firma (solo borrador o enviado; trabado en la finalización, solo el sello)",
+  },
   idempotency_mismatch: {
     status: 409,
     code: "idempotency_mismatch",
@@ -544,7 +747,12 @@ export const ERRORS: Record<string, Err> = {
     summary: "Otro pedido con la misma clave todavía se está procesando",
   },
   id_in_use: { status: 409, code: "id_in_use", message: "Id de destinatario en uso", summary: "Un id de cliente ya lo usa otro sobre" },
-  not_voidable: { status: 409, code: "not_voidable", message: "Solo se puede anular un sobre enviado y en curso", summary: "Estado distinto de sent / awaiting_certificates" },
+  not_voidable: {
+    status: 409,
+    code: "not_voidable",
+    message: "Solo se puede anular un sobre enviado y en curso",
+    summary: "Estado distinto de sent / awaiting_certificates",
+  },
   not_in_progress: { status: 409, code: "not_in_progress", message: "El sobre no está en curso", summary: "El sobre no está en estado sent" },
   identity_not_required: {
     status: 409,
@@ -552,9 +760,24 @@ export const ERRORS: Record<string, Err> = {
     message: "Este destinatario no tiene verificación de identidad",
     summary: "El destinatario (o el link) no tiene verificación de identidad",
   },
-  not_finalizing: { status: 409, code: "not_finalizing", message: "El sobre no está esperando la finalización", summary: "El sobre no está en finalizing" },
-  finalize_in_progress: { status: 409, code: "finalize_in_progress", message: "La finalización ya está en curso", summary: "Ya hay una finalización encolada o corriendo" },
-  not_available: { status: 409, code: "not_available", message: "El sobre no está en curso", summary: "Sobre no enviado o destinatario todavía no activo" },
+  not_finalizing: {
+    status: 409,
+    code: "not_finalizing",
+    message: "El sobre no está esperando la finalización",
+    summary: "El sobre no está en finalizing",
+  },
+  finalize_in_progress: {
+    status: 409,
+    code: "finalize_in_progress",
+    message: "La finalización ya está en curso",
+    summary: "Ya hay una finalización encolada o corriendo",
+  },
+  not_available: {
+    status: 409,
+    code: "not_available",
+    message: "El sobre no está en curso",
+    summary: "Sobre no enviado o destinatario todavía no activo",
+  },
   not_replaceable: {
     status: 409,
     code: "not_replaceable",
@@ -574,24 +797,46 @@ export const ERRORS: Record<string, Err> = {
     message: "No hay filas para reintentar",
     summary: "No hay filas fallidas reintentables (las de datos inválidos se corrigen en un envío nuevo; también not_retryable si se canceló)",
   },
-  conflict: { status: 409, code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá", summary: "Carrera contra una restricción única" },
+  conflict: {
+    status: 409,
+    code: "conflict",
+    message: "El recurso ya existe o cambió al mismo tiempo; reintentá",
+    summary: "Carrera contra una restricción única",
+  },
   clause_in_use: {
     status: 409,
     code: "clause_in_use",
     message: "La cláusula se usa en: Contrato de servicios",
     details: { templates: [{ id: "0190f0a0-0000-7000-8000-000000000001", name: "Contrato de servicios" }], clauses: [] },
-    summary: "La cláusula la citan plantillas de documentos no archivadas u otras cláusulas (details.templates y details.clauses): quitar esas citas antes de borrarla",
+    summary:
+      "La cláusula la citan plantillas de documentos no archivadas u otras cláusulas (details.templates y details.clauses): quitar esas citas antes de borrarla",
   },
   template_syntax: {
     status: 400,
     code: "template_syntax",
     message: "Línea 3: falta {{/if}}",
     details: { line: 3 },
-    summary: "Error de sintaxis de la plantilla o cláusula (details.line; 0 si no es de una línea): ciclo de cláusulas, más de 8 niveles de cláusulas, rol de más de 80 caracteres o documento generado demasiado grande",
+    summary:
+      "Error de sintaxis de la plantilla o cláusula (details.line; 0 si no es de una línea): ciclo de cláusulas, más de 8 niveles de cláusulas, rol de más de 80 caracteres o documento generado demasiado grande",
   },
-  role_conflict: { status: 409, code: "role_exists", message: "Ya existe un rol con ese nombre", summary: "Nombre repetido (role_exists / group_exists) o rol en uso (role_in_use)" },
-  last_owner: { status: 409, code: "last_owner", message: "La organización tiene que tener al menos un propietario", summary: "Dejaría a la organización sin propietario" },
-  already_member: { status: 409, code: "already_member", message: "Esa persona ya es miembro de la organización", summary: "Invitación a un miembro existente" },
+  role_conflict: {
+    status: 409,
+    code: "role_exists",
+    message: "Ya existe un rol con ese nombre",
+    summary: "Nombre repetido (role_exists / group_exists) o rol en uso (role_in_use)",
+  },
+  last_owner: {
+    status: 409,
+    code: "last_owner",
+    message: "La organización tiene que tener al menos un propietario",
+    summary: "Dejaría a la organización sin propietario",
+  },
+  already_member: {
+    status: 409,
+    code: "already_member",
+    message: "Esa persona ya es miembro de la organización",
+    summary: "Invitación a un miembro existente",
+  },
   enable_2fa_first: {
     status: 409,
     code: "enable_2fa_first",
@@ -605,7 +850,12 @@ export const ERRORS: Record<string, Err> = {
     message: "Ana Pérez ya firmó o terminó su participación: no se puede modificar",
     summary: "Corrección no aplicable (también recipient_viewed, routing_passed, recipient_is_payer, id_in_use, not_in_progress)",
   },
-  not_completed: { status: 409, code: "not_completed", message: "El sobre todavía no está completado", summary: "El documento final todavía no existe" },
+  not_completed: {
+    status: 409,
+    code: "not_completed",
+    message: "El sobre todavía no está completado",
+    summary: "El documento final todavía no existe",
+  },
   email_taken: { status: 409, code: "email_taken", message: "Ya existe una cuenta con ese correo", summary: "Correo ya registrado" },
   template_id_in_use: { status: 400, code: "id_in_use", message: "Id de rol en uso", summary: "Un id de rol ya lo usa otra plantilla" },
   invalid_contact: {
@@ -686,18 +936,29 @@ export const ERRORS: Record<string, Err> = {
     status: 422,
     code: "rows_invalid",
     message: "1 de 2 filas tienen errores",
-    details: { total: 2, valid: 1, invalid: 1, errors: [{ row: 2, errors: ["Cliente.email: Invalid email"] }], columns: ["Cliente.name", "Cliente.email"] },
+    details: {
+      total: 2,
+      valid: 1,
+      invalid: 1,
+      errors: [{ row: 2, errors: ["Cliente.email: Invalid email"] }],
+      columns: ["Cliente.name", "Cliente.email"],
+    },
     summary: "Filas inválidas sin skipInvalid (details = BulkValidationResult)",
   },
   invalid_csv: {
     status: 422,
     code: "invalid_csv",
-    message: "Columna \"Garante.email\": no hay ningún rol \"Garante\" en la plantilla",
-    details: { fileErrors: ["Columna \"Garante.email\": no hay ningún rol \"Garante\" en la plantilla"], columns: ["Garante.email"] },
+    message: 'Columna "Garante.email": no hay ningún rol "Garante" en la plantilla',
+    details: { fileErrors: ['Columna "Garante.email": no hay ningún rol "Garante" en la plantilla'], columns: ["Garante.email"] },
     summary: "Encabezados del CSV que no corresponden a la plantilla",
   },
 
-  pdf_too_heavy: { status: 422, code: "pdf_too_heavy", message: "El PDF es demasiado pesado para leer su texto", summary: "No se pudo leer el texto del PDF para buscar las anclas" },
+  pdf_too_heavy: {
+    status: 422,
+    code: "pdf_too_heavy",
+    message: "El PDF es demasiado pesado para leer su texto",
+    summary: "No se pudo leer el texto del PDF para buscar las anclas",
+  },
   pdf_reader_busy: {
     status: 503,
     code: "pdf_reader_busy",
@@ -705,7 +966,12 @@ export const ERRORS: Record<string, Err> = {
     summary: "Lector de PDF saturado. Reintentable: repetir en unos segundos (con espera creciente)",
   },
 
-  invalid_date: { status: 400, code: "invalid_date", message: "Fecha fuera de rango o inválida", summary: "Fecha que no existe o fuera del rango admitido (p. ej. año 0)" },
+  invalid_date: {
+    status: 400,
+    code: "invalid_date",
+    message: "Fecha fuera de rango o inválida",
+    summary: "Fecha que no existe o fuera del rango admitido (p. ej. año 0)",
+  },
   too_many_replacements: {
     status: 409,
     code: "too_many_replacements",
@@ -718,7 +984,12 @@ export const ERRORS: Record<string, Err> = {
     message: "El rol del miembro cambió mientras tanto: volvé a cargar y probá de nuevo",
     summary: "El rol del miembro cambió durante el pedido: volver a leerlo y repetir",
   },
-  export_in_progress: { status: 409, code: "export_in_progress", message: "La exportación ya está en curso", summary: "La exportación está pendiente o subiéndose (solo se reintenta una fallida o una pendiente abandonada)" },
+  export_in_progress: {
+    status: 409,
+    code: "export_in_progress",
+    message: "La exportación ya está en curso",
+    summary: "La exportación está pendiente o subiéndose (solo se reintenta una fallida o una pendiente abandonada)",
+  },
   archive_renewal_limit: {
     status: 409,
     code: "archive_renewal_limit",
@@ -838,7 +1109,8 @@ export const ERRORS: Record<string, Err> = {
     status: 429,
     code: "workflow_rate_limited",
     message: "Demasiadas ejecuciones de este workflow: probá más tarde",
-    summary: "Tope de 60 ejecuciones públicas por hora por workflow, y uno por organización compartido con los formularios web (por hora y por día). Sin Retry-After.",
+    summary:
+      "Tope de 60 ejecuciones públicas por hora por workflow, y uno por organización compartido con los formularios web (por hora y por día). Sin Retry-After.",
   },
   captcha_failed: {
     status: 400,
@@ -923,28 +1195,33 @@ export const ERRORS: Record<string, Err> = {
     status: 503,
     code: "storage_unavailable",
     message: "El almacenamiento de documentos no está disponible en este momento. Probá de nuevo en unos minutos.",
-    summary: "Falla transitoria del almacenamiento de documentos (o de KMS). Reintentable: repetir en unos minutos. Puede pasar en cualquier ruta que lee o guarda archivos",
+    summary:
+      "Falla transitoria del almacenamiento de documentos (o de KMS). Reintentable: repetir en unos minutos. Puede pasar en cualquier ruta que lee o guarda archivos",
   },
   byok_key_unavailable: {
     status: 503,
     code: "byok_key_unavailable",
-    message: "La clave de cifrado de tu organización (BYOK) no está disponible: no se pueden guardar ni leer documentos hasta que se restablezca el acceso a la clave.",
+    message:
+      "La clave de cifrado de tu organización (BYOK) no está disponible: no se pueden guardar ni leer documentos hasta que se restablezca el acceso a la clave.",
     details: { keyArn: "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab", cause: "AccessDeniedException" },
-    summary: "La clave KMS propia de la organización (BYOK) está deshabilitada o sin permiso para CalaSign. NO reintentar: requiere que un administrador restablezca el acceso a la clave (Ajustes → Datos)",
+    summary:
+      "La clave KMS propia de la organización (BYOK) está deshabilitada o sin permiso para CalaSign. NO reintentar: requiere que un administrador restablezca el acceso a la clave (Ajustes → Datos)",
   },
   wrong_cell: {
     status: 421,
     code: "wrong_cell",
     message: "Los datos de esta organización están en otra región",
     details: { cell: "eu", baseUrl: "https://eu.calasign.com" },
-    summary: "La organización está en otra celda (región): repetir el pedido en details.baseUrl (el header Location trae la URL completa). details.baseUrl puede ser null si esa celda no tiene URL propia",
+    summary:
+      "La organización está en otra celda (región): repetir el pedido en details.baseUrl (el header Location trae la URL completa). details.baseUrl puede ser null si esa celda no tiene URL propia",
   },
 
   rate_limited: {
     status: 429,
     code: "rate_limited",
     message: "Demasiados pedidos seguidos: esperá 42 s y reintentá",
-    summary: "Límite de pedidos (por credencial o, sin ella, por IP) superado: esperar lo que indica Retry-After (segundos) y reintentar. Versiones anteriores de la API respondían este 429 con el código bad_request.",
+    summary:
+      "Límite de pedidos (por credencial o, sin ella, por IP) superado: esperar lo que indica Retry-After (segundos) y reintentar. Versiones anteriores de la API respondían este 429 con el código bad_request.",
   },
 };
 
@@ -990,7 +1267,12 @@ const RATE_HEADERS = {
   "X-RateLimit-Reset": { $ref: "#/components/headers/RateLimitReset" },
 };
 
-const LOCATION_HEADER = { Location: { description: "URL del mismo pedido en el despliegue que atiende la celda de la organización (si tiene URL propia).", schema: { type: "string" } } };
+const LOCATION_HEADER = {
+  Location: {
+    description: "URL del mismo pedido en el despliegue que atiende la celda de la organización (si tiene URL propia).",
+    schema: { type: "string" },
+  },
+};
 
 function errorResponse(status: number, codes: string[]) {
   const examples = Object.fromEntries(codes.map((c) => [c, { $ref: `#/components/examples/${c}` }]));
@@ -1004,25 +1286,41 @@ function errorResponse(status: number, codes: string[]) {
 export function errorComponents() {
   const examples: Record<string, unknown> = {};
   for (const [k, e] of Object.entries(ERRORS)) {
-    examples[k] = { summary: e.summary, value: { error: { code: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) } } };
+    examples[k] = {
+      summary: e.summary,
+      value: { error: { code: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) } },
+    };
   }
   const responses: Record<string, unknown> = {};
   for (const c of COMMON) responses[c.name] = errorResponse(c.status, c.codes);
   responses.OAuthError = {
-    description: "Error OAuth (RFC 6749): invalid_request, invalid_grant, invalid_scope, unauthorized_client, unsupported_grant_type (400) o invalid_client (401)",
-    content: { "application/json": { schema: ref("OAuthError"), example: { error: "invalid_grant", error_description: "El código venció o ya se usó" } } },
+    description:
+      "Error OAuth (RFC 6749): invalid_request, invalid_grant, invalid_scope, unauthorized_client, unsupported_grant_type (400) o invalid_client (401)",
+    content: {
+      "application/json": { schema: ref("OAuthError"), example: { error: "invalid_grant", error_description: "El código venció o ya se usó" } },
+    },
   };
   const int = (description: string) => ({ description, schema: { type: "integer" } });
   return {
     examples,
     responses,
     headers: {
-      RetryAfter: int("Segundos hasta que se renueva la ventana. Solo en el 429 del límite de pedidos: los 429 con código propio (topes de negocio como reminded_recently) no lo traen y no se reintentan en un loop."),
-      RateLimitLimit: int("Pedidos permitidos en la ventana (600/min por credencial o, sin ella, por IP en general; algunas rutas tienen un límite menor)."),
+      RetryAfter: int(
+        "Segundos hasta que se renueva la ventana. Solo en el 429 del límite de pedidos: los 429 con código propio (topes de negocio como reminded_recently) no lo traen y no se reintentan en un loop.",
+      ),
+      RateLimitLimit: int(
+        "Pedidos permitidos en la ventana (600/min por credencial o, sin ella, por IP en general; algunas rutas tienen un límite menor).",
+      ),
       RateLimitRemaining: int("Pedidos que quedan en la ventana actual."),
       RateLimitReset: int("Segundos hasta que se renueva la ventana."),
-      TimeZone: { description: "Zona horaria IANA (nombre canónico) usada en las columnas *_local: la pedida con `tz`, o UTC si no se reconoce.", schema: { type: "string" } },
-      IdempotentReplay: { description: "\"true\" cuando la respuesta es la guardada de un pedido anterior con la misma Idempotency-Key.", schema: { type: "string", enum: ["true"] } },
+      TimeZone: {
+        description: "Zona horaria IANA (nombre canónico) usada en las columnas *_local: la pedida con `tz`, o UTC si no se reconoce.",
+        schema: { type: "string" },
+      },
+      IdempotentReplay: {
+        description: '"true" cuando la respuesta es la guardada de un pedido anterior con la misma Idempotency-Key.',
+        schema: { type: "string", enum: ["true"] },
+      },
     },
   };
 }
@@ -1043,7 +1341,11 @@ export function errorResponses(op: Op, oauthDenied: boolean): Record<string, unk
   const hasPath = /\{\w+\}/.test(op.path);
   if (auth === "client") {
     // /oauth/*: errores RFC 6749, no el formato de la API.
-    return { "400": { $ref: "#/components/responses/OAuthError" }, "401": { $ref: "#/components/responses/OAuthError" }, "429": { $ref: "#/components/responses/TooManyRequests" } };
+    return {
+      "400": { $ref: "#/components/responses/OAuthError" },
+      "401": { $ref: "#/components/responses/OAuthError" },
+      "429": { $ref: "#/components/responses/TooManyRequests" },
+    };
   }
   // Registro dinámico: errores RFC 7591 con el mismo formato { error, error_description }; no autentica cliente (sin 401).
   if (op.path === "/oauth/register") {
@@ -1149,7 +1451,13 @@ function pathParam(path: string, name: string): Record<string, unknown> {
     isUuid = hit ? hit[2] : false;
   }
   if (name === "index") return { name, in: "path", required: true, description, schema: { type: "integer", minimum: 0 } };
-  return { name, in: "path", required: true, ...(description ? { description: isUuid ? `${description} (UUID)` : description } : {}), schema: isUuid ? { type: "string", format: "uuid" } : { type: "string" } };
+  return {
+    name,
+    in: "path",
+    required: true,
+    ...(description ? { description: isUuid ? `${description} (UUID)` : description } : {}),
+    schema: isUuid ? { type: "string", format: "uuid" } : { type: "string" },
+  };
 }
 
 /** Parámetros de ruta como $ref a components.parameters (se registran al usarlos). */
@@ -1165,7 +1473,13 @@ export function pathParams(path: string) {
 }
 
 export function queryParams(q: QueryParam[] | undefined) {
-  return (q ?? []).map((p) => ({ name: p.name, in: "query", required: p.required ?? false, description: p.description, schema: p.schema ?? { type: "string" } }));
+  return (q ?? []).map((p) => ({
+    name: p.name,
+    in: "query",
+    required: p.required ?? false,
+    description: p.description,
+    schema: p.schema ?? { type: "string" },
+  }));
 }
 
 // ───────────────────────────── operationId ─────────────────────────────
@@ -1206,14 +1520,14 @@ const AGREEMENT_FILTERS: QueryParam[] = [
 /** Parámetros de query de operaciones definidas en otros módulos (ai, acuerdos, CRM). Clave: "método ruta". */
 export const EXTRA_QUERY: Record<string, QueryParam[]> = {
   "get /v1/envelopes/{id}/ai/preview": [
-    { name: "feature", description: "Funcionalidad cuyo texto se previsualiza (por defecto summary).", schema: { type: "string", enum: ["detect_fields", "summary", "ask", "extract_metadata", "playbook_review"] } },
+    {
+      name: "feature",
+      description: "Funcionalidad cuyo texto se previsualiza (por defecto summary).",
+      schema: { type: "string", enum: ["detect_fields", "summary", "ask", "extract_metadata", "playbook_review"] },
+    },
     { name: "documentId", description: "Solo ese documento del sobre.", schema: { type: "string", format: "uuid" } },
   ],
-  "get /v1/agreements": [
-    ...AGREEMENT_FILTERS,
-    { name: "cursor", description: "nextCursor de la página anterior." },
-    LIMIT(25, 100),
-  ],
+  "get /v1/agreements": [...AGREEMENT_FILTERS, { name: "cursor", description: "nextCursor de la página anterior." }, LIMIT(25, 100)],
   "get /v1/agreements/export.csv": AGREEMENT_FILTERS,
   "get /v1/crm/mappings": [
     { name: "connectionId", description: "Solo los mapeos de esa conexión.", schema: { type: "string", format: "uuid" } },
@@ -1229,7 +1543,9 @@ export const EXTRA_QUERY: Record<string, QueryParam[]> = {
       schema: { type: "string", pattern: "^[A-Za-z0-9_-]{1,64}$" },
     },
   ],
-  "get /v1/crm/links": [{ name: "envelopeId", description: "Sobre cuyos vínculos se listan.", required: true, schema: { type: "string", format: "uuid" } }],
+  "get /v1/crm/links": [
+    { name: "envelopeId", description: "Sobre cuyos vínculos se listan.", required: true, schema: { type: "string", format: "uuid" } },
+  ],
   "get /v1/crm/runs": [
     { name: "connectionId", description: "Solo esa conexión.", schema: { type: "string", format: "uuid" } },
     { name: "envelopeId", description: "Solo ese sobre.", schema: { type: "string", format: "uuid" } },
@@ -1237,10 +1553,16 @@ export const EXTRA_QUERY: Record<string, QueryParam[]> = {
     LIMIT(50, 200),
   ],
   "get /v1/connectors/flows": [{ name: "connectionId", description: "Solo los flujos de esa conexión.", schema: { type: "string", format: "uuid" } }],
-  "get /v1/connectors/links": [{ name: "envelopeId", description: "Sobre cuyos vínculos se listan.", required: true, schema: { type: "string", format: "uuid" } }],
+  "get /v1/connectors/links": [
+    { name: "envelopeId", description: "Sobre cuyos vínculos se listan.", required: true, schema: { type: "string", format: "uuid" } },
+  ],
   "get /v1/connectors/connections/{id}/records": [
     { name: "q", description: "Texto a buscar (nombre, correo o título)." },
-    { name: "objectType", description: "Tipo de registro (por defecto el primero del proveedor).", schema: { type: "string", enum: ["employee", "workflow", "record", "contract"] } },
+    {
+      name: "objectType",
+      description: "Tipo de registro (por defecto el primero del proveedor).",
+      schema: { type: "string", enum: ["employee", "workflow", "record", "contract"] },
+    },
   ],
   "get /v1/connectors/runs": [
     { name: "connectionId", description: "Solo esa conexión.", schema: { type: "string", format: "uuid" } },
@@ -1300,13 +1622,22 @@ export const TAGS: [string, string][] = [
   ["Workflows", "Flujos de aprobación y recolección de datos antes de firmar."],
   ["Negociación", "Redlining y propuestas entre las partes antes de firmar."],
   ["CRM y ERP", "HubSpot, Salesforce, Siigo y Alegra: enviar desde un registro y devolver el resultado."],
-  ["RR. HH. y contratos", "BambooHR, HiBob, Factorial, Ironclad y Juro: enviar desde un empleado o contrato y devolver el documento firmado con su evidencia."],
-  ["Avisos a canales", "Avisos de eventos de sobres a canales de Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat o Webex (webhook entrante)."],
+  [
+    "RR. HH. y contratos",
+    "BambooHR, HiBob, Factorial, Ironclad y Juro: enviar desde un empleado o contrato y devolver el documento firmado con su evidencia.",
+  ],
+  [
+    "Avisos a canales",
+    "Avisos de eventos de sobres a canales de Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat o Webex (webhook entrante).",
+  ],
   ["Almacenamiento", "Copia automática de los PDF firmados a Google Drive, Dropbox, OneDrive o S3."],
   ["Reportes", "Estadísticas de actividad y exportación de sobres."],
   ["OAuth 2.0", "Apps OAuth y tokens (client_credentials, authorization_code con PKCE, refresh_token)."],
   ["Identidad", "Cuenta, sesión y API keys."],
-  ["Equipo", "Miembros, invitaciones, roles y permisos, grupos y visibilidad compartida; SSO, aprovisionamiento SCIM y direcciones suprimidas por quejas."],
+  [
+    "Equipo",
+    "Miembros, invitaciones, roles y permisos, grupos y visibilidad compartida; SSO, aprovisionamiento SCIM y direcciones suprimidas por quejas.",
+  ],
   ["Auditoría", "Registro de acciones administrativas de la cuenta."],
   ["Marca", "Color, logo y pie de correo de la organización."],
   ["Dominio propio", "Dominio de la organización para los links de firma."],
@@ -1324,7 +1655,8 @@ const WEBHOOK_TEXT: Record<string, string> = {
   "envelope.expired": "El sobre venció sin completarse.",
   "recipient.viewed": "Un destinatario abrió el sobre (data.recipientId).",
   "recipient.signed": "Un destinatario firmó (data.recipientId).",
-  "recipient.declined": "Un destinatario rechazó (data.recipientId, data.reason; en la evidencia también identityVerified y, en persona, inPersonConfirmed).",
+  "recipient.declined":
+    "Un destinatario rechazó (data.recipientId, data.reason; en la evidencia también identityVerified y, en persona, inPersonConfirmed).",
   "recipient.approved": "Un aprobador aprobó (data.recipientId).",
   "webhook.test": "Evento de prueba (POST /v1/webhooks/{id}/test); data.envelope es null.",
 };
@@ -1334,9 +1666,12 @@ export function webhooksObject() {
   const params = [
     header(
       "CalaSign-Signature",
-      "t=<unix>,v1=<hex>. v1 = HMAC-SHA256(secreto whsec_…, \"<t>.<cuerpo crudo>\"). Durante el período de gracia de una rotación (POST /v1/webhooks/{id}/rotate-secret) lleva un v1 por secreto vigente (t=…,v1=<nuevo>,v1=<anterior>): aceptar si alguno coincide. Verificar con el cuerpo tal cual llega y rechazar timestamps viejos. Se recalcula en cada intento.",
+      't=<unix>,v1=<hex>. v1 = HMAC-SHA256(secreto whsec_…, "<t>.<cuerpo crudo>"). Durante el período de gracia de una rotación (POST /v1/webhooks/{id}/rotate-secret) lleva un v1 por secreto vigente (t=…,v1=<nuevo>,v1=<anterior>): aceptar si alguno coincide. Verificar con el cuerpo tal cual llega y rechazar timestamps viejos. Se recalcula en cada intento.',
     ),
-    header("CalaSign-Event-Id", "Id del evento (= cuerpo.id). Igual en todos los reintentos, en todos los endpoints que lo reciben y en GET /v1/events: usarlo para deduplicar."),
+    header(
+      "CalaSign-Event-Id",
+      "Id del evento (= cuerpo.id). Igual en todos los reintentos, en todos los endpoints que lo reciben y en GET /v1/events: usarlo para deduplicar.",
+    ),
     header("CalaSign-Event-Type", "Tipo de evento (= cuerpo.type)."),
     header("CalaSign-Delivery-Id", "Id de la entrega (una por endpoint); es el que se reintenta con POST /v1/webhook-deliveries/{id}/retry."),
   ];

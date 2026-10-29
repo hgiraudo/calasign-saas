@@ -55,11 +55,14 @@ function client() {
 function getWithHost(path, host, extraHeaders = {}) {
   const u = new URL(BASE + path);
   return new Promise((resolve, reject) => {
-    const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: "GET", headers: { host, ...extraHeaders } }, (res) => {
-      let body = "";
-      res.on("data", (c) => (body += c));
-      res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers }));
-    });
+    const req = httpRequest(
+      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: "GET", headers: { host, ...extraHeaders } },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers }));
+      },
+    );
     req.on("error", reject);
     req.end();
   });
@@ -86,7 +89,13 @@ async function startServer(handler) {
 const CHANNEL_RECEIVERS = {
   slack: { status: 200, valid: (b) => typeof b.text === "string" },
   teams: { status: 202, valid: (b) => b.type === "message" && b.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" },
-  discord: { status: 204, valid: (b) => Array.isArray(b.embeds) && b.embeds.length <= 10 && b.embeds.every((e) => (e.title ?? "").length <= 256 && (e.description ?? "").length <= 4096) },
+  discord: {
+    status: 204,
+    valid: (b) =>
+      Array.isArray(b.embeds) &&
+      b.embeds.length <= 10 &&
+      b.embeds.every((e) => (e.title ?? "").length <= 256 && (e.description ?? "").length <= 4096),
+  },
   google_chat: { status: 200, valid: (b) => Array.isArray(b.cardsV2) && !!b.cardsV2[0]?.card?.header },
   mattermost: { status: 200, valid: (b) => !!(b.text || b.attachments?.length) },
   rocketchat: { status: 200, valid: (b) => !!(b.text || b.attachments?.length) },
@@ -156,14 +165,29 @@ async function linkFor(api, name) {
 
 /** Sobre de un firmante, enviado. Devuelve ids y el nombre del firmante. */
 async function sendEnvelope(api, label, opts = {}) {
-  const { envelope } = await api("POST", "/v1/envelopes", { subject: `Plataforma ${label} ${stamp}${opts.subjectSuffix ?? ""}` }, { bearer: opts.bearer });
+  const { envelope } = await api(
+    "POST",
+    "/v1/envelopes",
+    { subject: `Plataforma ${label} ${stamp}${opts.subjectSuffix ?? ""}` },
+    { bearer: opts.bearer },
+  );
   const fd = new FormData();
   fd.append("file", new Blob([tinyPdf(label)], { type: "application/pdf" }), "contrato.pdf");
   const doc = await api("POST", `/v1/envelopes/${envelope.id}/documents`, fd, { bearer: opts.bearer });
   const signerId = randomUUID();
   const signerName = `Firmante ${label} ${stamp}`;
-  await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, { recipients: [{ id: signerId, name: signerName, email: `f-${label}-${stamp}@example.com`, routingOrder: 1 }] }, { bearer: opts.bearer });
-  await api("PUT", `/v1/envelopes/${envelope.id}/fields`, { fields: [{ documentId: doc.id, recipientId: signerId, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }] }, { bearer: opts.bearer });
+  await api(
+    "PUT",
+    `/v1/envelopes/${envelope.id}/recipients`,
+    { recipients: [{ id: signerId, name: signerName, email: `f-${label}-${stamp}@example.com`, routingOrder: 1 }] },
+    { bearer: opts.bearer },
+  );
+  await api(
+    "PUT",
+    `/v1/envelopes/${envelope.id}/fields`,
+    { fields: [{ documentId: doc.id, recipientId: signerId, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }] },
+    { bearer: opts.bearer },
+  );
   await api("POST", `/v1/envelopes/${envelope.id}/send`, undefined, { bearer: opts.bearer });
   return { envelopeId: envelope.id, signerName };
 }
@@ -188,7 +212,12 @@ function pkcePair() {
 // ═════════════════════════ 1. OAuth 2.0 ═════════════════════════
 
 const owner = client();
-await owner("POST", "/v1/auth/signup", { name: "Dueña Plataforma", email: `owner-plat+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Plataforma ${stamp}` });
+await owner("POST", "/v1/auth/signup", {
+  name: "Dueña Plataforma",
+  email: `owner-plat+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Plataforma ${stamp}`,
+});
 const myEnvelope = await sendEnvelope(owner, "propio");
 ok("alta de cuenta y un sobre propio");
 
@@ -209,7 +238,10 @@ ok(`app OAuth confidencial ${CLIENT_ID} (secreto mostrado una sola vez; identida
 
 // ── client_credentials ──
 let r = await oauthPost("/oauth/token", { grant_type: "client_credentials" }, [CLIENT_ID, SECRET]);
-assert(r.status === 200 && r.body.access_token?.startsWith("csat_") && r.body.expires_in === 3600 && !r.body.refresh_token, `client_credentials: ${JSON.stringify(r.body)}`);
+assert(
+  r.status === 200 && r.body.access_token?.startsWith("csat_") && r.body.expires_in === 3600 && !r.body.refresh_token,
+  `client_credentials: ${JSON.stringify(r.body)}`,
+);
 assert(r.headers.get("cache-control") === "no-store", "respuesta de token con Cache-Control: no-store");
 const cc = r.body.access_token;
 assert(!r.body.scope.includes("offline_access"), "client_credentials no recibe offline_access");
@@ -220,7 +252,10 @@ assert(r.status === 400 && r.body.error === "invalid_scope", "scope fuera de la 
 
 const appEnv = await sendEnvelope(owner, "app", { bearer: cc });
 const ccList = await owner("GET", "/v1/envelopes", undefined, { bearer: cc });
-assert(ccList.items.some((e) => e.id === appEnv.envelopeId), "la app ve su sobre");
+assert(
+  ccList.items.some((e) => e.id === appEnv.envelopeId),
+  "la app ve su sobre",
+);
 assert(!ccList.items.some((e) => e.id === myEnvelope.envelopeId), "la app con rol member NO ve los sobres de la dueña (RBAC ∩ scopes)");
 let res = await owner("GET", `/v1/envelopes/${myEnvelope.envelopeId}`, undefined, { bearer: cc, raw: true });
 assert(res.status === 404, `sobre ajeno → 404 (fue ${res.status})`);
@@ -254,34 +289,59 @@ const authorizeParams = (pk, extra = {}) => ({
 });
 let pk = pkcePair();
 const info = await owner("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authorizeParams(pk))}`);
-assert(info.client.name === "ERP de prueba" && info.scopes.length === 2 && !info.previouslyApproved, "pantalla de consentimiento con la app y los scopes");
-res = await owner("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authorizeParams(pk, { redirect_uri: "https://evil.example.com/cb" }))}`, undefined, { raw: true });
+assert(
+  info.client.name === "ERP de prueba" && info.scopes.length === 2 && !info.previouslyApproved,
+  "pantalla de consentimiento con la app y los scopes",
+);
+res = await owner(
+  "GET",
+  `/v1/oauth/authorize/info?${new URLSearchParams(authorizeParams(pk, { redirect_uri: "https://evil.example.com/cb" }))}`,
+  undefined,
+  { raw: true },
+);
 assert(res.status === 400 && (await res.json()).error.code === "invalid_redirect_uri", "redirect_uri no registrada → 400 (sin redirigir)");
-res = await owner("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authorizeParams(pk, { scope: "members:write" }))}`, undefined, { raw: true });
+res = await owner("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authorizeParams(pk, { scope: "members:write" }))}`, undefined, {
+  raw: true,
+});
 assert(res.status === 400, "scope no habilitado en la app → 400");
 res = await owner("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authorizeParams(pk))}`, undefined, { bearer: cc, raw: true });
 assert(res.status === 403, "el consentimiento no se puede dar con un token");
 
 const denied = await owner("POST", "/v1/oauth/authorize/decision", { ...authorizeParams(pk), approve: false });
 const deniedUrl = new URL(denied.redirectTo);
-assert(deniedUrl.searchParams.get("error") === "access_denied" && deniedUrl.searchParams.get("state") === "st-123", "rechazo → access_denied con state");
+assert(
+  deniedUrl.searchParams.get("error") === "access_denied" && deniedUrl.searchParams.get("state") === "st-123",
+  "rechazo → access_denied con state",
+);
 
 let decision = await owner("POST", "/v1/oauth/authorize/decision", { ...authorizeParams(pk), approve: true });
 let cb = new URL(decision.redirectTo);
 assert(cb.origin + cb.pathname === REDIRECT && cb.searchParams.get("state") === "st-123", "redirige a la URI registrada con el state");
 let code = cb.searchParams.get("code");
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pkcePair().verifier }, [CLIENT_ID, SECRET]);
+r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pkcePair().verifier }, [
+  CLIENT_ID,
+  SECRET,
+]);
 assert(r.status === 400 && r.body.error === "invalid_grant", "PKCE con otro verifier → invalid_grant");
 
 // El intento fallido no gasta el código (se revalida en la transacción), pero un canje exitoso sí.
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pk.verifier }, [CLIENT_ID, SECRET]);
+r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pk.verifier }, [
+  CLIENT_ID,
+  SECRET,
+]);
 assert(r.status === 200 && r.body.refresh_token?.startsWith("csrt_"), `canje del código: ${JSON.stringify(r.body)}`);
 const userAccess = r.body.access_token;
 const userList = await owner("GET", "/v1/envelopes", undefined, { bearer: userAccess });
-assert(userList.items.some((e) => e.id === myEnvelope.envelopeId), "token del usuario ve sus sobres");
+assert(
+  userList.items.some((e) => e.id === myEnvelope.envelopeId),
+  "token del usuario ve sus sobres",
+);
 res = await owner("POST", "/v1/envelopes", { subject: "no" }, { bearer: userAccess, raw: true });
 assert(res.status === 403, "sin envelopes:write no puede crear (aunque la usuaria sea dueña)");
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pk.verifier }, [CLIENT_ID, SECRET]);
+r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pk.verifier }, [
+  CLIENT_ID,
+  SECRET,
+]);
 assert(r.status === 400 && r.body.error === "invalid_grant", "código reutilizado → invalid_grant");
 res = await owner("GET", "/v1/envelopes", undefined, { bearer: userAccess, raw: true });
 assert(res.status === 401, "al reutilizar el código se revocan los tokens emitidos con él");
@@ -293,7 +353,14 @@ const info2 = await owner("GET", `/v1/oauth/authorize/info?${new URLSearchParams
 assert(info2.previouslyApproved, "consentimiento recordado");
 decision = await owner("POST", "/v1/oauth/authorize/decision", { ...authorizeParams(pk), approve: true });
 code = new URL(decision.redirectTo).searchParams.get("code");
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pk.verifier, client_id: CLIENT_ID, client_secret: SECRET });
+r = await oauthPost("/oauth/token", {
+  grant_type: "authorization_code",
+  code,
+  redirect_uri: REDIRECT,
+  code_verifier: pk.verifier,
+  client_id: CLIENT_ID,
+  client_secret: SECRET,
+});
 const a1 = r.body.access_token;
 const r1 = r.body.refresh_token;
 r = await oauthPost("/oauth/token", { grant_type: "refresh_token", refresh_token: r1 }, [CLIENT_ID, SECRET]);
@@ -316,7 +383,10 @@ ok("refresh token: rotación, invalidación del access anterior y detección de 
 r = await oauthPost("/oauth/token", { grant_type: "client_credentials" }, [CLIENT_ID, SECRET]);
 const t3 = r.body.access_token;
 r = await oauthPost("/oauth/introspect", { token: t3 }, [CLIENT_ID, SECRET]);
-assert(r.body.active === true && r.body.client_id === CLIENT_ID && r.body.scope.includes("envelopes:write"), `introspección activa: ${JSON.stringify(r.body)}`);
+assert(
+  r.body.active === true && r.body.client_id === CLIENT_ID && r.body.scope.includes("envelopes:write"),
+  `introspección activa: ${JSON.stringify(r.body)}`,
+);
 r = await oauthPost("/oauth/revoke", { token: t3 }, [CLIENT_ID, SECRET]);
 assert(r.status === 200, "revocación 200");
 r = await oauthPost("/oauth/introspect", { token: t3 }, [CLIENT_ID, SECRET]);
@@ -328,7 +398,13 @@ assert(r.status === 200, "revocar un token desconocido también responde 200 (RF
 ok("introspección y revocación");
 
 // ── cliente público + rotación de secreto + apps conectadas ──
-const pub = await owner("POST", "/v1/oauth/apps", { name: "App de escritorio", grantTypes: ["authorization_code"], redirectUris: [REDIRECT], scopes: ["envelopes:read"], confidential: false });
+const pub = await owner("POST", "/v1/oauth/apps", {
+  name: "App de escritorio",
+  grantTypes: ["authorization_code"],
+  redirectUris: [REDIRECT],
+  scopes: ["envelopes:read"],
+  confidential: false,
+});
 assert(pub.clientSecret === null && pub.app.confidential === false, "cliente público sin secreto");
 pk = pkcePair();
 decision = await owner("POST", "/v1/oauth/authorize/decision", {
@@ -340,7 +416,13 @@ decision = await owner("POST", "/v1/oauth/authorize/decision", {
   approve: true,
 });
 code = new URL(decision.redirectTo).searchParams.get("code");
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: pk.verifier, client_id: pub.app.clientId });
+r = await oauthPost("/oauth/token", {
+  grant_type: "authorization_code",
+  code,
+  redirect_uri: REDIRECT,
+  code_verifier: pk.verifier,
+  client_id: pub.app.clientId,
+});
 assert(r.status === 200 && !r.body.refresh_token, "cliente público canjea con PKCE (sin offline_access no hay refresh)");
 const rot = await owner("POST", `/v1/oauth/apps/${created.app.id}/rotate-secret`);
 r = await oauthPost("/oauth/token", { grant_type: "client_credentials" }, [CLIENT_ID, SECRET]);
@@ -349,7 +431,10 @@ SECRET = rot.clientSecret;
 r = await oauthPost("/oauth/token", { grant_type: "client_credentials" }, [CLIENT_ID, SECRET]);
 assert(r.status === 200, "el secreto nuevo funciona");
 const connected = await owner("GET", "/v1/oauth/connected-apps");
-assert(connected.items.some((x) => x.clientId === pub.app.clientId), "apps conectadas de la usuaria");
+assert(
+  connected.items.some((x) => x.clientId === pub.app.clientId),
+  "apps conectadas de la usuaria",
+);
 await owner("DELETE", `/v1/oauth/connected-apps/${pub.app.clientId}`);
 res = await owner("GET", "/v1/envelopes", undefined, { bearer: r.body.access_token, raw: true });
 assert(res.status === 200, "desconectar otra app no afecta a la app de servicio");
@@ -371,53 +456,126 @@ const pubCode = async () => {
 };
 let pc = await pubCode();
 await owner("PATCH", `/v1/oauth/apps/${pub.app.id}`, { scopes: ["templates:read"] });
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code: pc.code, redirect_uri: REDIRECT, code_verifier: pc.verifier, client_id: pub.app.clientId });
-assert(r.status === 400 && r.body.error === "invalid_grant", `código con un scope que la app ya no tiene → invalid_grant (${r.status} ${JSON.stringify(r.body)})`);
+r = await oauthPost("/oauth/token", {
+  grant_type: "authorization_code",
+  code: pc.code,
+  redirect_uri: REDIRECT,
+  code_verifier: pc.verifier,
+  client_id: pub.app.clientId,
+});
+assert(
+  r.status === 400 && r.body.error === "invalid_grant",
+  `código con un scope que la app ya no tiene → invalid_grant (${r.status} ${JSON.stringify(r.body)})`,
+);
 await owner("PATCH", `/v1/oauth/apps/${pub.app.id}`, { scopes: ["envelopes:read"] });
 pc = await pubCode();
 await owner("PATCH", `/v1/oauth/apps/${pub.app.id}`, { redirectUris: ["http://localhost:5998/otra"] });
-r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code: pc.code, redirect_uri: REDIRECT, code_verifier: pc.verifier, client_id: pub.app.clientId });
-assert(r.status === 400 && r.body.error === "invalid_grant", `código con una URI de redirección quitada → invalid_grant (${r.status} ${JSON.stringify(r.body)})`);
+r = await oauthPost("/oauth/token", {
+  grant_type: "authorization_code",
+  code: pc.code,
+  redirect_uri: REDIRECT,
+  code_verifier: pc.verifier,
+  client_id: pub.app.clientId,
+});
+assert(
+  r.status === 400 && r.body.error === "invalid_grant",
+  `código con una URI de redirección quitada → invalid_grant (${r.status} ${JSON.stringify(r.body)})`,
+);
 ok("un código emitido antes de quitarle a la app un scope o una URI de redirección ya no se canjea");
 ok("cliente público con PKCE, rotación de secreto y desconexión de apps");
 
 // ═════════════════════════ 2. Avisos a canales ═════════════════════════
 
-const slack = await owner("POST", "/v1/notification-integrations", { kind: "slack", name: "#firmas", url: `${channels.url}/slack/${stamp}`, events: ["envelope.sent", "envelope.completed"] });
-const teams = await owner("POST", "/v1/notification-integrations", { kind: "teams", name: "Legales", url: `${channels.url}/teams/${stamp}`, events: ["envelope.completed"] });
+const slack = await owner("POST", "/v1/notification-integrations", {
+  kind: "slack",
+  name: "#firmas",
+  url: `${channels.url}/slack/${stamp}`,
+  events: ["envelope.sent", "envelope.completed"],
+});
+const teams = await owner("POST", "/v1/notification-integrations", {
+  kind: "teams",
+  name: "Legales",
+  url: `${channels.url}/teams/${stamp}`,
+  events: ["envelope.completed"],
+});
 assert(!JSON.stringify(slack).includes(`/slack/${stamp}`), "la URL del webhook no se devuelve completa");
 const test = await owner("POST", `/v1/notification-integrations/${slack.id}/test`);
 assert(test.ok && channelHits.some((h) => h.path === `/slack/${stamp}` && /prueba/i.test(h.body.text)), "mensaje de prueba a Slack");
-res = await owner("POST", "/v1/notification-integrations", { kind: "slack", name: "x", url: "ftp://x.example.com/hook", events: ["envelope.sent"] }, { raw: true });
+res = await owner(
+  "POST",
+  "/v1/notification-integrations",
+  { kind: "slack", name: "x", url: "ftp://x.example.com/hook", events: ["envelope.sent"] },
+  { raw: true },
+);
 assert(res.status === 400, "URL no https → 400");
-res = await owner("POST", "/v1/notification-integrations", { kind: "irc", name: "x", url: `${channels.url}/irc/${stamp}`, events: ["envelope.sent"] }, { raw: true });
+res = await owner(
+  "POST",
+  "/v1/notification-integrations",
+  { kind: "irc", name: "x", url: `${channels.url}/irc/${stamp}`, events: ["envelope.sent"] },
+  { raw: true },
+);
 assert(res.status === 400, "tipo de canal desconocido → 400");
 // El resto de las plataformas: cada una con su receptor, avisando "completado".
 const OTHER_KINDS = ["discord", "google_chat", "mattermost", "rocketchat", "webex"];
 const others = {};
 for (const kind of OTHER_KINDS) {
-  others[kind] = await owner("POST", "/v1/notification-integrations", { kind, name: `Canal ${kind}`, url: `${channels.url}/${kind}/${stamp}`, events: ["envelope.completed"] });
+  others[kind] = await owner("POST", "/v1/notification-integrations", {
+    kind,
+    name: `Canal ${kind}`,
+    url: `${channels.url}/${kind}/${stamp}`,
+    events: ["envelope.completed"],
+  });
   assert(others[kind].kind === kind, `alta de ${kind}`);
   const t = await owner("POST", `/v1/notification-integrations/${others[kind].id}/test`);
   assert(t.ok, `mensaje de prueba a ${kind} (${JSON.stringify(t)})`);
 }
 const discordTest = channelHits.find((h) => h.path === `/discord/${stamp}`).body;
-assert(discordTest.embeds[0].title.includes("prueba") && discordTest.allowed_mentions?.parse?.length === 0, "Discord: prueba como embed y sin menciones");
+assert(
+  discordTest.embeds[0].title.includes("prueba") && discordTest.allowed_mentions?.parse?.length === 0,
+  "Discord: prueba como embed y sin menciones",
+);
 const teamsTest = await owner("POST", `/v1/notification-integrations/${teams.id}/test`);
 assert(teamsTest.ok && teamsTest.status === 202, "Teams (Workflows responde 202) cuenta como entregado");
 
 // ═════════════════════════ 3. Exportación a S3 (simulado) ═════════════════════════
 
 const providers = await owner("GET", "/v1/storage/providers");
-assert(providers.items.filter((p) => p.provider !== "s3").every((p) => p.configured === false), "Drive/Dropbox/OneDrive sin credenciales → no configurados");
+assert(
+  providers.items.filter((p) => p.provider !== "s3").every((p) => p.configured === false),
+  "Drive/Dropbox/OneDrive sin credenciales → no configurados",
+);
 res = await owner("POST", "/v1/storage/oauth/gdrive/start", { name: "Drive" }, { raw: true });
 assert(res.status === 409, "conectar un proveedor no configurado → 409");
 s3Mode = "deny";
-res = await owner("POST", "/v1/storage/connections/s3", { name: "Bucket", endpoint: s3.url, region: "us-east-1", bucket: "calasign-e2e", prefix: "firmados", accessKeyId: "AKIAE2E", secretAccessKey: "secreto" }, { raw: true });
+res = await owner(
+  "POST",
+  "/v1/storage/connections/s3",
+  {
+    name: "Bucket",
+    endpoint: s3.url,
+    region: "us-east-1",
+    bucket: "calasign-e2e",
+    prefix: "firmados",
+    accessKeyId: "AKIAE2E",
+    secretAccessKey: "secreto",
+  },
+  { raw: true },
+);
 assert(res.status === 400 && (await res.json()).error.code === "storage_test_failed", "credenciales rechazadas por el bucket → 400 al conectar");
 s3Mode = "ok";
-const conn = await owner("POST", "/v1/storage/connections/s3", { name: "Bucket", endpoint: s3.url, region: "us-east-1", bucket: "calasign-e2e", prefix: "firmados", accessKeyId: "AKIAE2E", secretAccessKey: "secreto" });
-assert(conn.target === "calasign-e2e/firmados/" && s3Objects.has("/calasign-e2e/firmados/calasign-connection-test.pdf"), "conexión S3 probada al crearla (path-style, SigV4)");
+const conn = await owner("POST", "/v1/storage/connections/s3", {
+  name: "Bucket",
+  endpoint: s3.url,
+  region: "us-east-1",
+  bucket: "calasign-e2e",
+  prefix: "firmados",
+  accessKeyId: "AKIAE2E",
+  secretAccessKey: "secreto",
+});
+assert(
+  conn.target === "calasign-e2e/firmados/" && s3Objects.has("/calasign-e2e/firmados/calasign-connection-test.pdf"),
+  "conexión S3 probada al crearla (path-style, SigV4)",
+);
 assert(!JSON.stringify(conn).includes("secreto"), "el secreto del bucket no se devuelve");
 
 // Sobre completo → aviso a Slack (enviado + completado), Teams (completado) y PDF sellado en el bucket.
@@ -430,14 +588,24 @@ const done = await waitFor(async () => {
 }, "sobre completado");
 await waitFor(() => channelHits.filter((h) => h.path === `/slack/${stamp}`).length >= 3, "avisos de Slack");
 const slackMsgs = channelHits.filter((h) => h.path === `/slack/${stamp}`).map((h) => h.body);
-assert(slackMsgs.some((m) => /enviado/i.test(m.text) && m.text.includes(`Plataforma canales ${stamp}`)), "Slack: sobre enviado");
+assert(
+  slackMsgs.some((m) => /enviado/i.test(m.text) && m.text.includes(`Plataforma canales ${stamp}`)),
+  "Slack: sobre enviado",
+);
 const slackDone = slackMsgs.find((m) => /completado/i.test(m.text));
 assert(slackDone?.blocks?.[1]?.elements?.[0]?.url?.endsWith(`/app/envelopes/${flow.envelopeId}`), "Slack: sobre completado con botón al sobre");
 // Se espera el de "completado" (el de "enviado" puede llegar antes y la búsqueda de abajo fallaba a veces).
 await waitFor(() => channelHits.some((h) => h.path === `/teams/${stamp}` && /completado/i.test(JSON.stringify(h.body))), "aviso de Teams");
 const teamsMsg = channelHits.find((h) => h.path === `/teams/${stamp}` && /completado/i.test(JSON.stringify(h.body))).body;
-assert(teamsMsg.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" && /completado/i.test(teamsMsg.attachments[0].content.body[0].text), "Teams: tarjeta adaptable");
-assert(slackMsgs.every((m) => !JSON.stringify(m).includes("<!channel>")) && slackMsgs.some((m) => m.text.includes("&lt;!channel&gt;")), "Slack: el asunto va escapado (sin @channel)");
+assert(
+  teamsMsg.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" &&
+    /completado/i.test(teamsMsg.attachments[0].content.body[0].text),
+  "Teams: tarjeta adaptable",
+);
+assert(
+  slackMsgs.every((m) => !JSON.stringify(m).includes("<!channel>")) && slackMsgs.some((m) => m.text.includes("&lt;!channel&gt;")),
+  "Slack: el asunto va escapado (sin @channel)",
+);
 assert(teamsMsg.attachments[0].content.body[1].text.includes("[Ver] (https://evil.example)"), "Teams: el asunto no arma links markdown");
 const integrations = await owner("GET", "/v1/notification-integrations");
 assert(integrations.items.find((i) => i.id === slack.id).lastStatus === 200, "última entrega registrada");
@@ -448,15 +616,29 @@ const lastOf = async (kind) => {
 const envLink = `/app/envelopes/${flow.envelopeId}`;
 const discordMsg = await lastOf("discord");
 const embed = discordMsg.embeds[0];
-assert(/completado/i.test(embed.title) && embed.url.endsWith(envLink) && embed.color === 0x16a34a, "Discord: embed verde con el título linkeado al sobre");
-assert(discordMsg.allowed_mentions?.parse?.length === 0 && embed.description.includes("\\@everyone") && !embed.description.includes("[Ver](https://evil.example)"), "Discord: el asunto no menciona ni arma links");
+assert(
+  /completado/i.test(embed.title) && embed.url.endsWith(envLink) && embed.color === 0x16a34a,
+  "Discord: embed verde con el título linkeado al sobre",
+);
+assert(
+  discordMsg.allowed_mentions?.parse?.length === 0 &&
+    embed.description.includes("\\@everyone") &&
+    !embed.description.includes("[Ver](https://evil.example)"),
+  "Discord: el asunto no menciona ni arma links",
+);
 const chatMsg = await lastOf("google_chat");
 const chatJson = JSON.stringify(chatMsg);
-assert(chatJson.includes(envLink) && !chatJson.includes("<users/all>") && chatJson.includes("&lt;users/all&gt;"), "Google Chat: tarjeta con botón al sobre y HTML escapado");
+assert(
+  chatJson.includes(envLink) && !chatJson.includes("<users/all>") && chatJson.includes("&lt;users/all&gt;"),
+  "Google Chat: tarjeta con botón al sobre y HTML escapado",
+);
 for (const kind of ["mattermost", "rocketchat"]) {
   const m = await lastOf(kind);
   const a = m.attachments[0];
-  assert(a.title_link.endsWith(envLink) && a.color === "#16a34a" && !/@(channel|all|everyone)\b/.test(a.text), `${kind}: attachment al sobre y sin menciones`);
+  assert(
+    a.title_link.endsWith(envLink) && a.color === "#16a34a" && !/@(channel|all|everyone)\b/.test(a.text),
+    `${kind}: attachment al sobre y sin menciones`,
+  );
 }
 const webexMsg = await lastOf("webex");
 assert(webexMsg.markdown.includes(envLink) && !webexMsg.markdown.includes("<@all>"), "Webex: markdown con link al sobre y sin menciones");
@@ -465,7 +647,9 @@ for (const kind of OTHER_KINDS) {
   const it = integrations2.items.find((i) => i.id === others[kind].id);
   assert(it.lastStatus >= 200 && it.lastStatus < 300 && !it.lastError, `${kind}: última entrega registrada (${it.lastStatus})`);
 }
-ok("avisos a canales (Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat, Webex): prueba, eventos elegidos, enlaces al sobre, escape y estado de la última entrega");
+ok(
+  "avisos a canales (Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat, Webex): prueba, eventos elegidos, enlaces al sobre, escape y estado de la última entrega",
+);
 
 const exported = await waitFor(async () => {
   const { items } = await owner("GET", "/v1/storage/exports");
@@ -482,12 +666,20 @@ ok("exportación automática del PDF sellado a un bucket compatible con S3");
 const DOMAIN = `firmas-${stamp}.cliente-e2e.com`;
 // Otra organización registra antes el mismo dominio sin poder verificarlo: no bloquea al dueño.
 const squatter = client();
-await squatter("POST", "/v1/auth/signup", { name: "Ocupa", email: `ocupa-plat+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Ocupa ${stamp}` });
+await squatter("POST", "/v1/auth/signup", {
+  name: "Ocupa",
+  email: `ocupa-plat+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Ocupa ${stamp}`,
+});
 assert((await squatter("PUT", "/v1/domains", { domain: DOMAIN })).domain.status === "pending", "otra organización registra el dominio (pendiente)");
 res = await owner("PUT", "/v1/domains", { domain: "algo.calasign.com" }, { raw: true });
 assert(res.status === 400, "subdominio de la plataforma → 400");
 let dom = (await owner("PUT", "/v1/domains", { domain: DOMAIN })).domain;
-assert(dom.status === "pending" && dom.txtName === `_calasign-challenge.${DOMAIN}` && dom.txtValue.startsWith("calasign-verify="), "dominio pendiente con TXT a crear");
+assert(
+  dom.status === "pending" && dom.txtName === `_calasign-challenge.${DOMAIN}` && dom.txtValue.startsWith("calasign-verify="),
+  "dominio pendiente con TXT a crear",
+);
 dom = (await owner("POST", "/v1/domains/verify")).domain;
 assert(dom.status === "pending" && dom.lastError, "sin el TXT no se verifica");
 await owner("POST", "/dev/dns-stub", { name: dom.txtName, values: ["otra-cosa", dom.txtValue] });
@@ -511,29 +703,49 @@ assert(tls.status === 404, "Caddy ask: no responde a pedidos que vienen por el p
 const afterDomain = await sendEnvelope(owner, "dominio");
 const link = await linkFor(owner, afterDomain.signerName);
 if (dom.servingEnabled) assert(link.startsWith(`https://${DOMAIN}/s/`), `link de firma con el dominio propio: ${link}`);
-else assert(!link.includes(DOMAIN) && link.includes("/s/") && dom.notice, `sin CUSTOM_DOMAINS_SERVING el link sigue en la plataforma, con aviso: ${link}`);
+else
+  assert(
+    !link.includes(DOMAIN) && link.includes("/s/") && dom.notice,
+    `sin CUSTOM_DOMAINS_SERVING el link sigue en la plataforma, con aviso: ${link}`,
+  );
 const tokenMine = link.split("/s/")[1];
 let sg = await getWithHost(`/v1/signing/${tokenMine}`, DOMAIN);
 assert(sg.status === 200, "link propio por el dominio propio → 200");
 
 // El dominio propio no sirve la cuenta: la organización controla su DNS y podría quedarse con la cookie de sesión.
 const loginPage = await getWithHost("/login", DOMAIN);
-assert(loginPage.status === 302 && loginPage.headers.location === `${BASE.replace(/\/$/, "")}/login`.replace(BASE, new URL(BASE).origin) || loginPage.headers.location?.endsWith("/login"), `/login en el dominio propio redirige a la plataforma (${loginPage.status} ${loginPage.headers.location})`);
+assert(
+  (loginPage.status === 302 && loginPage.headers.location === `${BASE.replace(/\/$/, "")}/login`.replace(BASE, new URL(BASE).origin)) ||
+    loginPage.headers.location?.endsWith("/login"),
+  `/login en el dominio propio redirige a la plataforma (${loginPage.status} ${loginPage.headers.location})`,
+);
 const dotted = await getWithHost("/login", `${DOMAIN}.`);
 assert(dotted.status === 302, `con punto final el dominio propio también redirige (${dotted.status})`);
 const appPage = await getWithHost("/app/envelopes/x", DOMAIN);
 assert(appPage.status === 302 && !appPage.headers.location?.includes(DOMAIN), "/app en el dominio propio redirige a la plataforma");
-const loginRes = await fetch(`${BASE}/v1/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `owner-plat+${stamp}@example.com`, password: "una-clave-segura-123" }) });
+const loginRes = await fetch(`${BASE}/v1/auth/login`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ email: `owner-plat+${stamp}@example.com`, password: "una-clave-segura-123" }),
+});
 const sessionCookie = (loginRes.headers.get("set-cookie") ?? "").split(";")[0];
 assert(loginRes.ok && /^(__Host-)?cs_session=/.test(sessionCookie), "sesión en la plataforma");
 assert((await getWithHost("/v1/me", "localhost", { cookie: sessionCookie })).status === 200, "la sesión vale en la plataforma");
 assert((await getWithHost("/v1/me", DOMAIN, { cookie: sessionCookie })).status === 401, "la cookie de sesión se ignora en el dominio propio");
-{ const r = await getWithHost("/v1/envelopes", DOMAIN, { cookie: sessionCookie }); assert(r.status === 401, `ni para la API de la cuenta (${r.status} ${r.body.slice(0, 120)})`); }
+{
+  const r = await getWithHost("/v1/envelopes", DOMAIN, { cookie: sessionCookie });
+  assert(r.status === 401, `ni para la API de la cuenta (${r.status} ${r.body.slice(0, 120)})`);
+}
 ok("dominio propio: sin login ni sesión de cuenta (redirige a la plataforma e ignora la cookie)");
 
 // Otra organización con su propio dominio: su dominio no abre links de la primera.
 const other = client();
-await other("POST", "/v1/auth/signup", { name: "Otra", email: `otra-plat+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Otra ${stamp}` });
+await other("POST", "/v1/auth/signup", {
+  name: "Otra",
+  email: `otra-plat+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Otra ${stamp}`,
+});
 const OTHER = `firmas-${stamp}.otra-e2e.com`;
 const od = (await other("PUT", "/v1/domains", { domain: OTHER })).domain;
 await other("POST", "/dev/dns-stub", { name: od.txtName, values: [od.txtValue] });

@@ -28,5 +28,13 @@ export async function extractPdfPlainText(pdf: Uint8Array, maxChars = 300_000): 
       break;
     }
   }
-  return { text: text.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim(), pageCount: numPages, truncated };
+  return {
+    text: text
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+    pageCount: numPages,
+    truncated,
+  };
 }

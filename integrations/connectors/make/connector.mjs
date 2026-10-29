@@ -7,7 +7,8 @@
 export const meta = {
   id: "make",
   name: "Make",
-  description: "App personalizada de Make: trigger instantáneo por webhook, enviar desde plantilla (campos por RPC), enviar PDF, estado, PDF firmado, anular, buscar.",
+  description:
+    "App personalizada de Make: trigger instantáneo por webhook, enviar desde plantilla (campos por RPC), enviar PDF, estado, PDF firmado, anular, buscar.",
 };
 
 const j = (o) => Buffer.from(`${JSON.stringify(o, null, 2)}\n`);
@@ -49,14 +50,20 @@ export async function build(ctx) {
   const manifest = {
     fileVersion: 1,
     generalCodeFiles: { base: "base.imljson", common: "common.imljson", readme: "README.md" },
-    origins: [{ label: "CalaSign (production)", baseUrl: "https://eu1.make.com/api", appId: "calasign", appVersion: 1, apikeyFile: ".secrets/apikey" }],
+    origins: [
+      { label: "CalaSign (production)", baseUrl: "https://eu1.make.com/api", appId: "calasign", appVersion: 1, apikeyFile: ".secrets/apikey" },
+    ],
     components: { connection: {}, webhook: {}, module: {}, rpc: {}, function: {} },
   };
   for (const [id, c] of Object.entries(app.connections)) {
     add(`connections/${id}/api.imljson`, c.communication);
     add(`connections/${id}/parameters.imljson`, c.parameters);
     if (c.scopes) add(`connections/${id}/scope.imljson`, c.scopes);
-    manifest.components.connection[id] = { label: c.label, connectionType: c.type, codeFiles: { communication: `connections/${id}/api.imljson`, params: `connections/${id}/parameters.imljson` } };
+    manifest.components.connection[id] = {
+      label: c.label,
+      connectionType: c.type,
+      codeFiles: { communication: `connections/${id}/api.imljson`, params: `connections/${id}/parameters.imljson` },
+    };
   }
   for (const [id, w] of Object.entries(app.webhooks)) {
     add(`webhooks/${id}/api.imljson`, w.communication);
@@ -76,7 +83,14 @@ export async function build(ctx) {
     add(`modules/${id}/expect.imljson`, m.expect);
     add(`modules/${id}/interface.imljson`, m.interface);
     add(`modules/${id}/samples.imljson`, m.samples);
-    manifest.components.module[id] = { label: m.label, description: m.description, moduleType: m.typeId, connection: m.connection, altConnection: m.altConnection, ...(m.webhook ? { webhook: m.webhook } : {}) };
+    manifest.components.module[id] = {
+      label: m.label,
+      description: m.description,
+      moduleType: m.typeId,
+      connection: m.connection,
+      altConnection: m.altConnection,
+      ...(m.webhook ? { webhook: m.webhook } : {}),
+    };
   }
   for (const name of app.functions) {
     add(`functions/${name}.js`, Buffer.from(fns[name]));
@@ -86,7 +100,10 @@ export async function build(ctx) {
   add("README.md", ctx.load("README.md"));
   const bundle = { ...app, functionsCode: Object.fromEntries(app.functions.map((n) => [n, fns[n]])) };
   return {
-    files: [{ name: "calasign-make-app.json", data: j(bundle) }, { name: "README.md", data: ctx.load("README.md") }],
+    files: [
+      { name: "calasign-make-app.json", data: j(bundle) },
+      { name: "README.md", data: ctx.load("README.md") },
+    ],
     artifacts: [{ name: "calasign-make-app.zip", entries: files, description: "Make: app personalizada (componentes, zip)" }],
   };
 }

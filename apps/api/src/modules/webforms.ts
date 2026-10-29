@@ -97,7 +97,8 @@ export async function verifyTurnstile(
   } catch (e) {
     return { ok: false, reason: "network", detail: String((e as Error)?.message ?? e) };
   }
-  if (j?.success !== true) return { ok: false, reason: "invalid", detail: Array.isArray(j?.["error-codes"]) ? j["error-codes"].join(",") : undefined };
+  if (j?.success !== true)
+    return { ok: false, reason: "invalid", detail: Array.isArray(j?.["error-codes"]) ? j["error-codes"].join(",") : undefined };
   if (typeof j.hostname === "string" && j.hostname && !(await hostOk(j.hostname.toLowerCase().replace(/\.+$/, "")))) {
     return { ok: false, reason: "hostname", detail: j.hostname };
   }
@@ -119,7 +120,14 @@ function buildInput(form: FormRow, signer: { name: string; email: string; phone?
     // a los destinatarios fijos sin idioma propio) sigue con el de la plantilla u organización.
     recipients: [
       ...(form.fixed_recipients ?? []).map((x: any) => ({ ...x, channels: x.channels ?? ["email"] })),
-      { roleId: form.signer_role_id, name: signer.name, email: signer.email, phone: signer.phone ?? null, channels: ["email"] as ("email" | "whatsapp" | "telegram")[], locale: signer.locale ?? null },
+      {
+        roleId: form.signer_role_id,
+        name: signer.name,
+        email: signer.email,
+        phone: signer.phone ?? null,
+        channels: ["email"] as ("email" | "whatsapp" | "telegram")[],
+        locale: signer.locale ?? null,
+      },
     ],
     prefill: form.prefill ?? {},
     send: false,
@@ -137,7 +145,10 @@ function assertCanManageForm(a: AuthContext, form: FormRow) {
 }
 
 /** Valida la configuración del formulario contra su plantilla (roles y prellenado). */
-function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }) {
+function checkConfig(
+  l: LoadedTemplate,
+  form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> },
+) {
   const role = l.tpl.roles.find((r) => r.id === form.signer_role_id);
   if (!role) throw badRequest("invalid_role", "El rol de quien completa el formulario no existe en la plantilla");
   if (role.role !== "signer") throw badRequest("invalid_role", "Quien completa el formulario tiene que ser un rol firmante");
@@ -145,7 +156,10 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
   // validar su correo), así que si firma después de otros nunca recibía el link y el sobre vencía.
   const first = Math.min(...l.tpl.roles.filter((r) => r.role !== "cc").map((r) => r.routingOrder));
   if (role.routingOrder > first) {
-    throw badRequest("invalid_role", "Quien completa el formulario tiene que firmar primero (su rol tiene que estar en el primer turno de la plantilla)");
+    throw badRequest(
+      "invalid_role",
+      "Quien completa el formulario tiene que firmar primero (su rol tiene que estar en el primer turno de la plantilla)",
+    );
   }
   if (form.fixed_recipients.some((x) => x.roleId === form.signer_role_id)) {
     throw badRequest("invalid_role", "El rol de quien completa el formulario no puede tener un destinatario fijo");
@@ -154,7 +168,9 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
     planFromTemplate(l, buildInput(form, { name: "Validación", email: "validacion@example.com" }) as any);
   } catch (e) {
     // cause (no va en la respuesta): formTemplateIssues distingue un rol sin destinatario (roles_missing).
-    throw Object.assign(badRequest("invalid_form", `La plantilla no queda completa con esta configuración: ${(e as Error).message}`), { cause: (e as AppError).code });
+    throw Object.assign(badRequest("invalid_form", `La plantilla no queda completa con esta configuración: ${(e as Error).message}`), {
+      cause: (e as AppError).code,
+    });
   }
 }
 
@@ -166,7 +182,10 @@ type FormIssue = { kind: "config" | "roles_missing" | "signature" | "formula"; m
  * de la plantilla sin destinatario en el formulario es roles_missing) y las reglas del envío que dependen solo de la
  * plantilla (cada rol firmante con firma visual o con certificado; fórmulas que citan un campo número que ya no está).
  */
-function formTemplateIssues(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }): FormIssue[] {
+function formTemplateIssues(
+  l: LoadedTemplate,
+  form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> },
+): FormIssue[] {
   try {
     checkConfig(l, form);
   } catch (e) {
@@ -180,7 +199,10 @@ function formTemplateIssues(l: LoadedTemplate, form: { template_id: string; sign
  * Lo que impide que un formulario cree y envíe sobres con su plantilla actual (null si no hay nada). Lo usan la consola,
  * la página pública y la edición de roles, campos y documentos de la plantilla (que no deja romper un formulario activo).
  */
-export function formTemplateIssue(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }): string | null {
+export function formTemplateIssue(
+  l: LoadedTemplate,
+  form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> },
+): string | null {
   const issues = formTemplateIssues(l, form);
   return issues.length ? issues.map((i) => i.message).join(". ") : null;
 }
@@ -194,7 +216,12 @@ export function formTemplateIssue(l: LoadedTemplate, form: { template_id: string
  * `step: "roles"`: la edición de roles va antes que la de campos, así que un firmante sin campo de firma (p. ej. un rol
  * que pasa de copia a firmante) o una fórmula colgada no cuentan: los rechaza PUT fields o el envío.
  */
-export async function guardTemplateForms(t: Db, tenantId: string, templateId: string, step: "roles" | "fields" | "documents" = "fields"): Promise<() => Promise<void>> {
+export async function guardTemplateForms(
+  t: Db,
+  tenantId: string,
+  templateId: string,
+  step: "roles" | "fields" | "documents" = "fields",
+): Promise<() => Promise<void>> {
   const candidates = await t.query<any>(
     `SELECT * FROM web_forms WHERE tenant_id = $1 AND template_id = $2 AND active
        AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR uses < max_uses) ORDER BY name, id`,
@@ -243,11 +270,16 @@ export async function guardTemplateForms(t: Db, tenantId: string, templateId: st
  * sesión del código no se guarda, y quedaba pidiendo el código sin fin.
  */
 function assertEmbeddableWithoutOtp(embeddable: unknown, requireOtp: unknown) {
-  if (embeddable && requireOtp) throw badRequest("invalid_form", "Un formulario embebible no puede pedir código por correo (dentro de un iframe la verificación no se conserva)");
+  if (embeddable && requireOtp)
+    throw badRequest("invalid_form", "Un formulario embebible no puede pedir código por correo (dentro de un iframe la verificación no se conserva)");
 }
 
 /** Dueño de los sobres del formulario: el usuario o la API key que lo creó. */
-const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, userId: (form.created_by ?? null) as string | null, apiKeyId: (form.created_by_api_key ?? null) as string | null });
+const formOwner = (form: FormRow) => ({
+  tenantId: form.tenant_id as string,
+  userId: (form.created_by ?? null) as string | null,
+  apiKeyId: (form.created_by_api_key ?? null) as string | null,
+});
 
 /**
  * Por qué un formulario activo no crea sobres: el plan de la organización ya no incluye formularios web (bajó de plan:
@@ -355,7 +387,12 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     // Una plantilla restringida no se puede publicar sin poder verla.
     await assertTemplateAccess(s.db, a, input.templateId, "view");
     const l = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
-    const row = { template_id: input.templateId, signer_role_id: input.signerRoleId, fixed_recipients: input.fixedRecipients, prefill: input.prefill ?? {} };
+    const row = {
+      template_id: input.templateId,
+      signer_role_id: input.signerRoleId,
+      fixed_recipients: input.fixedRecipients,
+      prefill: input.prefill ?? {},
+    };
     checkConfig(l, row);
     assertEmbeddableWithoutOtp(input.embeddable, input.requireOtp);
     const id = uuidv7();
@@ -425,13 +462,13 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       [
         cur.id,
         input.name ?? cur.name,
-        has("description") ? input.description ?? null : cur.description,
+        has("description") ? (input.description ?? null) : cur.description,
         next.signer_role_id,
         JSON.stringify(next.fixed_recipients),
         JSON.stringify(next.prefill),
         input.active ?? cur.active,
-        has("maxUses") ? input.maxUses ?? null : cur.max_uses,
-        has("expiresAt") ? input.expiresAt ?? null : cur.expires_at,
+        has("maxUses") ? (input.maxUses ?? null) : cur.max_uses,
+        has("expiresAt") ? (input.expiresAt ?? null) : cur.expires_at,
         input.requireOtp ?? cur.require_otp,
         input.embeddable ?? cur.embeddable,
         input.collectPhone ?? cur.collect_phone,
@@ -463,7 +500,10 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     );
     const ids = envs.map((e) => e.id);
     const recips = ids.length
-      ? await s.db.query<any>(`SELECT envelope_id, name, email, status, role FROM recipients WHERE envelope_id = ANY($1) ORDER BY routing_order, created_at`, [ids])
+      ? await s.db.query<any>(
+          `SELECT envelope_id, name, email, status, role FROM recipients WHERE envelope_id = ANY($1) ORDER BY routing_order, created_at`,
+          [ids],
+        )
       : [];
     return {
       items: envs.map((e) => ({
@@ -521,7 +561,9 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       // Token vencido o ajeno: no hace falta recargar la página (se perderían los datos cargados). La web pide un token
       // nuevo (GET del formulario) y vuelve a enviar pasados MIN_FILL_MS; el código es estable y el texto lo traduce la web.
       const expiredToken = () =>
-        new AppError(400, "invalid_form_token", "El formulario venció: volvé a enviarlo en unos segundos", { retryAfterSeconds: Math.ceil(MIN_FILL_MS / 1000) });
+        new AppError(400, "invalid_form_token", "El formulario venció: volvé a enviarlo en unos segundos", {
+          retryAfterSeconds: Math.ceil(MIN_FILL_MS / 1000),
+        });
       let tok: { s: string; t: number };
       try {
         tok = JSON.parse(decrypt(input.formToken));
@@ -552,7 +594,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         const cap = await verifyTurnstile(input.captchaToken, req.ip, hostOk);
         if (!cap.ok) {
           if (cap.reason === "network") req.log.error({ webFormId: form.id, detail: cap.detail }, "formulario web: no se pudo consultar a Turnstile");
-          else if (cap.reason !== "missing") req.log.warn({ webFormId: form.id, reason: cap.reason, detail: cap.detail }, "formulario web: desafío Turnstile rechazado");
+          else if (cap.reason !== "missing")
+            req.log.warn({ webFormId: form.id, reason: cap.reason, detail: cap.detail }, "formulario web: desafío Turnstile rechazado");
           throw new AppError(400, "captcha_failed", "No se pudo verificar que no sos un robot: completá la verificación y volvé a enviar");
         }
       }
@@ -581,7 +624,9 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         const locked = await t.one<any>(`SELECT * FROM web_forms WHERE id = $1 FOR UPDATE`, [form.id]);
         if (!locked || availability(locked)) throw new AppError(410, "form_unavailable", "Este formulario ya no está disponible");
         // Un envío por token (si la transacción falla, el token vuelve a servir).
-        const fresh = await t.query(`INSERT INTO web_form_token_uses (token_hash) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1`, [sha256Hex(input.formToken)]);
+        const fresh = await t.query(`INSERT INTO web_form_token_uses (token_hash) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1`, [
+          sha256Hex(input.formToken),
+        ]);
         if (!fresh.length) throw expiredToken();
         // El mismo correo desde la misma IP (en IPv6, el mismo /64) en el mismo formulario hace poco: no se crea otro
         // sobre (cada uno consume la cuota del plan y, con código por correo, le manda otro código a esa dirección).
@@ -597,16 +642,22 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
           [form.tenant_id, form.id, W.dedupeMinutes, submitter],
         );
         if (dup) {
-          throw new AppError(429, "form_recent_submission", "Ya recibimos un envío igual hace unos minutos: revisá la pestaña donde completaste el formulario o probá más tarde", {
-            retryAfterSeconds: W.dedupeMinutes * 60,
-          });
+          throw new AppError(
+            429,
+            "form_recent_submission",
+            "Ya recibimos un envío igual hace unos minutos: revisá la pestaña donde completaste el formulario o probá más tarde",
+            {
+              retryAfterSeconds: W.dedupeMinutes * 60,
+            },
+          );
         }
         // Tope por formulario: cada envío crea y manda un sobre (y consume la cuota del plan de la organización).
         const recent = await t.one<{ n: number }>(
           `SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND metadata->>'webFormId' = $2 AND created_at > now() - interval '1 hour'`,
           [form.tenant_id, form.id],
         );
-        if ((recent?.n ?? 0) >= W.maxPerFormHour) throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
+        if ((recent?.n ?? 0) >= W.maxPerFormHour)
+          throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
         // Y por organización, sumando todos sus formularios (por hora y por día): con muchos formularios, el tope de cada
         // uno no impedía agotar la cuota del mes en un rato. Con un lock por organización, dos formularios a la vez no
         // lo superan (el orden de bloqueo es siempre formulario → organización).
@@ -687,4 +738,3 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     return payload;
   });
 }
-

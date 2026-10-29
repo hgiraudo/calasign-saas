@@ -44,7 +44,9 @@ export function identityCandidates(certDer: Uint8Array): IdentityCandidate[] {
   const san = c.extensions?.find((e) => e.extnID === OID.subjectAltName);
   if (san) {
     try {
-      const names = (san.parsedValue as pkijs.AltName | undefined)?.altNames ?? pkijs.AltName.fromBER(toAB(new Uint8Array(san.extnValue.valueBlock.valueHexView))).altNames;
+      const names =
+        (san.parsedValue as pkijs.AltName | undefined)?.altNames ??
+        pkijs.AltName.fromBER(toAB(new Uint8Array(san.extnValue.valueBlock.valueHexView))).altNames;
       for (const gn of names) {
         if (gn.type !== 0) continue; // otherName
         const seq = gn.value as asn1js.Sequence;
@@ -108,7 +110,8 @@ export function matchesIdDocument(declared: string, candidates: IdentityCandidat
   return null;
 }
 
-const isCa = (c: pkijs.Certificate) => Boolean(c.extensions?.some((e) => e.extnID === "2.5.29.19" && (e.parsedValue as pkijs.BasicConstraints | undefined)?.cA));
+const isCa = (c: pkijs.Certificate) =>
+  Boolean(c.extensions?.some((e) => e.extnID === "2.5.29.19" && (e.parsedValue as pkijs.BasicConstraints | undefined)?.cA));
 
 export interface CertificateCheckOptions {
   now?: Date;
@@ -164,7 +167,8 @@ export async function checkSigningCertificate(chainDerIn: Uint8Array[], o: Certi
   const eku = leaf.extensions?.find((e) => e.extnID === OID.extKeyUsage);
   if (eku) {
     const ids: string[] = ((eku.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
-    if (ids.length && !ids.some((x) => SIGNING_EKUS.has(x))) errors.push("el certificado no está habilitado para firmar documentos (extended key usage)");
+    if (ids.length && !ids.some((x) => SIGNING_EKUS.has(x)))
+      errors.push("el certificado no está habilitado para firmar documentos (extended key usage)");
   }
   if (isCa(leaf)) {
     errors.push("es un certificado de autoridad certificante, no de una persona");
@@ -188,11 +192,18 @@ export async function checkSigningCertificate(chainDerIn: Uint8Array[], o: Certi
   if (!trusted) {
     if (o.requireTrusted) errors.push("el certificado no proviene de una autoridad certificante de confianza");
     // El nombre del emisor lo puede poner cualquiera: filtrar por emisor solo tiene sentido con una cadena de confianza.
-    else if (o.allowedIssuers?.length) errors.push("para exigir emisores específicos, el certificado tiene que provenir de una autoridad certificante de confianza");
+    else if (o.allowedIssuers?.length)
+      errors.push("para exigir emisores específicos, el certificado tiene que provenir de una autoridad certificante de confianza");
     // Cualquiera puede emitirse un certificado con el documento de otra persona: la coincidencia de identidad
     // solo prueba algo si la cadena llega a una autoridad de confianza.
-    else if (o.idDocumentNumber) errors.push("para verificar la identidad, el certificado tiene que provenir de una autoridad certificante de confianza");
-    else warnings.push(isSelfSigned(chain[chain.length - 1]) ? "la autoridad certificante no está en el almacén de confianza" : "no se pudo completar la cadena de certificación");
+    else if (o.idDocumentNumber)
+      errors.push("para verificar la identidad, el certificado tiene que provenir de una autoridad certificante de confianza");
+    else
+      warnings.push(
+        isSelfSigned(chain[chain.length - 1])
+          ? "la autoridad certificante no está en el almacén de confianza"
+          : "no se pudo completar la cadena de certificación",
+      );
   }
   for (const c of chain.slice(1)) {
     if (now > c.notAfter.value) errors.push(`vencido en la cadena: ${commonName(c.subject) ?? nameToString(c.subject)}`);

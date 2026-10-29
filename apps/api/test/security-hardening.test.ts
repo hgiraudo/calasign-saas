@@ -27,7 +27,12 @@ function png(width: number, height: number): Uint8Array {
   ihdr[8] = 8;
   ihdr[9] = 6;
   return new Uint8Array(
-    Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.alloc(width <= 4 ? (width * 4 + 1) * height : 16))), chunk("IEND", Buffer.alloc(0))]),
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", ihdr),
+      chunk("IDAT", deflateSync(Buffer.alloc(width <= 4 ? (width * 4 + 1) * height : 16))),
+      chunk("IEND", Buffer.alloc(0)),
+    ]),
   );
 }
 
@@ -68,10 +73,14 @@ describe("plantillas de documentos: presupuesto de salida", async () => {
     expect(() => renderTemplate(source, data)).toThrow(TemplateSyntaxError);
   });
   it("una variable larga repetida también", () => {
-    expect(() => renderTemplate("{{#each a}}\n{{big}}\n{{/each}}", { a: Array.from({ length: 50 }), big: "x".repeat(100_000) })).toThrow(/demasiado grande/);
+    expect(() => renderTemplate("{{#each a}}\n{{big}}\n{{/each}}", { a: Array.from({ length: 50 }), big: "x".repeat(100_000) })).toThrow(
+      /demasiado grande/,
+    );
   });
   it("un documento normal se genera", () => {
-    expect(renderTemplate("# Hola {{nombre}}\n\n{{#each items}}\n- {{item}}\n{{/each}}", { nombre: "Ana", items: [1, 2, 3] }).blocks.length).toBeGreaterThan(0);
+    expect(
+      renderTemplate("# Hola {{nombre}}\n\n{{#each items}}\n- {{item}}\n{{/each}}", { nombre: "Ana", items: [1, 2, 3] }).blocks.length,
+    ).toBeGreaterThan(0);
   });
 });
 

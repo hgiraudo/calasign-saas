@@ -93,7 +93,11 @@ describe("PAdES B-LT / B-LTA", () => {
     let pdf = await sealedBT(seal);
     const company = await pki.issue("ACME S.A. Sello de empresa");
     const companyProvider = new LocalKeyProvider("company", company.keyPem, company.certPem + pki.intermediate.certPem + pki.root.certPem);
-    pdf = await addCadesSignatureIncremental(pdf, companyProvider, { fieldName: "SelloEmpresa", reason: "Sello de empresa", tsaUrl: `${server.url}/tsr` });
+    pdf = await addCadesSignatureIncremental(pdf, companyProvider, {
+      fieldName: "SelloEmpresa",
+      reason: "Sello de empresa",
+      tsaUrl: `${server.url}/tsr`,
+    });
     const { pdf: lta, report } = await applyLtv(pdf, { level: "B-LTA", tsaUrl: `${server.url}/tsr` });
     expect(report.missingRevocation).toEqual([]);
     expect(report.ocsps).toBeGreaterThanOrEqual(3); // sello, empresa, TSA
@@ -165,7 +169,7 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(v2.signatures[0].integrity.valid).toBe(false);
   }, 120_000);
 
-  it("un OCSP \"good\" viejo del DSS no oculta una revocación posterior", async () => {
+  it('un OCSP "good" viejo del DSS no oculta una revocación posterior', async () => {
     const company = await pki.issue("Firmante Comprometido");
     const provider = new LocalKeyProvider("comp", company.keyPem, company.certPem + pki.intermediate.certPem + pki.root.certPem);
     // Firma sin sello de tiempo (el momento de la firma no está probado: se evalúa al día de hoy) con un OCSP "good" de hoy.
@@ -245,7 +249,10 @@ describe("PAdES B-LT / B-LTA", () => {
     // definición en el archivo; un lector, con la que indica el xref.
     const xrefAt = altered.lastIndexOf("xref\n", altered.lastIndexOf("startxref"));
     const copy = Buffer.from(`${page.ref.objectNumber} ${page.ref.generationNumber} obj\n${original}\nendobj\n`, "latin1");
-    const tail = altered.subarray(xrefAt).toString("latin1").replace(/startxref\n(\d+)/, (_, n) => `startxref\n${Number(n) + copy.length}`);
+    const tail = altered
+      .subarray(xrefAt)
+      .toString("latin1")
+      .replace(/startxref\n(\d+)/, (_, n) => `startxref\n${Number(n) + copy.length}`);
     const shadowed = new Uint8Array(Buffer.concat([altered.subarray(0, xrefAt), copy, Buffer.from(tail, "latin1")]));
     const v = await validatePdf(shadowed, { trustAnchors: [pki.root.certDer] });
     expect(v.signatures[0].integrity.valid).toBe(true);
@@ -263,7 +270,9 @@ describe("PAdES B-LT / B-LTA", () => {
     const base = await doc.save({ useObjectStreams: false });
     const u = await IncrementalUpdate.open(base);
     const page = u.doc.getPages()[0];
-    const fontName = (page.node.Resources()!.lookup(PDFName.of("Font")) as unknown as { entries(): [PDFName, unknown][] }).entries()[0][0].decodeText();
+    const fontName = (page.node.Resources()!.lookup(PDFName.of("Font")) as unknown as { entries(): [PDFName, unknown][] })
+      .entries()[0][0]
+      .decodeText();
     page.node.set(PDFName.of("Contents"), u.add(u.context.flateStream(`BT /${fontName} 14 Tf 50 780 Td (Monto: 1.000) Tj ET`)));
     u.touch(page.ref);
     const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
@@ -274,7 +283,13 @@ describe("PAdES B-LT / B-LTA", () => {
     const n = sd.context.largestObjectNumber + 1;
     const obj = `${n} 0 obj\n<< /X 1 >>\nendobj\n`;
     const xrefAt = signed.length + obj.length;
-    const rev0StartXref = Number([...Buffer.from(base).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop()![1]);
+    const rev0StartXref = Number(
+      [
+        ...Buffer.from(base)
+          .toString("latin1")
+          .matchAll(/startxref\s+(\d+)/g),
+      ].pop()![1],
+    );
     const tail =
       `xref\n0 1\n0000000000 65535 f \n${n} 1\n${String(signed.length).padStart(10, "0")} 00000 n \n` +
       `trailer\n<< /Size ${n + 1} /Root ${sd.context.trailerInfo.Root!.toString()} /Prev ${rev0StartXref} >>\nstartxref\n${xrefAt}\n%%EOF\n`;
@@ -285,7 +300,16 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(v.summary.allValid).toBe(false);
 
     // La misma revisión con /Prev al xref firmado sí es inocua.
-    const okTail = tail.replace(`/Prev ${rev0StartXref}`, `/Prev ${Number([...Buffer.from(signed).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop()![1])}`);
+    const okTail = tail.replace(
+      `/Prev ${rev0StartXref}`,
+      `/Prev ${Number(
+        [
+          ...Buffer.from(signed)
+            .toString("latin1")
+            .matchAll(/startxref\s+(\d+)/g),
+        ].pop()![1],
+      )}`,
+    );
     const benign = new Uint8Array(Buffer.concat([Buffer.from(signed), Buffer.from(obj + okTail, "latin1")]));
     expect((await validatePdf(benign, { trustAnchors: [pki.root.certDer] })).signatures[0].changesAfter).toBe("evidence_only");
   }, 120_000);
@@ -298,7 +322,13 @@ describe("PAdES B-LT / B-LTA", () => {
     const own = await issueSealCertificate(ca, { commonName: "Atacante" });
     const attacker = new LocalKeyProvider("attacker", own.keyPem!, own.chainPem);
     const later = (extra: { widgetRect?: [number, number, number, number]; appearance?: string }) =>
-      addSignatureIncremental(signed, { type: "Sig", fieldName: `Otra${Math.random()}`, signatureLength: 16_000, sign: (c) => buildPadesCms(c, attacker, {}), ...extra });
+      addSignatureIncremental(signed, {
+        type: "Sig",
+        fieldName: `Otra${Math.random()}`,
+        signatureLength: 16_000,
+        sign: (c) => buildPadesCms(c, attacker, {}),
+        ...extra,
+      });
 
     // Firma posterior invisible: solo evidencia.
     const inv = await validatePdf(await later({}), { trustAnchors: [pki.root.certDer] });
@@ -307,7 +337,10 @@ describe("PAdES B-LT / B-LTA", () => {
 
     // Firma posterior con widget visible que dibuja encima de la página: cambia lo que se ve.
     const vis = await validatePdf(
-      await later({ widgetRect: [0, 0, 595, 842], appearance: "1 1 1 rg 0 0 595 842 re f 0 0 0 rg BT /Helv 24 Tf 50 700 Td (Monto: 1.000.000) Tj ET" }),
+      await later({
+        widgetRect: [0, 0, 595, 842],
+        appearance: "1 1 1 rg 0 0 595 842 re f 0 0 0 rg BT /Helv 24 Tf 50 700 Td (Monto: 1.000.000) Tj ET",
+      }),
       { trustAnchors: [pki.root.certDer] },
     );
     expect(vis.signatures.every((x) => x.integrity.valid)).toBe(true);
@@ -329,14 +362,21 @@ describe("PAdES B-LT / B-LTA", () => {
     const chainDer = [holder.certDer, pki.intermediate.certDer, pki.root.certDer];
     const csc = await startMockCsc({ username: "u", password: "p", pin: "1234", credentials: { "cred-1": { identity: holder, chainDer } } });
     try {
-      const provider = new CscSignatureProvider({ id: "csc:mock", baseUrl: csc.url, auth: { type: "basic", username: "u", password: "p" }, pin: "1234" });
+      const provider = new CscSignatureProvider({
+        id: "csc:mock",
+        baseUrl: csc.url,
+        auth: { type: "basic", username: "u", password: "p" },
+        pin: "1234",
+      });
       const pdf = await sealedBT(provider as unknown as LocalKeyProvider);
       const v = await validatePdf(pdf, { trustAnchors: [pki.root.certDer], online: true });
       expect(v.signatures[0].integrity.valid).toBe(true);
       expect(v.signatures[0].signer?.commonName).toBe("Juana Pérez (CSC)");
       expect(v.signatures[0].chain.trusted).toBe(true);
       expect(v.signatures[0].chain.entries[0].revocation.source).toBe("online-ocsp");
-      expect(csc.calls).toEqual(expect.arrayContaining(["auth/login", "credentials/list", "credentials/info", "credentials/authorize", "signatures/signHash"]));
+      expect(csc.calls).toEqual(
+        expect.arrayContaining(["auth/login", "credentials/list", "credentials/info", "credentials/authorize", "signatures/signHash"]),
+      );
       const bad = new CscSignatureProvider({ id: "csc:mock", baseUrl: csc.url, auth: { type: "basic", username: "u", password: "p" }, pin: "0000" });
       await expect(bad.signDigest(new Uint8Array(32))).rejects.toThrow(/PIN/);
     } finally {
@@ -344,7 +384,12 @@ describe("PAdES B-LT / B-LTA", () => {
     }
     // Un prestador que firma con una clave que no es la del certificado de la credencial: se rechaza.
     const other = await pki.issue("Otra Persona (CSC)");
-    const liar = await startMockCsc({ username: "u", password: "p", pin: "1234", credentials: { "cred-1": { identity: holder, chainDer: [other.certDer, pki.intermediate.certDer, pki.root.certDer] } } });
+    const liar = await startMockCsc({
+      username: "u",
+      password: "p",
+      pin: "1234",
+      credentials: { "cred-1": { identity: holder, chainDer: [other.certDer, pki.intermediate.certDer, pki.root.certDer] } },
+    });
     try {
       const p2 = new CscSignatureProvider({ id: "csc:mock", baseUrl: liar.url, auth: { type: "basic", username: "u", password: "p" }, pin: "1234" });
       await expect(p2.signDigest(new Uint8Array(32).fill(7))).rejects.toThrow(/no corresponde al certificado/);
@@ -353,4 +398,3 @@ describe("PAdES B-LT / B-LTA", () => {
     }
   }, 120_000);
 });
-

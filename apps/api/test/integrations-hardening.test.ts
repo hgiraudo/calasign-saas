@@ -18,8 +18,8 @@ process.env.HUBSPOT_CLIENT_SECRET = "hs-secret";
 process.env.FACTORIAL_CLIENT_ID = "fa-client";
 process.env.FACTORIAL_CLIENT_SECRET = "fa-secret";
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -45,7 +45,12 @@ function installFetch() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), String(v)]));
     const b = init?.body;
-    const c: Call = { method: init?.method ?? "GET", url: String(input), headers, body: typeof b === "string" ? b : b instanceof URLSearchParams ? b.toString() : b ? "[binario]" : "" };
+    const c: Call = {
+      method: init?.method ?? "GET",
+      url: String(input),
+      headers,
+      body: typeof b === "string" ? b : b instanceof URLSearchParams ? b.toString() : b ? "[binario]" : "",
+    };
     calls.push(c);
     return handler(c);
   }) as typeof fetch;
@@ -65,12 +70,15 @@ beforeAll(async () => {
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1,$2,'Ana','scrypt$x')`, [user, `ana-${tenant.slice(-6)}@x.test`]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'owner')`, [tenant, user]);
   session = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(session),
-    user,
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(session), user, tenant],
+  );
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    util.uuidv7(),
     tenant,
+    util.sha256Hex(KEY),
   ]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [util.uuidv7(), tenant, util.sha256Hex(KEY)]);
   await db.query(`INSERT INTO templates (id, tenant_id, name, created_by) VALUES ($1, $2, 'Plantilla', $3)`, [template, tenant, user]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
@@ -102,16 +110,10 @@ async function crmConn(provider: string, opts: { auth?: string; creds?: unknown;
 }
 async function crmMapping(connectionId: string, extra: { trigger?: string; triggerConfig?: unknown; objectType?: string } = {}) {
   const id = util.uuidv7();
-  await db.query(`INSERT INTO crm_mappings (id, tenant_id, connection_id, name, object_type, template_id, trigger, trigger_config, created_by) VALUES ($1,$2,$3,'m',$4,$5,$6,$7,$8)`, [
-    id,
-    tenant,
-    connectionId,
-    extra.objectType ?? "deal",
-    template,
-    extra.trigger ?? "manual",
-    JSON.stringify(extra.triggerConfig ?? {}),
-    user,
-  ]);
+  await db.query(
+    `INSERT INTO crm_mappings (id, tenant_id, connection_id, name, object_type, template_id, trigger, trigger_config, created_by) VALUES ($1,$2,$3,'m',$4,$5,$6,$7,$8)`,
+    [id, tenant, connectionId, extra.objectType ?? "deal", template, extra.trigger ?? "manual", JSON.stringify(extra.triggerConfig ?? {}), user],
+  );
   return id;
 }
 async function connConn(provider: string, opts: { auth?: string; creds?: unknown } = {}) {
@@ -120,7 +122,16 @@ async function connConn(provider: string, opts: { auth?: string; creds?: unknown
   await db.query(
     `INSERT INTO connector_connections (id, tenant_id, provider, category, name, auth_type, credentials_enc, config, webhook_token_hash, webhook_token_enc)
      VALUES ($1,$2,$3,'hris',$4,$5,$6,'{}',$7,$8)`,
-    [id, tenant, provider, `${provider} ${id.slice(-4)}`, opts.auth ?? "api_key", util.encrypt(JSON.stringify(opts.creds ?? { apiKey: "k" })), util.sha256Hex(token), util.encrypt(token)],
+    [
+      id,
+      tenant,
+      provider,
+      `${provider} ${id.slice(-4)}`,
+      opts.auth ?? "api_key",
+      util.encrypt(JSON.stringify(opts.creds ?? { apiKey: "k" })),
+      util.sha256Hex(token),
+      util.encrypt(token),
+    ],
   );
   return { id, token };
 }
@@ -140,14 +151,20 @@ const audits = async (action: string, targetId: string) =>
 describe("Pipedrive/Kommo: cuenta obligatoria", () => {
   const callback = async () => {
     const state = util.encrypt(JSON.stringify({ t: tenant, u: user, p: "pipedrive", n: "PD OAuth", v: null, exp: Date.now() + 600_000 }));
-    return app.inject({ method: "GET", url: `/v1/crm/oauth/pipedrive/callback?code=c1&state=${encodeURIComponent(state)}`, cookies: { cs_session: session } });
+    return app.inject({
+      method: "GET",
+      url: `/v1/crm/oauth/pipedrive/callback?code=c1&state=${encodeURIComponent(state)}`,
+      cookies: { cs_session: session },
+    });
   };
   const pdHandler = (me: (c: Call) => Response) => (c: Call) => {
-    if (c.url === "https://oauth.pipedrive.com/oauth/token") return json(200, { access_token: "pd-at", refresh_token: "pd-rt", expires_in: 3599, api_domain: "https://acme.pipedrive.com" });
+    if (c.url === "https://oauth.pipedrive.com/oauth/token")
+      return json(200, { access_token: "pd-at", refresh_token: "pd-rt", expires_in: 3599, api_domain: "https://acme.pipedrive.com" });
     if (c.url.startsWith("https://acme.pipedrive.com/api/v1/users/me")) return me(c);
     return json(404, {});
   };
-  const count = async () => Number((await db.one<any>(`SELECT count(*)::int AS n FROM crm_connections WHERE tenant_id = $1 AND name = 'PD OAuth'`, [tenant]))!.n);
+  const count = async () =>
+    Number((await db.one<any>(`SELECT count(*)::int AS n FROM crm_connections WHERE tenant_id = $1 AND name = 'PD OAuth'`, [tenant]))!.n);
 
   it("el callback falla si la prueba falla o no informa company_id; con la cuenta, la guarda", async () => {
     handler = pdHandler(() => json(500, { success: false, error: "caído" }));
@@ -171,7 +188,12 @@ describe("Pipedrive/Kommo: cuenta obligatoria", () => {
   it("envío: sin cuenta guardada 409, sin companyId usa la guardada, de otra cuenta 409; ?companyId no lista mapeos sin cuenta", async () => {
     const noAcc = await crmConn("pipedrive", { config: { apiDomain: "https://acme.pipedrive.com" } });
     const mNoAcc = await crmMapping(noAcc);
-    let r = await app.inject({ method: "POST", url: `/v1/crm/mappings/${mNoAcc}/send`, headers: auth, payload: { objectId: "42", companyId: "5150" } });
+    let r = await app.inject({
+      method: "POST",
+      url: `/v1/crm/mappings/${mNoAcc}/send`,
+      headers: auth,
+      payload: { objectId: "42", companyId: "5150" },
+    });
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("crm_account_unknown");
 
@@ -204,7 +226,12 @@ describe("Pipedrive/Kommo: cuenta obligatoria", () => {
 
 describe("webhook de conectores", () => {
   const post = (token: string, body: string, headers: Record<string, string> = {}) =>
-    app.inject({ method: "POST", url: `/v1/integrations/connectors/hook/${token}`, headers: { "content-type": "application/json", ...headers }, payload: body });
+    app.inject({
+      method: "POST",
+      url: `/v1/integrations/connectors/hook/${token}`,
+      headers: { "content-type": "application/json", ...headers },
+      payload: body,
+    });
   const runs = async (flowId: string) => Number((await db.one<any>(`SELECT count(*)::int AS n FROM connector_runs WHERE flow_id = $1`, [flowId]))!.n);
 
   it("la misma entrega se deduplica dentro de la ventana y vuelve a disparar después", async () => {
@@ -257,7 +284,7 @@ describe("webhook de conectores", () => {
 
   it("cuerpo crudo: BOM inicial aceptado y claves __proto__/constructor.prototype descartadas", async () => {
     const { parseHookJson } = await import("../src/modules/connectors");
-    expect(parseHookJson("\uFEFF{\"recordId\":\"e-bom\"}")).toEqual({ recordId: "e-bom" });
+    expect(parseHookJson('\uFEFF{"recordId":"e-bom"}')).toEqual({ recordId: "e-bom" });
     expect(parseHookJson("")).toBeNull();
     const o: any = parseHookJson('{"a":1,"__proto__":{"polluted":true},"b":{"constructor":{"prototype":{"x":1}}}}');
     expect(Object.prototype.hasOwnProperty.call(o, "__proto__")).toBe(false);
@@ -297,7 +324,12 @@ describe("webhook de conectores", () => {
   it("el secreto se configura por la API, no se devuelve y queda auditado", async () => {
     const c = await connConn("bamboohr");
     const f = await connFlow(c.id);
-    const r = await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "otro-secreto-1234567" } });
+    const r = await app.inject({
+      method: "PATCH",
+      url: `/v1/connectors/flows/${f}`,
+      headers: auth,
+      payload: { webhookSecret: "otro-secreto-1234567" },
+    });
     expect(r.statusCode).toBe(200);
     expect(r.json().webhookSigned).toBe(true);
     expect(JSON.stringify(r.json())).not.toContain("otro-secreto");
@@ -308,7 +340,9 @@ describe("webhook de conectores", () => {
     const emptied = await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "" } });
     expect(emptied.statusCode).toBe(200);
     expect(emptied.json().webhookSigned).toBe(false);
-    expect((await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "corto" } })).statusCode).toBe(400);
+    expect(
+      (await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "corto" } })).statusCode,
+    ).toBe(400);
     const a = await audits("connector.flow_updated", f);
     expect(a.length).toBe(4);
     expect(JSON.stringify(a)).not.toContain("otro-secreto");
@@ -329,10 +363,14 @@ describe("webhook de conectores", () => {
 
 describe("desconectar revoca tokens y conserva la actividad", () => {
   it("HubSpot OAuth: DELETE del refresh token; ejecuciones conservadas con nombre y proveedor; auditado", async () => {
-    const id = await crmConn("hubspot", { creds: { access_token: "hs-at", refresh_token: "hs-rt", expires_at: Date.now() + 3_600_000 }, config: { portalId: "1" } });
+    const id = await crmConn("hubspot", {
+      creds: { access_token: "hs-at", refresh_token: "hs-rt", expires_at: Date.now() + 3_600_000 },
+      config: { portalId: "1" },
+    });
     const runId = util.uuidv7();
     await db.query(`INSERT INTO crm_runs (id, tenant_id, connection_id, kind, status) VALUES ($1,$2,$3,'send','succeeded')`, [runId, tenant, id]);
-    handler = (c) => (c.method === "DELETE" && c.url.endsWith("/oauth/v1/refresh-tokens/hs-rt") ? new Response(null, { status: 204 }) : json(404, {}));
+    handler = (c) =>
+      c.method === "DELETE" && c.url.endsWith("/oauth/v1/refresh-tokens/hs-rt") ? new Response(null, { status: 204 }) : json(404, {});
     const r = await app.inject({ method: "DELETE", url: `/v1/crm/connections/${id}`, headers: auth });
     expect(r.statusCode).toBe(204);
     expect(calls.some((c) => c.method === "DELETE" && c.url === "https://api.hubapi.com/oauth/v1/refresh-tokens/hs-rt")).toBe(true);
@@ -357,14 +395,25 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
   it("Salesforce y Zoho: endpoints de revocación; Kommo y tokens de HubSpot: nada que revocar", async () => {
     const { CrmConn, revokeCrmTokens } = await import("../src/modules/crm/providers");
     const mk = (provider: string, auth_type: string, creds: unknown, config: Record<string, unknown> = {}) =>
-      new CrmConn({ id: "x", provider: provider as any, auth_type: auth_type as any, credentials_enc: util.encrypt(JSON.stringify(creds)), config }, null);
+      new CrmConn(
+        { id: "x", provider: provider as any, auth_type: auth_type as any, credentials_enc: util.encrypt(JSON.stringify(creds)), config },
+        null,
+      );
     handler = () => new Response(null, { status: 200 });
-    expect(await revokeCrmTokens(mk("salesforce", "oauth", { access_token: "a", refresh_token: "sf-rt" }, { instanceUrl: "https://acme.my.salesforce.com" }))).toBe(true);
+    expect(
+      await revokeCrmTokens(
+        mk("salesforce", "oauth", { access_token: "a", refresh_token: "sf-rt" }, { instanceUrl: "https://acme.my.salesforce.com" }),
+      ),
+    ).toBe(true);
     expect(calls.at(-1)).toMatchObject({ method: "POST", url: "https://acme.my.salesforce.com/services/oauth2/revoke", body: "token=sf-rt" });
-    expect(await revokeCrmTokens(mk("zoho", "oauth", { access_token: "a", refresh_token: "zo-rt" }, { accountsServer: "https://accounts.zoho.eu" }))).toBe(true);
+    expect(
+      await revokeCrmTokens(mk("zoho", "oauth", { access_token: "a", refresh_token: "zo-rt" }, { accountsServer: "https://accounts.zoho.eu" })),
+    ).toBe(true);
     expect(calls.at(-1)!.url).toBe("https://accounts.zoho.eu/oauth/v2/token/revoke?token=zo-rt");
     const n = calls.length;
-    expect(await revokeCrmTokens(mk("kommo", "oauth", { access_token: "a", refresh_token: "r" }, { baseDomain: "https://acme.kommo.com" }))).toBe(false);
+    expect(await revokeCrmTokens(mk("kommo", "oauth", { access_token: "a", refresh_token: "r" }, { baseDomain: "https://acme.kommo.com" }))).toBe(
+      false,
+    );
     expect(await revokeCrmTokens(mk("hubspot", "token", { token: "pat" }))).toBe(false);
     expect(calls.length).toBe(n);
   });
@@ -373,15 +422,17 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
     const other = util.uuidv7();
     await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra')`, [other, `o-${other.slice(-8)}`]);
     const otherConn = util.uuidv7();
-    await db.query(`INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config) VALUES ($1,$2,'hubspot','x','oauth',$3,$4)`, [
-      otherConn,
-      other,
-      util.encrypt(JSON.stringify({ access_token: "o-at", refresh_token: "o-rt" })),
-      JSON.stringify({ portalId: "9001" }),
-    ]);
+    await db.query(
+      `INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config) VALUES ($1,$2,'hubspot','x','oauth',$3,$4)`,
+      [otherConn, other, util.encrypt(JSON.stringify({ access_token: "o-at", refresh_token: "o-rt" })), JSON.stringify({ portalId: "9001" })],
+    );
     const shared = await crmConn("hubspot", { creds: { access_token: "a", refresh_token: "shared-rt" }, config: { portalId: "9001" } });
     const pending = util.uuidv7();
-    await db.query(`INSERT INTO crm_runs (id, tenant_id, connection_id, kind, status) VALUES ($1,$2,$3,'write_back','pending')`, [pending, tenant, shared]);
+    await db.query(`INSERT INTO crm_runs (id, tenant_id, connection_id, kind, status) VALUES ($1,$2,$3,'write_back','pending')`, [
+      pending,
+      tenant,
+      shared,
+    ]);
     handler = () => new Response(null, { status: 204 });
     expect((await app.inject({ method: "DELETE", url: `/v1/crm/connections/${shared}`, headers: auth })).statusCode).toBe(204);
     expect(calls.some((c) => c.url.includes("/oauth/v1/refresh-tokens/"))).toBe(false);
@@ -406,7 +457,8 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
     const a1 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-1" } });
     const a2 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-2" } });
     handler = (c) => (c.url.includes("/employees/employees") ? json(200, { data: [{ id: 1, company_id: 77 }] }) : json(404, {}));
-    for (const id of [a1.id, a2.id]) expect((await app.inject({ method: "POST", url: `/v1/connectors/connections/${id}/test`, headers: auth })).json().ok).toBe(true);
+    for (const id of [a1.id, a2.id])
+      expect((await app.inject({ method: "POST", url: `/v1/connectors/connections/${id}/test`, headers: auth })).json().ok).toBe(true);
     expect((await db.one<any>(`SELECT config FROM connector_connections WHERE id = $1`, [a1.id]))!.config.companyId).toBe("77");
     handler = () => new Response("{}", { status: 200 });
     expect((await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${a1.id}`, headers: auth })).statusCode).toBe(204);
@@ -420,14 +472,19 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
   it("conector Factorial sin empleados: companyId de las entidades legales; sin ninguna, aviso al probar y se revoca igual", async () => {
     const b1 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-le" } });
     handler = (c) =>
-      c.url.includes("/employees/employees") ? json(200, { data: [] }) : c.url.includes("/companies/legal_entities") ? json(200, { data: [{ id: 3, company_id: 88 }] }) : json(404, {});
+      c.url.includes("/employees/employees")
+        ? json(200, { data: [] })
+        : c.url.includes("/companies/legal_entities")
+          ? json(200, { data: [{ id: 3, company_id: 88 }] })
+          : json(404, {});
     let t = (await app.inject({ method: "POST", url: `/v1/connectors/connections/${b1.id}/test`, headers: auth })).json();
     expect(t).toMatchObject({ ok: true, warning: null });
     expect((await db.one<any>(`SELECT config FROM connector_connections WHERE id = $1`, [b1.id]))!.config.companyId).toBe("88");
 
     // Ni empleados ni entidades legales: no se adivina la compañía; la prueba avisa.
     const b2 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-unknown" } });
-    handler = (c) => (c.url.includes("/employees/employees") || c.url.includes("/companies/legal_entities") ? json(200, { data: [] }) : json(404, {}));
+    handler = (c) =>
+      c.url.includes("/employees/employees") || c.url.includes("/companies/legal_entities") ? json(200, { data: [] }) : json(404, {});
     t = (await app.inject({ method: "POST", url: `/v1/connectors/connections/${b2.id}/test`, headers: auth })).json();
     expect(t).toMatchObject({ ok: true, warning: "account_unknown" });
     expect((await db.one<any>(`SELECT config FROM connector_connections WHERE id = $1`, [b2.id]))!.config.companyId).toBeUndefined();
@@ -442,7 +499,11 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
   it("conector Factorial por OAuth sin compañía determinable: la vuelta lleva warning=account_unknown", async () => {
     const cb = (name: string) => {
       const state = util.encrypt(JSON.stringify({ t: tenant, u: user, p: "factorial", n: name, r: null, v: "verifier", exp: Date.now() + 600_000 }));
-      return app.inject({ method: "GET", url: `/v1/connectors/oauth/factorial/callback?code=c1&state=${encodeURIComponent(state)}`, cookies: { cs_session: session } });
+      return app.inject({
+        method: "GET",
+        url: `/v1/connectors/oauth/factorial/callback?code=c1&state=${encodeURIComponent(state)}`,
+        cookies: { cs_session: session },
+      });
     };
     handler = (c) =>
       c.url.endsWith("/oauth/token")
@@ -482,7 +543,11 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
   it("conector Factorial OAuth: POST /oauth/revoke; actividad conservada", async () => {
     const c = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt" } });
     const runId = util.uuidv7();
-    await db.query(`INSERT INTO connector_runs (id, tenant_id, connection_id, kind, status) VALUES ($1,$2,$3,'send','failed')`, [runId, tenant, c.id]);
+    await db.query(`INSERT INTO connector_runs (id, tenant_id, connection_id, kind, status) VALUES ($1,$2,$3,'send','failed')`, [
+      runId,
+      tenant,
+      c.id,
+    ]);
     handler = () => new Response("{}", { status: 200 });
     const r = await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${c.id}`, headers: auth });
     expect(r.statusCode).toBe(204);
@@ -500,7 +565,10 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
 describe("HubSpot", () => {
   it("adjunto: guarda el archivo antes de la nota y, al reintentar, no lo vuelve a subir", async () => {
     const { CrmConn, attachSigned } = await import("../src/modules/crm/providers");
-    const conn = new CrmConn({ id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} }, null);
+    const conn = new CrmConn(
+      { id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} },
+      null,
+    );
     let noteFails = true;
     handler = (c) => {
       if (c.url.endsWith("/files/v3/files")) return json(200, { id: "f-1" });
@@ -508,7 +576,15 @@ describe("HubSpot", () => {
       return json(404, {});
     };
     const saved: string[] = [];
-    const input = { fileName: "a.pdf", pdf: new Uint8Array([37, 80, 68, 70]), subject: "S", envelopeId: "e", sha256: "h", url: "u", onFileUploaded: async (id: string) => void saved.push(id) };
+    const input = {
+      fileName: "a.pdf",
+      pdf: new Uint8Array([37, 80, 68, 70]),
+      subject: "S",
+      envelopeId: "e",
+      sha256: "h",
+      url: "u",
+      onFileUploaded: async (id: string) => void saved.push(id),
+    };
     await expect(attachSigned(conn, "deal", "42", input)).rejects.toThrow();
     expect(saved).toEqual(["f-1"]);
     noteFails = false;
@@ -521,11 +597,24 @@ describe("HubSpot", () => {
 
   it("adjunto: si la nota se rechaza por el archivo (4xx), se olvida el archivo guardado; con 5xx no", async () => {
     const { CrmConn, attachSigned, isHubspotAttachmentRejection, CrmError } = await import("../src/modules/crm/providers");
-    const conn = new CrmConn({ id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} }, null);
+    const conn = new CrmConn(
+      { id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} },
+      null,
+    );
     let noteStatus = 400;
-    handler = (c) => (c.url.endsWith("/crm/v3/objects/notes") ? json(noteStatus, { message: "Attachment with id f-9 does not exist" }) : json(404, {}));
+    handler = (c) =>
+      c.url.endsWith("/crm/v3/objects/notes") ? json(noteStatus, { message: "Attachment with id f-9 does not exist" }) : json(404, {});
     const rejected: string[] = [];
-    const input = { fileName: "a.pdf", pdf: new Uint8Array([37]), subject: "S", envelopeId: "e", sha256: "h", url: "u", uploadedFileId: "f-9", onFileRejected: async (id: string) => void rejected.push(id) };
+    const input = {
+      fileName: "a.pdf",
+      pdf: new Uint8Array([37]),
+      subject: "S",
+      envelopeId: "e",
+      sha256: "h",
+      url: "u",
+      uploadedFileId: "f-9",
+      onFileRejected: async (id: string) => void rejected.push(id),
+    };
     await expect(attachSigned(conn, "deal", "42", input)).rejects.toThrow();
     expect(rejected).toEqual(["f-9"]);
     noteStatus = 503;
@@ -540,7 +629,10 @@ describe("HubSpot", () => {
     const env = util.uuidv7();
     await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by) VALUES ($1,$2,'S','sent',$3)`, [env, tenant, user]);
     const link = util.uuidv7();
-    await db.query(`INSERT INTO crm_links (id, tenant_id, connection_id, envelope_id, object_type, object_id, remote_ref) VALUES ($1,$2,$3,$4,'deal','42','file:f-1')`, [link, tenant, id, env]);
+    await db.query(
+      `INSERT INTO crm_links (id, tenant_id, connection_id, envelope_id, object_type, object_id, remote_ref) VALUES ($1,$2,$3,$4,'deal','42','file:f-1')`,
+      [link, tenant, id, env],
+    );
     const get = async () => (await app.inject({ method: "GET", url: `/v1/crm/links?envelopeId=${env}`, headers: auth })).json().items[0];
     expect((await get()).remoteRef).toBeNull();
     await db.query(`UPDATE crm_links SET pdf_attached_at = now(), remote_ref = 'file:f-1 note:n-1' WHERE id = $1`, [link]);
@@ -549,7 +641,11 @@ describe("HubSpot", () => {
 
   it("token de app privada: sin account-info (o sin portalId) la prueba falla", async () => {
     const { CrmConn, testConnection } = await import("../src/modules/crm/providers");
-    const conn = () => new CrmConn({ id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} }, null);
+    const conn = () =>
+      new CrmConn(
+        { id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} },
+        null,
+      );
     handler = (c) => (c.url.includes("/account-info/") ? json(403, { message: "missing scopes" }) : json(200, { results: [] }));
     await expect(testConnection(conn())).rejects.toThrow();
     handler = (c) => (c.url.includes("/account-info/") ? json(200, { uiDomain: "app.hubspot.com" }) : json(200, { results: [] }));
@@ -570,11 +666,22 @@ describe("HubSpot", () => {
       return app.inject({
         method: "POST",
         url,
-        headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": hubspotSignatureV3("hs-secret", "POST", `${config.appUrl}${url}`, raw, ts) },
+        headers: {
+          "content-type": "application/json",
+          "x-hubspot-request-timestamp": ts,
+          "x-hubspot-signature-v3": hubspotSignatureV3("hs-secret", "POST", `${config.appUrl}${url}`, raw, ts),
+        },
         payload: raw,
       });
     };
-    const base = { subscriptionType: "deal.propertyChange", portalId: 4242, appId: 555, objectId: 9, propertyName: "dealstage", propertyValue: "contractsent" };
+    const base = {
+      subscriptionType: "deal.propertyChange",
+      portalId: 4242,
+      appId: 555,
+      objectId: 9,
+      propertyName: "dealstage",
+      propertyValue: "contractsent",
+    };
     let r = await send([{ ...base, eventId: 1, changeSource: "INTEGRATION", sourceId: "555" }]);
     expect(r.json().queued).toBe(0);
     r = await send([{ ...base, eventId: 2, changeSource: "CRM_UI", sourceId: "userId:1" }]);
@@ -589,12 +696,25 @@ describe("HubSpot", () => {
       method: "POST",
       url: "/v1/crm/mappings",
       headers: auth,
-      payload: { connectionId: id, name: "loop", objectType: "deal", templateId: template, trigger: "webhook", triggerConfig: { property: "dealstage" }, writeBack: { statusProperty: "DealStage" } },
+      payload: {
+        connectionId: id,
+        name: "loop",
+        objectType: "deal",
+        templateId: template,
+        trigger: "webhook",
+        triggerConfig: { property: "dealstage" },
+        writeBack: { statusProperty: "DealStage" },
+      },
     });
     expect(r.statusCode).toBe(400);
     expect(r.json().error.code).toBe("crm_trigger_loop");
     const m = await crmMapping(id, { trigger: "webhook", triggerConfig: { property: "dealstage" } });
-    const p = await app.inject({ method: "PATCH", url: `/v1/crm/mappings/${m}`, headers: auth, payload: { writeBack: { statusProperty: "dealstage" } } });
+    const p = await app.inject({
+      method: "PATCH",
+      url: `/v1/crm/mappings/${m}`,
+      headers: auth,
+      payload: { writeBack: { statusProperty: "dealstage" } },
+    });
     expect(p.statusCode).toBe(400);
     expect(p.json().error.code).toBe("crm_trigger_loop");
   });
@@ -608,8 +728,14 @@ describe("retención de ejecuciones", () => {
     const c = await crmConn("hubspot", { config: { portalId: "2" } });
     const k = await connConn("bamboohr");
     const [oldCrm, newCrm, oldCn] = [util.uuidv7(), util.uuidv7(), util.uuidv7()];
-    await db.query(`INSERT INTO crm_runs (id, tenant_id, connection_id, kind, created_at) VALUES ($1,$2,$3,'send', now() - interval '200 days'), ($4,$2,$3,'send', now() - interval '10 days')`, [oldCrm, tenant, c, newCrm]);
-    await db.query(`INSERT INTO connector_runs (id, tenant_id, connection_id, kind, created_at) VALUES ($1,$2,$3,'send', now() - interval '181 days')`, [oldCn, tenant, k.id]);
+    await db.query(
+      `INSERT INTO crm_runs (id, tenant_id, connection_id, kind, created_at) VALUES ($1,$2,$3,'send', now() - interval '200 days'), ($4,$2,$3,'send', now() - interval '10 days')`,
+      [oldCrm, tenant, c, newCrm],
+    );
+    await db.query(
+      `INSERT INTO connector_runs (id, tenant_id, connection_id, kind, created_at) VALUES ($1,$2,$3,'send', now() - interval '181 days')`,
+      [oldCn, tenant, k.id],
+    );
     const out = await purgeOldIntegrationRuns(db, 180);
     expect(out.crm_runs).toBeGreaterThanOrEqual(1);
     expect(out.connector_runs).toBeGreaterThanOrEqual(1);

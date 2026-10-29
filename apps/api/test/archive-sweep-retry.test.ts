@@ -17,12 +17,12 @@ vi.mock("../src/notifications/channels", async (orig) => ({
   }),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let archive: typeof import("../src/modules/data/archive");
 let cellsMod: typeof import("../src/infra/cells");
 let util: typeof import("../src/lib/util");
-let config: typeof import("../src/config")["config"];
+let config: (typeof import("../src/config"))["config"];
 const log = { info() {}, warn() {}, error() {} };
 const blobs = { get: async () => Promise.reject(new Error("sin archivo")), put: async () => {}, delete: async () => {} };
 
@@ -51,15 +51,16 @@ async function tenantWithAdmin(cell = "local") {
   return t;
 }
 
-async function dueEnvelope(tenant: string, cols: { renewals?: number; renewedAgo?: string | null; checkedAgo?: string; error?: string | null; validIn?: string } = {}) {
+async function dueEnvelope(
+  tenant: string,
+  cols: { renewals?: number; renewedAgo?: string | null; checkedAgo?: string; error?: string | null; validIn?: string } = {},
+) {
   const file = util.uuidv7();
   const env = util.uuidv7();
-  await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',1,$4)`, [
-    file,
-    tenant,
-    `tenants/${tenant}/x/${file}.pdf`,
-    "a".repeat(64),
-  ]);
+  await db.query(
+    `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',1,$4)`,
+    [file, tenant, `tenants/${tenant}/x/${file}.pdf`, "a".repeat(64)],
+  );
   await db.query(
     `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id, archive_valid_until, archive_checked_at, archive_error, archive_renewals, archive_renewed_at)
      VALUES ($1,$2,'S','completed', now(), $3, now() + $4::interval, now() - $5::interval, $6, $7, now() - $8::interval)`,
@@ -67,7 +68,8 @@ async function dueEnvelope(tenant: string, cols: { renewals?: number; renewedAgo
   );
   return env;
 }
-const row = (id: string) => db.one<any>(`SELECT archive_error, archive_checked_at > now() - interval '1 minute' AS checked FROM envelopes WHERE id = $1`, [id]);
+const row = (id: string) =>
+  db.one<any>(`SELECT archive_error, archive_checked_at > now() - interval '1 minute' AS checked FROM envelopes WHERE id = $1`, [id]);
 
 describe("barrido de sellos de archivo", () => {
   it("una renovación fallida de un sobre ya renovado se reintenta al día siguiente (no a los 30 días)", async () => {

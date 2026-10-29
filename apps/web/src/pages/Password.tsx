@@ -62,7 +62,14 @@ export function ForgotPasswordPage() {
 }
 
 interface ResetResult {
-  createdCredentials?: { tenantId: string; tenantName: string | null; apiKeys: number; scimTokens: number; serviceApps: number; invitations: number }[];
+  createdCredentials?: {
+    tenantId: string;
+    tenantName: string | null;
+    apiKeys: number;
+    scimTokens: number;
+    serviceApps: number;
+    invitations: number;
+  }[];
   revokedCredentials?: { apiKeys: number; invitations: number } | null;
 }
 
@@ -73,7 +80,12 @@ const countList = (pw: PwText, items: readonly (readonly [Parameters<PwText>[0],
 /** Avisos después de restablecer: lo revocado (si se pidió) y las credenciales creadas que siguen activas, por organización. */
 function resetNotice(r: ResetResult | undefined, pw: PwText): { revoked: string | null; active: string[] } {
   const rv = r?.revokedCredentials;
-  const revokedItems = rv ? countList(pw, [["revokedApiKeys", rv.apiKeys], ["revokedInvitations", rv.invitations]]) : [];
+  const revokedItems = rv
+    ? countList(pw, [
+        ["revokedApiKeys", rv.apiKeys],
+        ["revokedInvitations", rv.invitations],
+      ])
+    : [];
   const active = (r?.createdCredentials ?? [])
     .map((c) => {
       const items = countList(pw, [
@@ -111,7 +123,10 @@ export function ResetPasswordPage() {
     }
     setBusy(true);
     try {
-      const r = await api<ResetResult | undefined>("/v1/auth/password/reset", { method: "POST", body: { token, password, revokeCreatedCredentials: revokeCreated } });
+      const r = await api<ResetResult | undefined>("/v1/auth/password/reset", {
+        method: "POST",
+        body: { token, password, revokeCreatedCredentials: revokeCreated },
+      });
       setNotice(resetNotice(r, pw));
       // El restablecimiento cierra las sesiones: la de esta pestaña (si había) ya no vale, y la app no debe seguir
       // mostrándose como con sesión iniciada.
@@ -145,9 +160,7 @@ export function ResetPasswordPage() {
               </ul>
             </div>
           )}
-          <p className="muted center">
-            {done ? <Link to="/login">{pw("backToLogin")}</Link> : <Link to="/forgot">{pw("requestNew")}</Link>}
-          </p>
+          <p className="muted center">{done ? <Link to="/login">{pw("backToLogin")}</Link> : <Link to="/forgot">{pw("requestNew")}</Link>}</p>
         </div>
       </AuthShell>
     );

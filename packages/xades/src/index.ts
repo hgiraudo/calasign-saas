@@ -98,11 +98,61 @@ interface ProfileDefaults {
  * - xades-bes / xades-epes: genéricos, C14N exclusiva, con DataObjectFormat.
  */
 const PROFILES: Record<XmlProfile, ProfileDefaults> = {
-  "dgii-ecf": { xades: false, canonicalization: "c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: false, signatureAlgorithm: "rsa-sha256", placement: "root" },
-  "dian-fe": { xades: true, canonicalization: "c14n", policy: DIAN_POLICY_V2, signerRole: "supplier", timeZoneOffset: "-05:00", keyInfoReference: true, dataObjectFormat: false, signatureAlgorithm: "rsa-sha256", placement: "ubl-last-empty" },
-  "sunat-cpe": { xades: false, canonicalization: "c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: false, signatureAlgorithm: "rsa-sha1", placement: "ubl-first-empty" },
-  "xades-bes": { xades: true, canonicalization: "exc-c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: true, signatureAlgorithm: "rsa-sha256", placement: "root" },
-  "xades-epes": { xades: true, canonicalization: "exc-c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: true, signatureAlgorithm: "rsa-sha256", placement: "root" },
+  "dgii-ecf": {
+    xades: false,
+    canonicalization: "c14n",
+    policy: null,
+    signerRole: null,
+    timeZoneOffset: null,
+    keyInfoReference: false,
+    dataObjectFormat: false,
+    signatureAlgorithm: "rsa-sha256",
+    placement: "root",
+  },
+  "dian-fe": {
+    xades: true,
+    canonicalization: "c14n",
+    policy: DIAN_POLICY_V2,
+    signerRole: "supplier",
+    timeZoneOffset: "-05:00",
+    keyInfoReference: true,
+    dataObjectFormat: false,
+    signatureAlgorithm: "rsa-sha256",
+    placement: "ubl-last-empty",
+  },
+  "sunat-cpe": {
+    xades: false,
+    canonicalization: "c14n",
+    policy: null,
+    signerRole: null,
+    timeZoneOffset: null,
+    keyInfoReference: false,
+    dataObjectFormat: false,
+    signatureAlgorithm: "rsa-sha1",
+    placement: "ubl-first-empty",
+  },
+  "xades-bes": {
+    xades: true,
+    canonicalization: "exc-c14n",
+    policy: null,
+    signerRole: null,
+    timeZoneOffset: null,
+    keyInfoReference: false,
+    dataObjectFormat: true,
+    signatureAlgorithm: "rsa-sha256",
+    placement: "root",
+  },
+  "xades-epes": {
+    xades: true,
+    canonicalization: "exc-c14n",
+    policy: null,
+    signerRole: null,
+    timeZoneOffset: null,
+    keyInfoReference: false,
+    dataObjectFormat: true,
+    signatureAlgorithm: "rsa-sha256",
+    placement: "root",
+  },
 };
 
 const DIGEST_URI = { sha256: ALG.sha256, sha512: ALG.sha512, sha1: ALG.sha1 } as const;
@@ -155,7 +205,8 @@ export function canonicalize(node: Node, algorithm: string): string {
   const inherited = inheritedDefaultNs(node);
   if (inherited && !el.hasAttribute("xmlns") && el.prefix) {
     const open = `<${el.tagName}`;
-    if (out.startsWith(open)) return `${open} xmlns="${inherited.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")}"${out.slice(open.length)}`;
+    if (out.startsWith(open))
+      return `${open} xmlns="${inherited.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")}"${out.slice(open.length)}`;
   }
   return out;
 }
@@ -202,7 +253,8 @@ function findAllById(doc: Document, id: string): Element[] {
 }
 
 function firstChildNS(el: Element, ns: string, local: string): Element | null {
-  for (let n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 1 && (n as Element).namespaceURI === ns && (n as Element).localName === local) return n as Element;
+  for (let n = el.firstChild; n; n = n.nextSibling)
+    if (n.nodeType === 1 && (n as Element).namespaceURI === ns && (n as Element).localName === local) return n as Element;
   return null;
 }
 
@@ -263,7 +315,7 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
   const c14nAlg = (options.canonicalization ?? p.canonicalization) === "exc-c14n" ? ALG.excC14n : ALG.c14n;
   const sigAlg: XmlSignatureAlgorithm = options.signatureAlgorithm ?? p.signatureAlgorithm;
   // Con RSA-SHA1 los digests de referencia también son SHA-1 (así lo pide SUNAT); si no, SHA-256 o el indicado.
-  const dAlg: "sha256" | "sha512" | "sha1" = sigAlg === "rsa-sha1" ? "sha1" : options.digest ?? "sha256";
+  const dAlg: "sha256" | "sha512" | "sha1" = sigAlg === "rsa-sha1" ? "sha1" : (options.digest ?? "sha256");
   if (sigAlg === "rsa-sha1" && !signer.signDigestSha1) throw new Error("Este certificado o proveedor no puede firmar con RSA-SHA1");
   const dUri = DIGEST_URI[dAlg];
   const policy = options.policy !== undefined ? options.policy : p.policy;
@@ -281,7 +333,7 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
 
   const uid = randomUUID();
   const ids = {
-    sig: options.signatureId ?? (options.profile === "sunat-cpe" ? ublSignatureId(doc) ?? "SignatureSP" : `xmldsig-${uid}`),
+    sig: options.signatureId ?? (options.profile === "sunat-cpe" ? (ublSignatureId(doc) ?? "SignatureSP") : `xmldsig-${uid}`),
     ref0: `xmldsig-${uid}-ref0`,
     keyInfo: `xmldsig-${uid}-keyinfo`,
     signedProps: `xmldsig-${uid}-signedprops`,
@@ -306,7 +358,9 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
           policy.hashBase64,
         )}</ds:DigestValue></xades:SigPolicyHash></xades:SignaturePolicyId></xades:SignaturePolicyIdentifier>`
       : "";
-    const roleXml = role ? `<xades:SignerRole><xades:ClaimedRoles><xades:ClaimedRole>${esc(role)}</xades:ClaimedRole></xades:ClaimedRoles></xades:SignerRole>` : "";
+    const roleXml = role
+      ? `<xades:SignerRole><xades:ClaimedRoles><xades:ClaimedRole>${esc(role)}</xades:ClaimedRole></xades:ClaimedRoles></xades:SignerRole>`
+      : "";
     const dof = p.dataObjectFormat
       ? `<xades:SignedDataObjectProperties><xades:DataObjectFormat ObjectReference="#${ids.ref0}"><xades:MimeType>text/xml</xades:MimeType></xades:DataObjectFormat></xades:SignedDataObjectProperties>`
       : "";
@@ -346,10 +400,15 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
   // 3) Ubicación: DIAN en el último ext:ExtensionContent vacío, SUNAT en el primero; si no, al final de la raíz.
   let parent: Element = root;
   if (p.placement !== "root") {
-    const contents = descendantsNS(doc, NS.ublExt, "ExtensionContent").filter((e) => !Array.from({ length: e.childNodes.length }, (_, i) => e.childNodes[i]).some((n) => n.nodeType === 1));
+    const contents = descendantsNS(doc, NS.ublExt, "ExtensionContent").filter(
+      (e) => !Array.from({ length: e.childNodes.length }, (_, i) => e.childNodes[i]).some((n) => n.nodeType === 1),
+    );
     if (contents.length) parent = p.placement === "ubl-first-empty" ? contents[0] : contents[contents.length - 1];
     // Sin lugar para la firma no se la pone en la raíz: el XML saldría "firmado" pero la DIAN / SUNAT lo rechazan.
-    else throw new Error(`El XML de ${options.profile === "sunat-cpe" ? "SUNAT" : "la DIAN"} necesita un ext:UBLExtensions/ext:UBLExtension/ext:ExtensionContent vacío para la firma`);
+    else
+      throw new Error(
+        `El XML de ${options.profile === "sunat-cpe" ? "SUNAT" : "la DIAN"} necesita un ext:UBLExtensions/ext:UBLExtension/ext:ExtensionContent vacío para la firma`,
+      );
   }
   const fragment = new DOMParser().parseFromString(sigXml, "text/xml").documentElement!;
   const sigEl = doc.importNode(fragment, true) as Element;
@@ -400,7 +459,8 @@ export function verifyXml(xml: string): XmlVerifyResult {
   if (!sigEl) return { valid: false, signatureValid: false, references: [], signer: null, xades: null, errors: ["sin ds:Signature"] };
   const signedInfo = firstChildNS(sigEl, NS.ds, "SignedInfo");
   // Una ds:Signature sin SignedInfo es inválida, no un error interno (/v1/xml/verify respondía 500).
-  if (!signedInfo) return { valid: false, signatureValid: false, references: [], signer: null, xades: null, errors: ["ds:Signature sin ds:SignedInfo"] };
+  if (!signedInfo)
+    return { valid: false, signatureValid: false, references: [], signer: null, xades: null, errors: ["ds:Signature sin ds:SignedInfo"] };
   const c14nAlg = firstChildNS(signedInfo, NS.ds, "CanonicalizationMethod")?.getAttribute("Algorithm") ?? ALG.c14n;
   const certB64 = descendantsNS(sigEl, NS.ds, "X509Certificate")[0]?.textContent?.replace(/\s+/g, "") ?? "";
   let cert: X509Certificate | null = null;
@@ -440,7 +500,8 @@ export function verifyXml(xml: string): XmlVerifyResult {
     }
     const valid = canonical !== null && b64(digest(alg, canonical)) === expected;
     if (!valid) errors.push(`digest no coincide en referencia "${uri}"`);
-    if (valid && type === ALG.signedProps && target?.namespaceURI === NS.xades && target.localName === "SignedProperties") signedPropsTarget ??= target;
+    if (valid && type === ALG.signedProps && target?.namespaceURI === NS.xades && target.localName === "SignedProperties")
+      signedPropsTarget ??= target;
     references.push({ uri, type, valid });
   }
 
@@ -471,21 +532,30 @@ export function verifyXml(xml: string): XmlVerifyResult {
       signerRole: descendantsNS(sp, NS.xades, "ClaimedRole")[0]?.textContent ?? null,
     };
     if (!signedPropsTarget) errors.push("SignedProperties no está referenciado o no verifica");
-    else if (descendantsNS(sigEl, NS.xades, "SignedProperties").some((e) => e !== signedPropsTarget)) errors.push("hay más de un SignedProperties en la firma");
+    else if (descendantsNS(sigEl, NS.xades, "SignedProperties").some((e) => e !== signedPropsTarget))
+      errors.push("hay más de un SignedProperties en la firma");
   }
 
   // La firma tiene que cubrir el documento entero (referencia URI="" con la transformación enveloped): una firma que
   // solo referencia elementos sueltos (KeyInfo, SignedProperties…) no prueba nada sobre el contenido del documento.
   const coversDocument = descendantsNS(signedInfo, NS.ds, "Reference").some(
-    (ref) => (ref.getAttribute("URI") ?? "") === "" && descendantsNS(ref, NS.ds, "Transform").some((t) => t.getAttribute("Algorithm") === ALG.enveloped),
+    (ref) =>
+      (ref.getAttribute("URI") ?? "") === "" && descendantsNS(ref, NS.ds, "Transform").some((t) => t.getAttribute("Algorithm") === ALG.enveloped),
   );
-  if (!coversDocument) errors.push("la firma no cubre el documento completo (falta la referencia URI=\"\" enveloped)");
+  if (!coversDocument) errors.push('la firma no cubre el documento completo (falta la referencia URI="" enveloped)');
 
   return {
     valid: errors.length === 0 && signatureValid && references.every((r) => r.valid),
     signatureValid,
     references,
-    signer: cert ? { subject: cert.subject.replace(/\n/g, ", "), issuer: cert.issuer.replace(/\n/g, ", "), serialNumber: cert.serialNumber, notAfter: new Date(cert.validTo).toISOString() } : null,
+    signer: cert
+      ? {
+          subject: cert.subject.replace(/\n/g, ", "),
+          issuer: cert.issuer.replace(/\n/g, ", "),
+          serialNumber: cert.serialNumber,
+          notAfter: new Date(cert.validTo).toISOString(),
+        }
+      : null,
     xades,
     errors,
   };

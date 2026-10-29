@@ -114,11 +114,7 @@ interface SearchItem {
   method?: string;
 }
 
-const norm = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
+const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 function buildIndex(t: DocsT, tags: TagEntry[], locale: string): SearchItem[] {
   const items: SearchItem[] = [];
@@ -135,7 +131,13 @@ function buildIndex(t: DocsT, tags: TagEntry[], locale: string): SearchItem[] {
   }
   for (const tag of tags) {
     const label = tagLabel(tag.name, locale);
-    items.push({ kind: "page", title: label, context: t("nav.reference"), to: `/developers/api/${tag.slug}`, haystack: norm(`${label} ${tag.name}`) });
+    items.push({
+      kind: "page",
+      title: label,
+      context: t("nav.reference"),
+      to: `/developers/api/${tag.slug}`,
+      haystack: norm(`${label} ${tag.name}`),
+    });
     for (const e of tag.ops) {
       items.push({
         kind: "endpoint",
@@ -162,7 +164,10 @@ function search(items: SearchItem[], q: string): SearchItem[] {
     if (title.includes(norm(q))) score += 2;
     scored.push({ it, score });
   }
-  return scored.sort((a, b) => b.score - a.score).slice(0, 12).map((x) => x.it);
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12)
+    .map((x) => x.it);
 }
 
 function SearchBox({ tags, onNavigate, onFocus }: { tags: TagEntry[]; onNavigate: () => void; onFocus: () => void }) {
@@ -295,7 +300,9 @@ function useHeadings(container: RefObject<HTMLElement>, key: string) {
       // Cualquier cambio del DOM (copiar, cambiar de pestaña) dispara el observer: solo se actualiza si cambiaron los
       // títulos, así el índice no se vuelve a dibujar ni rearma su IntersectionObserver en cada mutación.
       setItems((prev) =>
-        prev.length === next.length && prev.every((p, i) => p.id === next[i].id && p.text === next[i].text && p.level === next[i].level) ? prev : next,
+        prev.length === next.length && prev.every((p, i) => p.id === next[i].id && p.text === next[i].text && p.level === next[i].level)
+          ? prev
+          : next,
       );
     };
     read();
@@ -561,7 +568,16 @@ export function DevelopersPage() {
               aria-label={`${t("ui.theme")}: ${themeName}`}
               title={`${t("ui.theme")}: ${themeName}`}
             >
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                width="17"
+                height="17"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
                 {themeIcon}
               </svg>
             </button>

@@ -21,7 +21,9 @@ const args = new Set(process.argv.slice(2));
 /** Código fuente que se mide: lo de producción, no los tests (como unwrap en Rust: en un test es libre). */
 const isSource = (f) =>
   /\.(ts|tsx|mts|mjs)$/.test(f) &&
-  /^(apps\/(api|web)\/src|packages\/[^/]+\/src|integrations\/(lib|connectors|mcpb|office|site|skill|chatgpt|gemini-cli|gemini-api|claude-code))\//.test(f) &&
+  /^(apps\/(api|web)\/src|packages\/[^/]+\/src|integrations\/(lib|connectors|mcpb|office|site|skill|chatgpt|gemini-cli|gemini-api|claude-code))\//.test(
+    f,
+  ) &&
   !/(^|\/)(test|tests|__tests__)\//.test(f) &&
   !/\.(test|spec)\.(ts|tsx|mts|mjs)$/.test(f) &&
   !/\.d\.ts$/.test(f);
@@ -48,7 +50,10 @@ const METRICS = {
   "catch-vacio": {
     desc: "catch vacío sin comentario (`catch {}`, `.catch(() => {})`)",
     count: ({ raw }) =>
-      raw.split("\n").filter((l) => !l.includes("//") && /catch\s*(\([^)]*\))?\s*\{\s*\}|\.catch\(\s*\(\s*\w*\s*\)\s*=>\s*(\{\s*\}|undefined|null)\s*\)/.test(l)).length,
+      raw
+        .split("\n")
+        .filter((l) => !l.includes("//") && /catch\s*(\([^)]*\))?\s*\{\s*\}|\.catch\(\s*\(\s*\w*\s*\)\s*=>\s*(\{\s*\}|undefined|null)\s*\)/.test(l))
+        .length,
   },
   // codigo-backend.md §5: la API loguea con pino (req.log / app.log), que redacta secretos (lib/redact.ts).
   "console-api": {
@@ -186,7 +191,16 @@ for (const [n, fs] of byNumber) {
 }
 // Editar una migración que ya está en HEAD: con --staged falla (salvo que se declare que todavía no se aplicó en
 // ningún entorno); sobre el working tree sólo avisa.
-const editedMigs = git(["-c", "core.quotePath=false", "diff", ...(staged ? ["--cached"] : ["HEAD"]), "--name-only", "--diff-filter=M", "--", MIGRATIONS_DIR])
+const editedMigs = git([
+  "-c",
+  "core.quotePath=false",
+  "diff",
+  ...(staged ? ["--cached"] : ["HEAD"]),
+  "--name-only",
+  "--diff-filter=M",
+  "--",
+  MIGRATIONS_DIR,
+])
   .split("\n")
   .filter((f) => f.endsWith(".sql"));
 if (editedMigs.length) {

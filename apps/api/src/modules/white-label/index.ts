@@ -105,7 +105,8 @@ export function injectBrand(html: string, b: ResolvedBrand, opts: { verify?: boo
   let out = html
     .replace(/<title>[^<]*<\/title>/, put(`<title>${title}</title>`))
     .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*(")/, (_m, a: string, z: string) => `${a}${title}${z}`);
-  if (theme.theme.primaryColor) out = out.replace(/(<meta name="theme-color" content=")[^"]*(")/, (_m, a: string, z: string) => `${a}${theme.theme.primaryColor}${z}`);
+  if (theme.theme.primaryColor)
+    out = out.replace(/(<meta name="theme-color" content=")[^"]*(")/, (_m, a: string, z: string) => `${a}${theme.theme.primaryColor}${z}`);
   if (theme.faviconUrl) {
     out = out
       .replace(/<link rel="icon"[^>]*>/, put(`<link rel="icon" href="${escAttr(theme.faviconUrl)}">`))
@@ -115,7 +116,8 @@ export function injectBrand(html: string, b: ResolvedBrand, opts: { verify?: boo
     out = out.replace(/<link rel="icon"[^>]*>/, `<link rel="icon" href="data:,">`).replace(/<link rel="apple-touch-icon"[^>]*>/, "");
   }
   // El manifest de la plataforma (nombre e íconos) solo en su dominio; en el de la marca se sirve uno propio.
-  if (rebrands(b)) out = out.replace(/<link rel="manifest"[^>]*>/, put(`<link rel="manifest" href="/manifest.webmanifest?b=${encodeURIComponent(b.key)}">`));
+  if (rebrands(b))
+    out = out.replace(/<link rel="manifest"[^>]*>/, put(`<link rel="manifest" href="/manifest.webmanifest?b=${encodeURIComponent(b.key)}">`));
   const head = [
     theme.fontCssUrl ? `<link rel="stylesheet" href="${escAttr(theme.fontCssUrl)}">` : "",
     theme.css ? `<style id="brand-theme">${theme.css.replace(/<\//g, "<\\/")}</style>` : "",
@@ -131,7 +133,10 @@ export async function sendBrandedIndex(db: Db, req: FastifyRequest, reply: Fasti
   if (!html) return false;
   const b = await brandForPage(db, req).catch(() => null);
   if (!b) return false;
-  reply.header("cache-control", "no-cache").type("text/html; charset=utf-8").send(injectBrand(html, b, { verify: isVerifyPath(req.url.split("?")[0]) }));
+  reply
+    .header("cache-control", "no-cache")
+    .type("text/html; charset=utf-8")
+    .send(injectBrand(html, b, { verify: isVerifyPath(req.url.split("?")[0]) }));
   return true;
 }
 
@@ -143,7 +148,11 @@ export async function whiteLabelModule(app: FastifyInstance, s: Services) {
   // En el dominio de una marca: favicon, ícono y manifest propios (no los de la plataforma).
   app.addHook("onRequest", async (req, reply) => {
     const path = req.url.split("?")[0];
-    if (req.method !== "GET" || !["/favicon.svg", "/favicon.ico", "/manifest.webmanifest", "/icons/apple-touch-icon.png", "/offline.html"].includes(path)) return;
+    if (
+      req.method !== "GET" ||
+      !["/favicon.svg", "/favicon.ico", "/manifest.webmanifest", "/icons/apple-touch-icon.png", "/offline.html"].includes(path)
+    )
+      return;
     const key = new URLSearchParams(req.url.split("?")[1] ?? "").get("b") ?? undefined;
     const found = await brandFromKeyOrHost(s.db, path === "/manifest.webmanifest" ? key : undefined, req.headers.host).catch(() => null);
     if (!found) return;

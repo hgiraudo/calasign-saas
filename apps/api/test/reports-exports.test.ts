@@ -10,8 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-reports-exports-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -50,10 +50,10 @@ beforeAll(async () => {
   ownerId = res.json().user.id;
   tenant = res.json().tenant.id;
   fileId = util.uuidv7();
-  await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`, [
-    fileId,
-    tenant,
-  ]);
+  await db.query(
+    `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`,
+    [fileId, tenant],
+  );
 }, 120_000);
 
 afterAll(async () => {
@@ -78,11 +78,10 @@ async function newMember(email: string, roleId: string) {
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1,$2,$3,'scrypt$x')`, [id, email, email.split("@")[0]]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,'custom',$3)`, [tenant, id, roleId]);
   const token = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(token),
-    id,
-    tenant,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(token), id, tenant],
+  );
   return token;
 }
 
@@ -157,11 +156,10 @@ describe("repositorio de acuerdos", () => {
 describe("reportes", () => {
   it("los meses se agrupan en la zona pedida (y UTC por defecto)", async () => {
     // 31/01 23:30 en Buenos Aires = 01/02 02:30 UTC.
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by, created_at) VALUES ($1,$2,'Fin de mes','draft',$3,'2026-02-01T02:30:00Z')`, [
-      util.uuidv7(),
-      tenant,
-      ownerId,
-    ]);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, created_by, created_at) VALUES ($1,$2,'Fin de mes','draft',$3,'2026-02-01T02:30:00Z')`,
+      [util.uuidv7(), tenant, ownerId],
+    );
     const range = `from=${encodeURIComponent("2026-01-01T03:00:00Z")}&to=${encodeURIComponent("2026-03-01T02:59:59Z")}`;
     const ba = await app.inject({ method: "GET", url: `/v1/reports/summary?${range}&tz=America/Argentina/Buenos_Aires`, headers: H() });
     expect(ba.statusCode).toBe(200);
@@ -205,9 +203,14 @@ describe("reportes", () => {
     expect(r.statusCode).toBe(200);
     expect(r.headers["x-truncated"]).toBeUndefined();
     const lines = r.body.trimEnd().split("\r\n");
-    expect(lines[0]).toBe("﻿id;asunto;estado;origen;creado;enviado;completado;vence;remitente;correo_remitente;destinatarios;creado_local;enviado_local;completado_local;vence_local");
+    expect(lines[0]).toBe(
+      "﻿id;asunto;estado;origen;creado;enviado;completado;vence;remitente;correo_remitente;destinatarios;creado_local;enviado_local;completado_local;vence_local",
+    );
     expect(lines[1]).toContain(";2026-01-31 23:30:00;");
-    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'reports.exported' ORDER BY id DESC LIMIT 1`, [tenant]);
+    const audit = await db.one<any>(
+      `SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'reports.exported' ORDER BY id DESC LIMIT 1`,
+      [tenant],
+    );
     expect(audit?.data).toMatchObject({ rows: 1, truncated: false });
     // Un solo registro por exportación (el del handler; el hook genérico de rutas ya no la duplica).
     const n = await db.one<any>(`SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'reports.exported'`, [tenant]);
@@ -227,7 +230,10 @@ describe("reportes", () => {
     const lines = r.body.trimEnd().split("\r\n");
     expect(lines).toHaveLength(1 + 50_000 + 1);
     expect(lines[lines.length - 1]).toContain("TRUNCADO");
-    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'reports.exported' ORDER BY id DESC LIMIT 1`, [tenant]);
+    const audit = await db.one<any>(
+      `SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'reports.exported' ORDER BY id DESC LIMIT 1`,
+      [tenant],
+    );
     expect(audit?.data).toMatchObject({ rows: 50_000, truncated: true });
   }, 120_000);
 

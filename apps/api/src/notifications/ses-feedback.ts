@@ -193,7 +193,9 @@ export async function applySesEvent(db: Db, ev: any): Promise<string> {
     for (const r of list) {
       const address = typeof r?.emailAddress === "string" ? normAddress(r.emailAddress) : "";
       if (!address) continue;
-      const detail = scrubPii(`${ev.bounce?.bounceType ?? ""}/${ev.bounce?.bounceSubType ?? ""}${r.diagnosticCode ? `: ${r.diagnosticCode}` : ""}`).slice(0, 500);
+      const detail = scrubPii(
+        `${ev.bounce?.bounceType ?? ""}/${ev.bounce?.bounceSubType ?? ""}${r.diagnosticCode ? `: ${r.diagnosticCode}` : ""}`,
+      ).slice(0, 500);
       if (permanent) await suppressBounce(db, address, detail, messageId);
       await markNotifications(db, messageId, address, permanent ? "bounced" : null, detail);
     }
@@ -247,7 +249,9 @@ export function tenantTag(ev: any): string | null {
  */
 async function suppressComplaint(db: Db, address: string, detail: string, messageId: string | null, tagTenant: string | null) {
   const n = messageId
-    ? await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM notifications WHERE provider_message_id = $1 AND channel = 'email' LIMIT 1`, [messageId])
+    ? await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM notifications WHERE provider_message_id = $1 AND channel = 'email' LIMIT 1`, [
+        messageId,
+      ])
     : null;
   const tenantId = n?.tenant_id ?? tagTenant;
   if (!tenantId) return;

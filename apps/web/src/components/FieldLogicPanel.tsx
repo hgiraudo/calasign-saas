@@ -68,7 +68,11 @@ export function FieldLogicPanel({
                 ))}
               </select>
               <div className="logic-cond-row">
-                <select aria-label={st("logic.operator")} value={c.operator} onChange={(e) => patch({ operator: e.target.value as ConditionOperator })}>
+                <select
+                  aria-label={st("logic.operator")}
+                  value={c.operator}
+                  onChange={(e) => patch({ operator: e.target.value as ConditionOperator })}
+                >
                   {ops.map((o) => (
                     <option key={o} value={o}>
                       {st(`logic.op.${o}` as "logic.op.equals")}
@@ -86,9 +90,20 @@ export function FieldLogicPanel({
                       ))}
                     </select>
                   ) : (
-                    <input aria-label={st("logic.value")} placeholder={st("logic.value")} value={c.value ?? ""} maxLength={200} onChange={(e) => patch({ value: e.target.value })} />
+                    <input
+                      aria-label={st("logic.value")}
+                      placeholder={st("logic.value")}
+                      value={c.value ?? ""}
+                      maxLength={200}
+                      onChange={(e) => patch({ value: e.target.value })}
+                    />
                   ))}
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConds(conditions.filter((_, j) => j !== i))} aria-label={st("logic.remove")}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setConds(conditions.filter((_, j) => j !== i))}
+                  aria-label={st("logic.remove")}
+                >
                   ×
                 </button>
               </div>
@@ -131,7 +146,12 @@ export function FieldLogicPanel({
           {numberLabels.length > 0 && (
             <div className="chips">
               {numberLabels.map((l) => (
-                <button key={l} type="button" className="chip chip-btn" onClick={() => onChange({ formula: `${field.formula ?? ""}{${l}}`, readOnly: false, value: null, required: false })}>
+                <button
+                  key={l}
+                  type="button"
+                  className="chip chip-btn"
+                  onClick={() => onChange({ formula: `${field.formula ?? ""}{${l}}`, readOnly: false, value: null, required: false })}
+                >
                   {st("logic.insert")} {`{${l}}`}
                 </button>
               ))}

@@ -29,14 +29,27 @@ const deal = {
   title: "Licencia anual ACME",
   value: 1500,
   currency: "COP",
-  person_id: { name: "Ana Pérez", email: [{ label: "work", value: "ana@acme.test", primary: true }], phone: [{ value: "+57 300 111 2233", primary: true }], value: 7 },
+  person_id: {
+    name: "Ana Pérez",
+    email: [{ label: "work", value: "ana@acme.test", primary: true }],
+    phone: [{ value: "+57 300 111 2233", primary: true }],
+    value: 7,
+  },
   org_id: { name: "ACME S.A.S.", value: 3 },
   [PLAN_KEY]: "37",
   [NIT_KEY]: "900123456",
 };
 const dealFields = [
   { key: "title", name: "Title", field_type: "varchar" },
-  { key: STATUS_KEY, name: "Estado CalaSign", field_type: "enum", options: [{ id: 11, label: "Enviado" }, { id: 12, label: "Firmado" }] },
+  {
+    key: STATUS_KEY,
+    name: "Estado CalaSign",
+    field_type: "enum",
+    options: [
+      { id: 11, label: "Enviado" },
+      { id: 12, label: "Firmado" },
+    ],
+  },
   { key: PLAN_KEY, name: "Plan", field_type: "enum", options: [{ id: 37, label: "Plan Pro" }] },
   { key: NIT_KEY, name: "NIT", field_type: "varchar" },
   { key: "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0", name: "Nota libre", field_type: "text" },
@@ -56,14 +69,21 @@ function fakePipedrive(): typeof fetch {
       if (headers.authorization !== `Basic ${Buffer.from("pd-client:pd-secret").toString("base64")}`) return json(401, { error: "invalid_client" });
       if (body.grant_type === "refresh_token" && body.refresh_token === "pd-rt") {
         token = "pd-at-2";
-        return json(200, { access_token: token, refresh_token: "pd-rt-2", expires_in: 3599, api_domain: "https://acme.pipedrive.com", token_type: "Bearer" });
+        return json(200, {
+          access_token: token,
+          refresh_token: "pd-rt-2",
+          expires_in: 3599,
+          api_domain: "https://acme.pipedrive.com",
+          token_type: "Bearer",
+        });
       }
       return json(400, { error: "invalid_grant" });
     }
     if (u.origin !== "https://acme.pipedrive.com") return json(404, { success: false, error: `host ${u.host}` });
     if (headers.authorization !== `Bearer ${token}`) return json(401, { success: false, error: "unauthorized access" });
     const p = u.pathname;
-    if (p === "/api/v1/users/me") return json(200, { success: true, data: { id: 1, email: "admin@acme.test", company_id: 9988, company_name: "ACME", company_domain: "acme" } });
+    if (p === "/api/v1/users/me")
+      return json(200, { success: true, data: { id: 1, email: "admin@acme.test", company_id: 9988, company_name: "ACME", company_domain: "acme" } });
     if (p === "/api/v1/deals/42" && method === "GET") return json(200, { success: true, data: deal });
     if (p === "/api/v1/deals/42" && method === "PUT") return json(200, { success: true, data: { id: 42, ...body } });
     if (p === "/api/v1/deals/404") return json(404, { success: false, error: "Deal not found" });
@@ -79,7 +99,8 @@ function fakePipedrive(): typeof fetch {
       });
     if (p === "/api/v1/dealFields") return json(200, { success: true, data: dealFields });
     if (p === "/api/v1/personFields") return json(200, { success: true, data: [{ key: "name", name: "Name", field_type: "varchar" }] });
-    if (p === "/api/v1/persons/7") return json(200, { success: true, data: { id: 7, name: "Ana Pérez", email: [{ value: "ana@acme.test", primary: true }], phone: [] } });
+    if (p === "/api/v1/persons/7")
+      return json(200, { success: true, data: { id: 7, name: "Ana Pérez", email: [{ value: "ana@acme.test", primary: true }], phone: [] } });
     if (p === "/api/v1/files" && method === "POST") return json(201, { success: true, data: { id: 501 } });
     if (p === "/api/v1/notes" && method === "POST") return json(201, { success: true, data: { id: 601 } });
     return json(404, { success: false, error: `mock: ${method} ${p}` });
@@ -87,7 +108,16 @@ function fakePipedrive(): typeof fetch {
 }
 
 const conn = (creds: Record<string, unknown> = { access_token: "pd-at-1", refresh_token: "pd-rt", expires_at: Date.now() + 3_600_000 }) =>
-  new CrmConn({ id: "c1", provider: "pipedrive", auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: { apiDomain: "https://acme.pipedrive.com" } }, null);
+  new CrmConn(
+    {
+      id: "c1",
+      provider: "pipedrive",
+      auth_type: "oauth",
+      credentials_enc: encrypt(JSON.stringify(creds)),
+      config: { apiDomain: "https://acme.pipedrive.com" },
+    },
+    null,
+  );
 
 beforeEach(() => {
   calls = [];
@@ -105,7 +135,13 @@ afterEach(() => {
 describe("Pipedrive", () => {
   it("valida el api_domain de la compañía", () => {
     expect(validatePipedriveDomain("https://acme.pipedrive.com/")).toBe("https://acme.pipedrive.com");
-    for (const bad of ["https://evil.test", "http://acme.pipedrive.com", "https://acme.pipedrive.com.evil.test", "https://a.b.pipedrive.com", "no es url"]) {
+    for (const bad of [
+      "https://evil.test",
+      "http://acme.pipedrive.com",
+      "https://acme.pipedrive.com.evil.test",
+      "https://a.b.pipedrive.com",
+      "no es url",
+    ]) {
       expect(() => validatePipedriveDomain(bad), bad).toThrow(/api_domain/);
     }
   });
@@ -220,7 +256,14 @@ describe("Pipedrive", () => {
   });
 
   it("adjunta a una Person con person_id", async () => {
-    await attachSigned(conn(), "contact", "7", { fileName: "a.pdf", pdf: new Uint8Array([37]), subject: "S", envelopeId: "e", sha256: "0", url: "https://x.test" });
+    await attachSigned(conn(), "contact", "7", {
+      fileName: "a.pdf",
+      pdf: new Uint8Array([37]),
+      subject: "S",
+      envelopeId: "e",
+      sha256: "0",
+      url: "https://x.test",
+    });
     expect((calls.find((c) => c.url.endsWith("/files"))!.body as FormData).get("person_id")).toBe("7");
     expect(calls.find((c) => c.url.endsWith("/notes"))!.body.person_id).toBe(7);
   });

@@ -123,7 +123,10 @@ export async function applyLtv(pdf: Uint8Array, opts: LtvOptions): Promise<{ pdf
       sign: (content) => requestTimestampToken(opts.tsaUrl!, sha256(content), opts.tsaAuthHeader, content),
     });
   }
-  return { pdf: out, report: { level: opts.level, certs: data.certs.length, ocsps: data.ocsps.length, crls: data.crls.length, missingRevocation: missing } };
+  return {
+    pdf: out,
+    report: { level: opts.level, certs: data.certs.length, ocsps: data.ocsps.length, crls: data.crls.length, missingRevocation: missing },
+  };
 }
 
 /** Segunda firma CAdES (p. ej. sello de empresa) como revisión incremental, con sello de tiempo si hay TSA. */

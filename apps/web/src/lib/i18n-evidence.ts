@@ -10,7 +10,8 @@ const es = {
   "settings.xml": "Firmá facturas electrónicas y otros XML (DGII e-CF, DIAN, XAdES).",
 
   "cert.title": "Certificados y evidencia",
-  "cert.intro": "Subí el certificado digital de tu organización (.p12/.pfx) para sellar documentos y firmar facturas electrónicas. La clave privada queda cifrada y nunca se puede descargar.",
+  "cert.intro":
+    "Subí el certificado digital de tu organización (.p12/.pfx) para sellar documentos y firmar facturas electrónicas. La clave privada queda cifrada y nunca se puede descargar.",
   "cert.upload": "Subir certificado",
   "cert.name": "Nombre",
   "cert.file": "Archivo .p12 / .pfx",
@@ -29,7 +30,8 @@ const es = {
   "cert.lastUsed": "Último uso",
 
   "level.title": "Nivel del sello PAdES",
-  "level.intro": "Cuánta evidencia lleva el PDF final. B-LT incrusta la validación (OCSP/CRL) para que la firma se pueda verificar dentro de muchos años; B-LTA además agrega un sello de tiempo de archivo.",
+  "level.intro":
+    "Cuánta evidencia lleva el PDF final. B-LT incrusta la validación (OCSP/CRL) para que la firma se pueda verificar dentro de muchos años; B-LTA además agrega un sello de tiempo de archivo.",
   "level.auto": "Automático (recomendado)",
   "level.effective": "Se aplica hoy: {level}",
   "level.noTsa": "Sin servidor de sello de tiempo configurado: el sello queda en B-B.",
@@ -57,7 +59,8 @@ const es = {
   "seal.current": "Certificado actual (no disponible)",
 
   "xml.title": "Firma XML",
-  "xml.intro": "Firmá facturas electrónicas y otros documentos XML con el certificado de tu organización. También disponible por API: POST /v1/xml/sign.",
+  "xml.intro":
+    "Firmá facturas electrónicas y otros documentos XML con el certificado de tu organización. También disponible por API: POST /v1/xml/sign.",
   "xml.profile": "Perfil",
   "xml.profile.dgii-ecf": "DGII e-CF (República Dominicana) · XMLDSig",
   "xml.profile.dian-fe": "DIAN factura electrónica (Colombia) · XAdES-EPES",
@@ -121,7 +124,8 @@ const pt: Record<Key, string> = {
   "settings.certificates": "Certificados da organização (.p12), selo da empresa, nível PAdES e conectores de assinatura.",
   "settings.xml": "Assine notas fiscais e outros XML (DGII e-CF, DIAN, XAdES).",
   "cert.title": "Certificados e evidência",
-  "cert.intro": "Envie o certificado digital da sua organização (.p12/.pfx) para selar documentos e assinar notas eletrônicas. A chave privada fica cifrada e nunca pode ser baixada.",
+  "cert.intro":
+    "Envie o certificado digital da sua organização (.p12/.pfx) para selar documentos e assinar notas eletrônicas. A chave privada fica cifrada e nunca pode ser baixada.",
   "cert.upload": "Enviar certificado",
   "cert.name": "Nome",
   "cert.file": "Arquivo .p12 / .pfx",
@@ -139,7 +143,8 @@ const pt: Record<Key, string> = {
   "cert.uploaded": "Certificado salvo.",
   "cert.lastUsed": "Último uso",
   "level.title": "Nível do selo PAdES",
-  "level.intro": "Quanta evidência o PDF final carrega. B-LT incorpora a validação (OCSP/CRL) para que a assinatura possa ser verificada daqui a muitos anos; B-LTA também adiciona um carimbo do tempo de arquivo.",
+  "level.intro":
+    "Quanta evidência o PDF final carrega. B-LT incorpora a validação (OCSP/CRL) para que a assinatura possa ser verificada daqui a muitos anos; B-LTA também adiciona um carimbo do tempo de arquivo.",
   "level.auto": "Automático (recomendado)",
   "level.effective": "Aplicado hoje: {level}",
   "level.noTsa": "Sem servidor de carimbo do tempo configurado: o selo fica em B-B.",
@@ -161,7 +166,8 @@ const pt: Record<Key, string> = {
   "seal.hint": "O documento final também é assinado com o certificado da sua organização.",
   "seal.noCerts": "Para usar o selo da empresa, envie um certificado em Ajustes → Certificados.",
   "seal.saved": "Salvo",
-  "seal.recover": "Se a finalização falhar porque o certificado do selo venceu ou não existe mais, escolha outro selo ou remova-o e depois tente de novo.",
+  "seal.recover":
+    "Se a finalização falhar porque o certificado do selo venceu ou não existe mais, escolha outro selo ou remova-o e depois tente de novo.",
   "seal.current": "Certificado atual (indisponível)",
   "xml.title": "Assinatura XML",
   "xml.intro": "Assine notas fiscais eletrônicas e outros XML com o certificado da sua organização. Também via API: POST /v1/xml/sign.",
@@ -225,7 +231,8 @@ const en: Record<Key, string> = {
   "settings.certificates": "Organization certificates (.p12), company seal, PAdES level and signing connectors.",
   "settings.xml": "Sign e-invoices and other XML (DGII e-CF, DIAN, XAdES).",
   "cert.title": "Certificates & evidence",
-  "cert.intro": "Upload your organization's digital certificate (.p12/.pfx) to seal documents and sign e-invoices. The private key is encrypted and can never be downloaded.",
+  "cert.intro":
+    "Upload your organization's digital certificate (.p12/.pfx) to seal documents and sign e-invoices. The private key is encrypted and can never be downloaded.",
   "cert.upload": "Upload certificate",
   "cert.name": "Name",
   "cert.file": ".p12 / .pfx file",
@@ -243,7 +250,8 @@ const en: Record<Key, string> = {
   "cert.uploaded": "Certificate saved.",
   "cert.lastUsed": "Last used",
   "level.title": "PAdES seal level",
-  "level.intro": "How much evidence the final PDF carries. B-LT embeds validation data (OCSP/CRL) so the signature can be verified for years; B-LTA also adds an archive timestamp.",
+  "level.intro":
+    "How much evidence the final PDF carries. B-LT embeds validation data (OCSP/CRL) so the signature can be verified for years; B-LTA also adds an archive timestamp.",
   "level.auto": "Automatic (recommended)",
   "level.effective": "Applied today: {level}",
   "level.noTsa": "No timestamp server configured: the seal stays at B-B.",

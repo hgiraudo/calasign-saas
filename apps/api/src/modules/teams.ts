@@ -32,13 +32,7 @@ import {
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { AppError, assertNotStale, badRequest, conflict, forbidden, notFound, unauthorized } from "../lib/errors";
-import {
-  generateRecoveryCodes,
-  generateTotpSecret,
-  normalizeRecoveryCode,
-  otpauthUrl,
-  verifyTotp,
-} from "../lib/totp";
+import { generateRecoveryCodes, generateTotpSecret, normalizeRecoveryCode, otpauthUrl, verifyTotp } from "../lib/totp";
 import { decrypt, encrypt, hashPassword, iso, maskDestination, randomToken, sha256Hex, uuidv7, verifyPassword } from "../lib/util";
 import { isSuppressed, sendTracked } from "../notifications/outbound";
 import { normLocale, render } from "../notifications/templates";
@@ -64,7 +58,14 @@ const ROLE_LABEL_I18N = {
 
 // ───────────────────────────── Sesiones ─────────────────────────────
 
-export async function createUserSession(db: Db, req: FastifyRequest, reply: FastifyReply, userId: string, tenantId: string, opts: { rememberMe?: boolean } = {}) {
+export async function createUserSession(
+  db: Db,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  userId: string,
+  tenantId: string,
+  opts: { rememberMe?: boolean } = {},
+) {
   await openPasswordSession(db, req, reply, userId, tenantId, opts);
 }
 
@@ -127,7 +128,8 @@ export { MAX_FAILED_LOGINS, clearLoginAttempts, takeLoginAttempt } from "./login
 // ───────────────────────────── Helpers de roles ─────────────────────────────
 
 async function resolveRole(db: Db, tenantId: string, input: { role: string; roleId?: string | null }) {
-  if (input.role !== "custom") return { role: input.role as MemberRole, roleId: null as string | null, roleName: ROLE_LABEL[input.role] ?? input.role };
+  if (input.role !== "custom")
+    return { role: input.role as MemberRole, roleId: null as string | null, roleName: ROLE_LABEL[input.role] ?? input.role };
   const r = await db.one<any>(`SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`, [input.roleId, tenantId]);
   if (!r) throw badRequest("invalid_role", "Rol inexistente");
   return { role: "custom" as MemberRole, roleId: r.id as string, roleName: r.name as string };
@@ -175,9 +177,14 @@ async function assertCanAddToGroup(db: Db, a: AuthContext, groupId: string, user
   const cur = new Set((await db.query<any>(`SELECT user_id FROM group_members WHERE group_id = $1`, [groupId])).map((r) => r.user_id as string));
   if (!userIds.some((u) => !cur.has(u))) return;
   if (a.userId && cur.has(a.userId)) return;
-  throw new AppError(403, "forbidden", "Sumar personas a este grupo les da acceso a lo que se compartió con él: lo hace un miembro del grupo o quien ve todos los sobres y plantillas", {
-    permission: "envelopes:view_all",
-  });
+  throw new AppError(
+    403,
+    "forbidden",
+    "Sumar personas a este grupo les da acceso a lo que se compartió con él: lo hace un miembro del grupo o quien ve todos los sobres y plantillas",
+    {
+      permission: "envelopes:view_all",
+    },
+  );
 }
 
 async function permsOf(db: Db, tenantId: string, role: string, roleId: string | null): Promise<readonly Permission[]> {
@@ -213,7 +220,16 @@ const INVITE_HEADING = { es: "Invitación al equipo", "pt-BR": "Convite para a e
  * Correo de invitación con la marca de la organización (colores, logo, plantilla, marca blanca) y su remitente (dominio
  * de correo propio si lo tiene), como los demás avisos a la organización (webhooks.ts notifyWebhookDeactivated).
  */
-export async function sendInvitationEmail(db: Db, tenantId: string, to: string, org: string, inviter: string, roleName: string, link: string, localeIn?: string | null) {
+export async function sendInvitationEmail(
+  db: Db,
+  tenantId: string,
+  to: string,
+  org: string,
+  inviter: string,
+  roleName: string,
+  link: string,
+  localeIn?: string | null,
+) {
   const locale = normLocale(localeIn);
   const wl = await resolveBrand(db, tenantId, null);
   const sendAs = await senderFor(db, wl);
@@ -227,7 +243,20 @@ export async function sendInvitationEmail(db: Db, tenantId: string, to: string, 
   const out = await sendTracked(
     db,
     { tenantId, template: "invitation" },
-    { channel: "email", to, subject: m.subject, text: m.text, html: m.html, link, tenantId, locale, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom },
+    {
+      channel: "email",
+      to,
+      subject: m.subject,
+      text: m.text,
+      html: m.html,
+      link,
+      tenantId,
+      locale,
+      from: sendAs.from,
+      replyTo: sendAs.replyTo,
+      dkim: sendAs.dkim,
+      fallbackFrom: sendAs.fallbackFrom,
+    },
   );
   if (out.status === "failed") throw new Error(`no se pudo enviar la invitación: ${out.error}`);
 }
@@ -264,7 +293,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         name: r.name,
         slug: r.slug,
         role: r.role,
-        roleName: r.role === "custom" ? r.role_name : ROLE_LABEL[r.role] ?? r.role,
+        roleName: r.role === "custom" ? r.role_name : (ROLE_LABEL[r.role] ?? r.role),
         current: r.id === a.tenantId,
       }));
       const u = await s.db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
@@ -296,9 +325,20 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!cookie) throw forbidden("Solo para sesiones de usuario");
     const sess = await s.db.one<any>(`SELECT user_id, auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]);
     if (!sess || sess.user_id !== a.userId) throw forbidden("Solo para sesiones de usuario");
-    await assertSessionAllowed(s.db, { authMethod: sess?.auth_method ?? "password", ssoTenantId: sess?.sso_tenant_id ?? null, userId: a.userId }, tenantId, m.role);
+    await assertSessionAllowed(
+      s.db,
+      { authMethod: sess?.auth_method ?? "password", ssoTenantId: sess?.sso_tenant_id ?? null, userId: a.userId },
+      tenantId,
+      m.role,
+    );
     await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie), tenantId]);
-    await recordAudit(s.db, { tenantId, action: "auth.tenant_switched", actor: { type: "user", id: a.userId, label: a.actor.label }, ...clientInfo(req), data: { from: a.tenantId } });
+    await recordAudit(s.db, {
+      tenantId,
+      action: "auth.tenant_switched",
+      actor: { type: "user", id: a.userId, label: a.actor.label },
+      ...clientInfo(req),
+      data: { from: a.tenantId },
+    });
     return meResponse(s.db, a.userId, tenantId);
   });
 
@@ -322,7 +362,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       email: r.email,
       role: r.role,
       roleId: r.role_id,
-      roleName: r.role === "custom" ? r.role_name : ROLE_LABEL[r.role] ?? r.role,
+      roleName: r.role === "custom" ? r.role_name : (ROLE_LABEL[r.role] ?? r.role),
       groups: gm.filter((g) => g.user_id === r.user_id).map((g) => ({ id: g.id, name: g.name })),
       twoFactorEnabled: Boolean(r.totp_enabled_at),
       joinedAt: iso(r.created_at)!,
@@ -346,7 +386,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       // Los chequeos de arriba vieron el rol antes del bloqueo: si cambió mientras tanto (p. ej. lo hicieron propietario),
       // no se aplica sobre una foto vieja.
       await assertSameRole(t, a.tenantId, req.params.userId!, cur);
-      await t.query(`UPDATE memberships SET role = $3, role_id = $4 WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, req.params.userId, target.role, target.roleId]);
+      await t.query(`UPDATE memberships SET role = $3, role_id = $4 WHERE tenant_id = $1 AND user_id = $2`, [
+        a.tenantId,
+        req.params.userId,
+        target.role,
+        target.roleId,
+      ]);
       if (cur.role === "owner" && target.role !== "owner" && (await ownerCount(t, a.tenantId)) === 0) {
         throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       }
@@ -358,7 +403,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       const before = await permsOf(t, a.tenantId, cur.role, cur.role_id);
       const after = new Set(await permsOf(t, a.tenantId, target.role, target.roleId));
       const demotedOwner = cur.role === "owner" && target.role !== "owner";
-      if (demotedOwner || before.some((p) => !after.has(p))) revoked = await revokeMemberAccess(t, a.tenantId, req.params.userId!, { removal: false });
+      if (demotedOwner || before.some((p) => !after.has(p)))
+        revoked = await revokeMemberAccess(t, a.tenantId, req.params.userId!, { removal: false });
     });
     const rv = revoked as Awaited<ReturnType<typeof revokeMemberAccess>> | null;
     await auditFromRequest(s.db, req, a, "member.role_changed", {
@@ -368,7 +414,14 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         from: cur.role === "custom" ? { role: "custom", roleId: cur.role_id } : cur.role,
         to: target.role === "custom" ? { role: "custom", roleId: target.roleId } : target.role,
         ...(rv && (rv.keys.length || rv.invitations || rv.serviceApps.length || rv.scimTokens)
-          ? { revokedCredentials: { apiKeys: rv.keys.map((k) => k.id), invitations: rv.invitations, serviceApps: rv.serviceApps, scimTokens: rv.scimTokens } }
+          ? {
+              revokedCredentials: {
+                apiKeys: rv.keys.map((k) => k.id),
+                invitations: rv.invitations,
+                serviceApps: rv.serviceApps,
+                scimTokens: rv.scimTokens,
+              },
+            }
           : {}),
       },
     });
@@ -386,9 +439,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
       await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
       await assertSameRole(t, a.tenantId, userId, cur);
-      await t.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [a.tenantId, userId]);
+      await t.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [
+        a.tenantId,
+        userId,
+      ]);
       await t.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, userId]);
-      if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0) throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
+      if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0)
+        throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       // Cierra sus sesiones en esta organización.
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
       // La baja se sostiene: el alta JIT por SSO o una activación por SCIM no lo vuelven a sumar hasta que lo inviten.
@@ -425,7 +482,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   /** Revocar o reemplazar una invitación pendiente: como con los miembros, solo quien tiene todos los permisos de su rol. */
   async function assertCanManageInvitation(a: AuthContext, inv: { role: string; role_id: string | null }) {
-    if (inv.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede revocar o reemplazar una invitación de propietario");
+    if (inv.role === "owner" && a.access?.role !== "owner")
+      throw forbidden("Solo un propietario puede revocar o reemplazar una invitación de propietario");
     assertCanManage(a, await permsOf(s.db, a.tenantId, inv.role, inv.role_id), "revocar o reemplazar esta invitación");
   }
 
@@ -434,7 +492,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     email: r.email,
     role: r.role,
     roleId: r.role_id,
-    roleName: r.role === "custom" ? r.role_name ?? "?" : ROLE_LABEL[r.role] ?? r.role,
+    roleName: r.role === "custom" ? (r.role_name ?? "?") : (ROLE_LABEL[r.role] ?? r.role),
     invitedBy: r.invited_by_name ?? null,
     createdAt: iso(r.created_at)!,
     expiresAt: iso(r.expires_at)!,
@@ -498,9 +556,14 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // de aceptación igual vuelve en la respuesta. No se informa en la respuesta ni en la auditoría (un rebote es de otra
     // organización y la queja, de la persona): queda solo en el log del servidor, con la dirección enmascarada.
     const emailSuppressed = await isSuppressed(s.db, input.email, a.tenantId);
-    if (emailSuppressed) req.log.info({ tenantId: a.tenantId, invitationId: id, email: maskDestination(input.email) }, "invitación sin correo: dirección suprimida");
+    if (emailSuppressed)
+      req.log.info({ tenantId: a.tenantId, invitationId: id, email: maskDestination(input.email) }, "invitación sin correo: dirección suprimida");
     else await sendInvitationEmail(s.db, a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
-    await auditFromRequest(s.db, req, a, "member.invited", { targetType: "invitation", targetId: id, data: { email: input.email, role: target.role, roleId: target.roleId } });
+    await auditFromRequest(s.db, req, a, "member.invited", {
+      targetType: "invitation",
+      targetId: id,
+      data: { email: input.email, role: target.role, roleId: target.roleId },
+    });
     const row = await s.db.one<any>(
       `SELECT i.*, r.name AS role_name, u.name AS invited_by_name FROM invitations i LEFT JOIN roles r ON r.id = i.role_id LEFT JOIN users u ON u.id = i.invited_by WHERE i.id = $1`,
       [id],
@@ -521,7 +584,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       [req.params.id, a.tenantId],
     );
     if (!r.length) throw notFound("Invitación");
-    await auditFromRequest(s.db, req, a, "member.invitation_revoked", { targetType: "invitation", targetId: req.params.id, data: { email: (r[0] as any).email } });
+    await auditFromRequest(s.db, req, a, "member.invitation_revoked", {
+      targetType: "invitation",
+      targetId: req.params.id,
+      data: { email: (r[0] as any).email },
+    });
     return reply.code(204).send();
   });
 
@@ -544,7 +611,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       organizationName: r.org_name,
       email: r.email,
       role: r.role,
-      roleName: r.role === "custom" ? r.role_name : ROLE_LABEL[r.role] ?? r.role,
+      roleName: r.role === "custom" ? r.role_name : (ROLE_LABEL[r.role] ?? r.role),
       invitedByName: r.invited_by_name,
       existingAccount: Boolean(existing),
       status: invitationStatus(r),
@@ -559,7 +626,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   async function assertJoinedWithoutSso(tenantId: string, userId: string, email: string) {
     const m = await s.db.one<{ role: string }>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     if (!m || m.role === "owner") return;
-    const sso = await s.db.one<any>(`SELECT c.enabled, c.enforce, t.slug FROM sso_configs c JOIN tenants t ON t.id = c.tenant_id WHERE c.tenant_id = $1`, [tenantId]);
+    const sso = await s.db.one<any>(
+      `SELECT c.enabled, c.enforce, t.slug FROM sso_configs c JOIN tenants t ON t.id = c.tenant_id WHERE c.tenant_id = $1`,
+      [tenantId],
+    );
     if (sso?.enabled && sso.enforce) {
       throw new AppError(403, "sso_required", "Te sumaste a la organización: ingresá con su inicio de sesión único (SSO)", {
         joined: true,
@@ -574,7 +644,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
    * aceptación falla (cupo del plan, invitación ya usada), no queda una cuenta sin organización que después no podía
    * ingresar (401) ni registrarse (email_taken). Devuelve el id de la cuenta.
    */
-  async function joinByInvitation(req: FastifyRequest, invitationId: string, who: string | { name: string; passwordHash: string; locale: string }, email: string) {
+  async function joinByInvitation(
+    req: FastifyRequest,
+    invitationId: string,
+    who: string | { name: string; passwordHash: string; locale: string },
+    email: string,
+  ) {
     const userId = typeof who === "string" ? who : uuidv7();
     let inv: any;
     try {
@@ -585,12 +660,19 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         if (pre) {
           await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [pre.tenant_id]);
           // Si ya es miembro no ocupa un lugar nuevo (la membresía existente se conserva).
-          const member = typeof who === "string" ? await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [pre.tenant_id, userId]) : null;
+          const member =
+            typeof who === "string" ? await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [pre.tenant_id, userId]) : null;
           if (!member) await assertInvitationCapacity(t, pre.tenant_id, email);
         }
         if (typeof who !== "string") {
           if (!pre) throw new AppError(410, "invitation_used", "La invitación ya no es válida");
-          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [userId, pre.email, who.name, who.passwordHash, who.locale]);
+          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [
+            userId,
+            pre.email,
+            who.name,
+            who.passwordHash,
+            who.locale,
+          ]);
         }
         const upd = await t.query<any>(
           `UPDATE invitations SET accepted_at = now(), accepted_by = $2
@@ -659,7 +741,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (!(await verifyPassword(input.password, user.password_hash))) {
         const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [user.id]);
         for (const m of tenants.length ? tenants : [{ tenant_id: inv.tenant_id }]) {
-          await recordAudit(s.db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: user.id, label: inv.email }, data: { reason: "bad_password_invitation" }, ...clientInfo(req) });
+          await recordAudit(s.db, {
+            tenantId: m.tenant_id,
+            action: "auth.login_failed",
+            actor: { type: "anonymous", id: user.id, label: inv.email },
+            data: { reason: "bad_password_invitation" },
+            ...clientInfo(req),
+          });
         }
         throw unauthorized();
       }
@@ -731,7 +819,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (/roles_tenant_name_uq/.test(String(e))) throw conflict("role_exists", "Ya existe un rol con ese nombre");
       throw e;
     }
-    await auditFromRequest(s.db, req, a, "role.created", { targetType: "role", targetId: id, data: { name: input.name, permissions: input.permissions } });
+    await auditFromRequest(s.db, req, a, "role.created", {
+      targetType: "role",
+      targetId: id,
+      data: { name: input.name, permissions: input.permissions },
+    });
     reply.code(201);
     return toRole(await s.db.one(`SELECT *, 0 AS member_count FROM roles WHERE id = $1`, [id]));
   });
@@ -753,21 +845,38 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         // Mismo orden de bloqueos que el cambio de rol de un miembro (organización y después rol/membresía): en orden
         // inverso, un PATCH del rol simultáneo a un cambio de rol de uno de sus miembros podía trabarse (deadlock).
         await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
-        const locked = await t.one<{ permissions: string[] | null }>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [cur.id, a.tenantId]);
+        const locked = await t.one<{ permissions: string[] | null }>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+          cur.id,
+          a.tenantId,
+        ]);
         if (!locked) throw notFound("Rol");
         await t.query(
           `UPDATE roles SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END,
              permissions = COALESCE($5, permissions), updated_at = now() WHERE id = $1`,
-          [cur.id, input.name ?? null, input.description !== undefined, input.description ?? null, input.permissions ? [...new Set(input.permissions)] : null],
+          [
+            cur.id,
+            input.name ?? null,
+            input.description !== undefined,
+            input.description ?? null,
+            input.permissions ? [...new Set(input.permissions)] : null,
+          ],
         );
         if (!input.permissions) return;
         const after = new Set<string>(input.permissions);
         if (!(locked.permissions ?? []).some((p) => !after.has(p))) return;
-        const members = await t.query<{ user_id: string }>(`SELECT user_id FROM memberships WHERE tenant_id = $1 AND role_id = $2`, [a.tenantId, cur.id]);
+        const members = await t.query<{ user_id: string }>(`SELECT user_id FROM memberships WHERE tenant_id = $1 AND role_id = $2`, [
+          a.tenantId,
+          cur.id,
+        ]);
         for (const m of members) {
           const rv = await revokeMemberAccess(t, a.tenantId, m.user_id, { removal: false });
           if (rv.keys.length || rv.invitations || rv.serviceApps.length || rv.scimTokens) {
-            revokedByUser[m.user_id] = { apiKeys: rv.keys.map((k) => k.id), invitations: rv.invitations, serviceApps: rv.serviceApps, scimTokens: rv.scimTokens };
+            revokedByUser[m.user_id] = {
+              apiKeys: rv.keys.map((k) => k.id),
+              invitations: rv.invitations,
+              serviceApps: rv.serviceApps,
+              scimTokens: rv.scimTokens,
+            };
           }
         }
       });
@@ -820,7 +929,14 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       `SELECT k.id, k.role, k.role_id, r.name AS role_name FROM api_keys k LEFT JOIN roles r ON r.id = k.role_id WHERE k.tenant_id = $1`,
       [A(req).tenantId],
     );
-    return { items: rows.map((r) => ({ id: r.id, role: r.role, roleId: r.role_id, roleName: r.role === "custom" ? r.role_name : ROLE_LABEL[r.role] ?? r.role })) };
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        role: r.role,
+        roleId: r.role_id,
+        roleName: r.role === "custom" ? r.role_name : (ROLE_LABEL[r.role] ?? r.role),
+      })),
+    };
   });
 
   app.patch<P>("/v1/api-keys/:id/role", { preHandler: auth }, async (req) => {
@@ -830,14 +946,16 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     await assertCanManageApiKey(s.db, a, req.params.id!);
     const target = await resolveRole(s.db, a.tenantId, input);
     assertCanGrant(a, target, await permsOf(s.db, a.tenantId, target.role, target.roleId));
-    const r = await s.db.query(`UPDATE api_keys SET role = $3, role_id = $4 WHERE id = $1 AND tenant_id = $2 AND oauth_client_id IS NULL RETURNING id`, [
-      req.params.id,
-      a.tenantId,
-      target.role,
-      target.roleId,
-    ]);
+    const r = await s.db.query(
+      `UPDATE api_keys SET role = $3, role_id = $4 WHERE id = $1 AND tenant_id = $2 AND oauth_client_id IS NULL RETURNING id`,
+      [req.params.id, a.tenantId, target.role, target.roleId],
+    );
     if (!r.length) throw notFound("API key");
-    await auditFromRequest(s.db, req, a, "api_key.role_changed", { targetType: "api_key", targetId: req.params.id, data: { role: target.role, roleId: target.roleId } });
+    await auditFromRequest(s.db, req, a, "api_key.role_changed", {
+      targetType: "api_key",
+      targetId: req.params.id,
+      data: { role: target.role, roleId: target.roleId },
+    });
     return { id: req.params.id, role: target.role, roleId: target.roleId, roleName: target.roleName };
   });
 
@@ -888,14 +1006,23 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     try {
       await s.db.tx(async (t) => {
-        await t.query(`INSERT INTO groups (id, tenant_id, name, description) VALUES ($1,$2,$3,$4)`, [id, a.tenantId, input.name, input.description ?? null]);
+        await t.query(`INSERT INTO groups (id, tenant_id, name, description) VALUES ($1,$2,$3,$4)`, [
+          id,
+          a.tenantId,
+          input.name,
+          input.description ?? null,
+        ]);
         await setGroupMembers(t, a.tenantId, id, input.memberIds ?? []);
       });
     } catch (e) {
       if (/groups_tenant_name_uq/.test(String(e))) throw conflict("group_exists", "Ya existe un grupo con ese nombre");
       throw e;
     }
-    await auditFromRequest(s.db, req, a, "group.created", { targetType: "group", targetId: id, data: { name: input.name, members: input.memberIds?.length ?? 0 } });
+    await auditFromRequest(s.db, req, a, "group.created", {
+      targetType: "group",
+      targetId: id,
+      data: { name: input.name, members: input.memberIds?.length ?? 0 },
+    });
     reply.code(201);
     return (await loadGroups(a.tenantId, id))[0];
   });
@@ -907,10 +1034,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!cur) throw notFound("Grupo");
     try {
       await s.db.tx(async (t) => {
-        await t.query(
-          `UPDATE groups SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END WHERE id = $1`,
-          [cur.id, input.name ?? null, input.description !== undefined, input.description ?? null],
-        );
+        await t.query(`UPDATE groups SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END WHERE id = $1`, [
+          cur.id,
+          input.name ?? null,
+          input.description !== undefined,
+          input.description ?? null,
+        ]);
         if (input.memberIds) {
           await assertCanAddToGroup(t, a, cur.id, input.memberIds);
           await setGroupMembers(t, a.tenantId, cur.id, input.memberIds);
@@ -958,7 +1087,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       await t.query(`DELETE FROM envelope_shares WHERE envelope_id = $1`, [req.params.id]);
       for (const g of groups) await t.query(`INSERT INTO envelope_shares (envelope_id, group_id) VALUES ($1,$2)`, [req.params.id, g.id]);
     });
-    await auditFromRequest(s.db, req, a, "envelope.shared", { targetType: "envelope", targetId: req.params.id, data: { groups: groups.map((g) => g.name) } });
+    await auditFromRequest(s.db, req, a, "envelope.shared", {
+      targetType: "envelope",
+      targetId: req.params.id,
+      data: { groups: groups.map((g) => g.name) },
+    });
     return { groups: groups.map((g) => ({ id: g.id, name: g.name })) };
   });
 
@@ -975,7 +1108,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = PutTemplateSharesInput.parse(req.body);
     const saved = await s.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT visibility, updated_at FROM templates WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
+      const cur = await t.one<any>(`SELECT visibility, updated_at FROM templates WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+        req.params.id,
+        a.tenantId,
+      ]);
       if (!cur) throw notFound("Plantilla");
       // La visibilidad cambia el updatedAt de la plantilla: con X-Expected-Updated-At (el editor lo manda) no tapa una
       // edición ajena. Sin cambio de visibilidad no se toca (estrictamente creciente, como el resto de la plantilla).
@@ -1001,7 +1137,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       targetId: req.params.id,
       data: { visibility: t.visibility, groups: groups.map((g: any) => g.name) },
     });
-    return { groups: groups.map((g: any) => ({ id: g.id, name: g.name })), visibility: t.visibility, templateUpdatedAt: new Date(t.updated_at).toISOString() };
+    return {
+      groups: groups.map((g: any) => ({ id: g.id, name: g.name })),
+      visibility: t.visibility,
+      templateUpdatedAt: new Date(t.updated_at).toISOString(),
+    };
   });
 
   // ───────── Seguridad y retención ─────────
@@ -1023,7 +1163,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     }
     // Valores anteriores para la auditoría (settings.changed los registra con los nuevos).
     const prev = await s.db.one<any>(`SELECT retention_days, require_2fa FROM tenants WHERE id = $1`, [a.tenantId]);
-    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { retentionDays: prev?.retention_days ?? null, require2fa: Boolean(prev?.require_2fa) };
+    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = {
+      retentionDays: prev?.retention_days ?? null,
+      require2fa: Boolean(prev?.require_2fa),
+    };
     await s.db.query(
       `UPDATE tenants SET retention_days = CASE WHEN $2::boolean THEN $3 ELSE retention_days END, require_2fa = COALESCE($4, require_2fa) WHERE id = $1`,
       [a.tenantId, input.retentionDays !== undefined, input.retentionDays ?? null, input.require2fa ?? null],
@@ -1048,7 +1191,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   async function assertAccountSession(req: FastifyRequest) {
     if ((await sessionAuthMethod(req)) === "sso") {
-      throw new AppError(403, "sso_session_2fa", "Con inicio de sesión único (SSO) el segundo factor lo gestiona el proveedor de identidad: ingresá con tu contraseña para activarlo");
+      throw new AppError(
+        403,
+        "sso_session_2fa",
+        "Con inicio de sesión único (SSO) el segundo factor lo gestiona el proveedor de identidad: ingresá con tu contraseña para activarlo",
+      );
     }
   }
 
@@ -1060,7 +1207,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   async function closeOtherSessions(req: FastifyRequest, userId: string): Promise<number> {
     const cookie = sessionCookieToken(req);
     return s.db.tx(async (t) => {
-      const closed = await t.query(`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2 RETURNING user_id`, [userId, cookie ? sha256Hex(cookie) : ""]);
+      const closed = await t.query(`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2 RETURNING user_id`, [
+        userId,
+        cookie ? sha256Hex(cookie) : "",
+      ]);
       await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
       await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
       await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
@@ -1118,7 +1268,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     );
     const sessionsClosed = await closeOtherSessions(req, a.userId);
     await auditAccountSecurity(req, a, "user.2fa_enabled", { otherSessionsClosed: sessionsClosed });
-    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_enabled").catch((err) => req.log.error({ err }, "no se pudo encolar el aviso de seguridad"));
+    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_enabled").catch((err) =>
+      req.log.error({ err }, "no se pudo encolar el aviso de seguridad"),
+    );
     return { recoveryCodes: codes };
   });
 
@@ -1138,7 +1290,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     );
     const sessionsClosed = await closeOtherSessions(req, a.userId);
     await auditAccountSecurity(req, a, "user.2fa_disabled", { otherSessionsClosed: sessionsClosed });
-    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_disabled").catch((err) => req.log.error({ err }, "no se pudo encolar el aviso de seguridad"));
+    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_disabled").catch((err) =>
+      req.log.error({ err }, "no se pudo encolar el aviso de seguridad"),
+    );
     return { ok: true };
   });
 
@@ -1152,7 +1306,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const codes = generateRecoveryCodes();
     await s.db.query(`UPDATE users SET totp_recovery_hashes = $2 WHERE id = $1`, [a.userId, codes.map((c) => sha256Hex(normalizeRecoveryCode(c)))]);
     await auditAccountSecurity(req, a, "user.2fa_recovery_regenerated");
-    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_recovery_regenerated").catch((err) => req.log.error({ err }, "no se pudo encolar el aviso de seguridad"));
+    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_recovery_regenerated").catch((err) =>
+      req.log.error({ err }, "no se pudo encolar el aviso de seguridad"),
+    );
     return { recoveryCodes: codes };
   });
 
@@ -1162,7 +1318,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const ch = await s.db.one<any>(`SELECT * FROM login_challenges WHERE token_hash = $1 AND expires_at > now()`, [sha256Hex(input.challengeToken)]);
     if (!ch) throw new AppError(401, "challenge_expired", "El ingreso venció: volvé a ingresar tu contraseña");
     // El intento se cuenta antes de comparar y de forma atómica: pedidos concurrentes no superan el límite.
-    const slot = await s.db.query(`UPDATE login_challenges SET attempts = attempts + 1 WHERE token_hash = $1 AND attempts < 5 RETURNING attempts`, [ch.token_hash]);
+    const slot = await s.db.query(`UPDATE login_challenges SET attempts = attempts + 1 WHERE token_hash = $1 AND attempts < 5 RETURNING attempts`, [
+      ch.token_hash,
+    ]);
     if (!slot.length) {
       await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
       throw new AppError(401, "too_many_attempts", "Demasiados intentos: volvé a ingresar tu contraseña");
@@ -1184,7 +1342,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       // que no siempre es la del desafío (p. ej. si la primera exige SSO).
       const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [ch.user_id]);
       for (const m of tenants.length ? tenants : [{ tenant_id: ch.tenant_id }]) {
-        await recordAudit(s.db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: ch.user_id, label: u?.email }, data: { reason: "bad_2fa_code" }, ...clientInfo(req) });
+        await recordAudit(s.db, {
+          tenantId: m.tenant_id,
+          action: "auth.login_failed",
+          actor: { type: "anonymous", id: ch.user_id, label: u?.email },
+          data: { reason: "bad_2fa_code" },
+          ...clientInfo(req),
+        });
       }
       throw new AppError(401, "invalid_code", "Código incorrecto");
     }
@@ -1198,7 +1362,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       await assertJoinedWithoutSso(ch.tenant_id, ch.user_id, u?.email ?? "");
     }
     await createUserSession(s.db, req, reply, ch.user_id, ch.tenant_id, { rememberMe: Boolean(ch.remember) });
-    await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login", actor: { type: "user", id: ch.user_id, label: u?.email }, data: { twoFactor: method }, ...clientInfo(req) });
+    await recordAudit(s.db, {
+      tenantId: ch.tenant_id,
+      action: "auth.login",
+      actor: { type: "user", id: ch.user_id, label: u?.email },
+      data: { twoFactor: method },
+      ...clientInfo(req),
+    });
     return meResponse(s.db, ch.user_id, ch.tenant_id);
   });
 
@@ -1210,7 +1380,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     try {
       if (req.auth.apiKeyId && url.startsWith("/v1/envelopes") && !url.includes(":")) {
         const id = JSON.parse(payload)?.envelope?.id;
-        if (id) await s.db.query(`UPDATE envelopes SET created_by_api_key = $2 WHERE id = $1 AND tenant_id = $3 AND created_by_api_key IS NULL`, [id, req.auth.apiKeyId, req.auth.tenantId]);
+        if (id)
+          await s.db.query(`UPDATE envelopes SET created_by_api_key = $2 WHERE id = $1 AND tenant_id = $3 AND created_by_api_key IS NULL`, [
+            id,
+            req.auth.apiKeyId,
+            req.auth.tenantId,
+          ]);
       }
       // El rol de una API key nueva lo guarda POST /v1/api-keys en el mismo INSERT (validado por access.ts).
     } catch (err) {

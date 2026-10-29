@@ -21,7 +21,8 @@ import { docsToText, estimateTokens, type DocText } from "./heuristics";
 
 export const DISCLAIMER: Record<string, string> = {
   es: "Generado con IA a partir del documento. Puede contener errores y no es asesoramiento legal: ante dudas, leé el documento completo o consultá a un profesional.",
-  "pt-BR": "Gerado com IA a partir do documento. Pode conter erros e não é aconselhamento jurídico: em caso de dúvida, leia o documento completo ou consulte um profissional.",
+  "pt-BR":
+    "Gerado com IA a partir do documento. Pode conter erros e não é aconselhamento jurídico: em caso de dúvida, leia o documento completo ou consulte um profissional.",
   en: "AI-generated from the document. It may contain errors and is not legal advice: if in doubt, read the full document or consult a professional.",
 };
 
@@ -29,7 +30,8 @@ export const DISCLAIMER: Record<string, string> = {
 // la pregunta: el aviso no puede decir que "no se envían tus datos personales".
 export const SIGNER_NOTICE: Record<string, string> = {
   es: "Al usar esta función, el texto del documento (y tu pregunta, si preguntás) se envía a un proveedor de IA para generar la respuesta. No se envían otros datos del sobre: ni tu firma, ni tus datos de contacto, ni los demás destinatarios.",
-  "pt-BR": "Ao usar esta função, o texto do documento (e a sua pergunta, se perguntar) é enviado a um provedor de IA para gerar a resposta. Nenhum outro dado do envelope é enviado: nem a sua assinatura, nem os seus dados de contato, nem os demais destinatários.",
+  "pt-BR":
+    "Ao usar esta função, o texto do documento (e a sua pergunta, se perguntar) é enviado a um provedor de IA para gerar a resposta. Nenhum outro dado do envelope é enviado: nem a sua assinatura, nem os seus dados de contato, nem os demais destinatários.",
   en: "When you use this feature, the document text (and your question, if you ask one) is sent to an AI provider to generate the answer. No other envelope data is sent: not your signature, your contact details or the other recipients.",
 };
 
@@ -95,7 +97,10 @@ const MAX_INPUT_TOKENS = Math.max(1000, Number(process.env.AI_MAX_INPUT_TOKENS ?
 export function inputEstimate(docs: DocText[]): number {
   const est = estimateTokens(docsToText(docs, { lineIds: true }));
   if (est > MAX_INPUT_TOKENS) {
-    throw new AppError(413, "ai_input_too_large", "El documento es demasiado largo para la asistencia con IA", { estimatedTokens: est, max: MAX_INPUT_TOKENS });
+    throw new AppError(413, "ai_input_too_large", "El documento es demasiado largo para la asistencia con IA", {
+      estimatedTokens: est,
+      max: MAX_INPUT_TOKENS,
+    });
   }
   return est;
 }
@@ -165,7 +170,10 @@ export async function assertAiAvailable(
         throw new AppError(429, "ai_signer_limit", "Llegaste al máximo de consultas a la IA para este documento");
       }
     }
-    await t.query(`DELETE FROM ai_usage WHERE tenant_id = $1 AND feature = $2 AND created_at < now() - interval '${RESERVATION_TTL}'`, [tenantId, RESERVATION]);
+    await t.query(`DELETE FROM ai_usage WHERE tenant_id = $1 AND feature = $2 AND created_at < now() - interval '${RESERVATION_TTL}'`, [
+      tenantId,
+      RESERVATION,
+    ]);
     const row = await t.one<any>(
       `SELECT COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE feature <> $2), 0)::bigint AS used,
               (count(*) FILTER (WHERE feature = $2))::int AS inflight,

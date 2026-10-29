@@ -41,7 +41,8 @@ describe("changesAfterRevision", () => {
     const modify = async (key: string) => {
       const u = await IncrementalUpdate.open(signed);
       let ref: PDFRef | undefined;
-      for (const [r, o] of u.context.enumerateIndirectObjects()) if (o instanceof PDFDict && o.get(PDFName.of("Type")) === PDFName.of("OCMD")) ref = r;
+      for (const [r, o] of u.context.enumerateIndirectObjects())
+        if (o instanceof PDFDict && o.get(PDFName.of("Type")) === PDFName.of("OCMD")) ref = r;
       (u.context.lookup(ref!) as PDFDict).set(PDFName.of(key), PDFName.of("AllOff"));
       u.touch(ref!);
       return u.serialize();
@@ -60,7 +61,19 @@ describe("changesAfterRevision", () => {
     const br = [0, 10, 20, end + 1000];
     const sig = u.add(ctx.obj({ Type: "Sig", ByteRange: br, Contents: PDFString.of("x") }));
     const p = u.doc.getPages()[0];
-    const w = u.add(ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", Rect: [0, 0, 0, 0], V: sig, F: 132, P: p.ref, T: PDFString.of("Firma2"), ...extra } as never));
+    const w = u.add(
+      ctx.obj({
+        Type: "Annot",
+        Subtype: "Widget",
+        FT: "Sig",
+        Rect: [0, 0, 0, 0],
+        V: sig,
+        F: 132,
+        P: p.ref,
+        T: PDFString.of("Firma2"),
+        ...extra,
+      } as never),
+    );
     p.node.set(PDFName.of("Annots"), ctx.obj([w]));
     u.touch(p.ref);
     return { full: u.serialize(), end, key: br.join(",") };
@@ -135,7 +148,9 @@ describe("changesAfterRevision", () => {
     page.drawText("hello");
     const addField = (ctx: typeof doc.context, pageRef: PDFRef) => {
       const parent = ctx.register(ctx.obj({ FT: "Sig", T: PDFString.of("Firma2"), ...(opts.parentExtra ?? {}) } as never));
-      const w = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", Rect: opts.rect ?? [0, 0, 0, 0], F: opts.flags ?? 132, P: pageRef, Parent: parent }));
+      const w = ctx.register(
+        ctx.obj({ Type: "Annot", Subtype: "Widget", Rect: opts.rect ?? [0, 0, 0, 0], F: opts.flags ?? 132, P: pageRef, Parent: parent }),
+      );
       (ctx.lookup(parent) as PDFDict).set(PDFName.of("Kids"), ctx.obj([w]));
       return { parent, w };
     };
@@ -197,13 +212,16 @@ describe("changesAfterRevision", () => {
       pdf = u.serialize();
     }
     const t0 = Date.now();
-    const results = await withDecodeBudget(async () => {
-      const current = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
-      const out: string[] = [];
-      const cache = revisionCache(pdf);
-      for (const end of ends) out.push(await changesAfterRevision(pdf, end, new Set(keys), current, cache));
-      return out;
-    }, 24 * 1024 * 1024); // antes de cachear el control de ambigüedad y los streams de objetos hacían falta ~30 MB
+    const results = await withDecodeBudget(
+      async () => {
+        const current = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
+        const out: string[] = [];
+        const cache = revisionCache(pdf);
+        for (const end of ends) out.push(await changesAfterRevision(pdf, end, new Set(keys), current, cache));
+        return out;
+      },
+      24 * 1024 * 1024,
+    ); // antes de cachear el control de ambigüedad y los streams de objetos hacían falta ~30 MB
     expect(results).toEqual(ends.map(() => "evidence_only"));
     expect(Date.now() - t0).toBeLessThan(10_000);
   }, 60_000);
@@ -224,7 +242,19 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     const sig = withSig ? { V: u.add(ctx.obj({ Type: "Sig", ByteRange: br, Contents: PDFString.of("x") })) } : {};
     const p = u.doc.getPages()[0];
     const more = typeof extra === "function" ? extra(u) : extra;
-    const w = u.add(ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", Rect: [0, 0, 0, 0], F: 132, P: p.ref, T: PDFString.of("Firma2"), ...sig, ...more } as never));
+    const w = u.add(
+      ctx.obj({
+        Type: "Annot",
+        Subtype: "Widget",
+        FT: "Sig",
+        Rect: [0, 0, 0, 0],
+        F: 132,
+        P: p.ref,
+        T: PDFString.of("Firma2"),
+        ...sig,
+        ...more,
+      } as never),
+    );
     p.node.set(PDFName.of("Annots"), ctx.obj([w]));
     u.touch(p.ref);
     return { full: u.serialize(), end, key: br.join(",") };
@@ -251,7 +281,10 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     const objStm = (num: number, box: string) => {
       const head = `${E} 0 ${M} 5 `;
       const body = `${head}null ${box}`;
-      return Buffer.from(`${num} 0 obj\n<< /Type /ObjStm /N 2 /First ${head.length} /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`, "latin1");
+      return Buffer.from(
+        `${num} 0 obj\n<< /Type /ObjStm /N 2 /First ${head.length} /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
+        "latin1",
+      );
     };
     // B (malicioso) primero: pdf-lib se queda con la última definición (A, benigna); el lector, con lo que dice el xref.
     const parts: Buffer[] = [signed, Buffer.from("\n")];
@@ -261,7 +294,8 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     parts.push(objStm(A, "[0 0 200 200]"));
     const offX = offA + parts[3].length;
     // W [1 4 2]; /Index en este orden: E (en A) se resuelve antes que M (en B).
-    const row = (t: number, a: number, b: number) => Buffer.from([t, (a >>> 24) & 255, (a >>> 16) & 255, (a >>> 8) & 255, a & 255, (b >>> 8) & 255, b & 255]);
+    const row = (t: number, a: number, b: number) =>
+      Buffer.from([t, (a >>> 24) & 255, (a >>> 16) & 255, (a >>> 8) & 255, a & 255, (b >>> 8) & 255, b & 255]);
     const rows = Buffer.concat([row(2, A, 0), row(2, B, 1), row(1, offA, 0), row(1, offB, 0), row(1, offX, 0)]);
     const root = ctx.trailerInfo.Root!.toString();
     const xref = Buffer.concat([
@@ -390,12 +424,26 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
    * Campo de firma vacío pre-creado por un editor (en la revisión firmada) que una revisión posterior firma: el widget
    * recibe /V y una apariencia nueva.
    */
-  async function preplacedThenSigned(widget: (ctx: PDFContext) => Record<string, unknown>, opts: { verified?: boolean; tamper?: (u: IncrementalUpdate, w: PDFDict) => void } = {}) {
+  async function preplacedThenSigned(
+    widget: (ctx: PDFContext) => Record<string, unknown>,
+    opts: { verified?: boolean; tamper?: (u: IncrementalUpdate, w: PDFDict) => void } = {},
+  ) {
     const doc = await PDFDocument.create();
     const page = doc.addPage([200, 200]);
     page.drawText("hello");
     const ctx = doc.context;
-    const w = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", T: PDFString.of("Firma2"), Rect: [0, 0, 0, 0], F: 132, P: page.ref, ...widget(ctx) } as never));
+    const w = ctx.register(
+      ctx.obj({
+        Type: "Annot",
+        Subtype: "Widget",
+        FT: "Sig",
+        T: PDFString.of("Firma2"),
+        Rect: [0, 0, 0, 0],
+        F: 132,
+        P: page.ref,
+        ...widget(ctx),
+      } as never),
+    );
     page.node.set(PDFName.of("Annots"), ctx.obj([w]));
     doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [w] }));
     const signed = await doc.save({ useObjectStreams: false });
@@ -411,7 +459,9 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     const full = u.serialize();
     return changesAfterRevision(full, end, opts.verified === false ? new Set() : new Set([br.join(",")]));
   }
-  const blankAp = (ctx: PDFContext, content: string) => ({ AP: ctx.obj({ N: ctx.register(ctx.stream(content, { Type: "XObject", Subtype: "Form", BBox: [0, 0, 50, 20] })) }) });
+  const blankAp = (ctx: PDFContext, content: string) => ({
+    AP: ctx.obj({ N: ctx.register(ctx.stream(content, { Type: "XObject", Subtype: "Form", BBox: [0, 0, 50, 20] })) }),
+  });
 
   it("campo pre-creado con /DV, /Q, /AS, /H y apariencia en blanco de Acrobat, firmado después → evidence_only", async () => {
     const dv = (ctx: PDFContext) => ({ DV: ctx.obj({ Type: "Sig" }), Q: 1, AS: PDFName.of("N"), H: PDFName.of("P") });
@@ -427,13 +477,17 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
 
   it("campo pre-creado: lo que sigue contando", async () => {
     // Sin firma que verifique, la lista estricta: /C no está.
-    expect(await preplacedThenSigned((ctx) => ({ ...blankAp(ctx, "1 0 0 rg 0 0 50 20 re f"), F: 2, Rect: [10, 10, 60, 30], C: [1, 0, 0] }), { verified: false })).toBe(
-      "content",
-    );
+    expect(
+      await preplacedThenSigned((ctx) => ({ ...blankAp(ctx, "1 0 0 rg 0 0 50 20 re f"), F: 2, Rect: [10, 10, 60, 30], C: [1, 0, 0] }), {
+        verified: false,
+      }),
+    ).toBe("content");
     // Acciones en lo firmado o agregadas después.
     expect(await preplacedThenSigned((ctx) => ({ AA: ctx.obj({ PO: ctx.obj({ S: "JavaScript", JS: PDFString.of("x") }) }) }))).toBe("content");
     expect(
-      await preplacedThenSigned(() => ({}), { tamper: (u, w) => w.set(PDFName.of("A"), u.context.obj({ S: "Launch", F: PDFString.of("calc.exe") })) }),
+      await preplacedThenSigned(() => ({}), {
+        tamper: (u, w) => w.set(PDFName.of("A"), u.context.obj({ S: "Launch", F: PDFString.of("calc.exe") })),
+      }),
     ).toBe("content");
     // La firma posterior lo vuelve visible.
     expect(await preplacedThenSigned(() => ({}), { tamper: (u, w) => w.set(PDFName.of("Rect"), u.context.obj([0, 0, 200, 200])) })).toBe("content");
@@ -458,8 +512,12 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     const signed = await doc.save({ useObjectStreams: false });
     const u = await IncrementalUpdate.open(signed);
     const p = u.doc.getPages()[0];
-    const ap = u.context.obj({ N: u.add(u.context.stream("q 1 0 0 rg 0 0 200 200 re f Q", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 200, 200] })) });
-    const w = u.add(u.context.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", Rect: [0, 0, 200, 200], F: 32, P: p.ref, T: PDFString.of("F"), AP: ap } as never));
+    const ap = u.context.obj({
+      N: u.add(u.context.stream("q 1 0 0 rg 0 0 200 200 re f Q", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 200, 200] })),
+    });
+    const w = u.add(
+      u.context.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", Rect: [0, 0, 200, 200], F: 32, P: p.ref, T: PDFString.of("F"), AP: ap } as never),
+    );
     p.node.set(PDFName.of("Annots"), u.context.obj([w]));
     u.touch(p.ref);
     expect(await changesAfterRevision(u.serialize(), signed.length, new Set())).toBe("content");
@@ -472,7 +530,8 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     const ctx = doc.context;
     const parent = ctx.register(ctx.obj({ FT: "Sig", T: PDFString.of("p") }));
     const kids = ctx.obj([]);
-    for (let i = 0; i < n; i++) kids.push(ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", Rect: [i, 0, i + 10, 10], F: 4, Parent: parent, P: page.ref })));
+    for (let i = 0; i < n; i++)
+      kids.push(ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", Rect: [i, 0, i + 10, 10], F: 4, Parent: parent, P: page.ref })));
     (ctx.lookup(parent) as PDFDict).set(PDFName.of("Kids"), kids);
     page.node.set(PDFName.of("Annots"), kids);
     doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [parent] }));

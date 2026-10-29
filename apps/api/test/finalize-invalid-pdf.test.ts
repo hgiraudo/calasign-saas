@@ -78,25 +78,23 @@ async function setup() {
     await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, 'Ana', 'x')`, [sender, `ana-${sender.slice(-8)}@x.com`]);
     await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'member')`, [tenant, sender]);
     const env = uuidv7();
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by, locale) VALUES ($1, $2, 'Contrato', 'finalizing', $3, 'es')`, [env, tenant, sender]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by, locale) VALUES ($1, $2, 'Contrato', 'finalizing', $3, 'es')`, [
+      env,
+      tenant,
+      sender,
+    ]);
     await appendEvent(db, { tenantId: tenant, envelopeId: env, type: "envelope.created", actor: SYSTEM, data: { subject: "Contrato" } });
     const fileId = uuidv7();
     const key = `tenants/${tenant}/envelopes/${env}/${fileId}.pdf`;
     await blobs.put(key, pdf, "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
-      fileId,
-      tenant,
-      key,
-      pdf.length,
-      sha256Hex(pdf),
-    ]);
-    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`, [
-      uuidv7(),
-      tenant,
-      env,
-      fileId,
-      JSON.stringify([{ width: 600, height: 800 }]),
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`,
+      [fileId, tenant, key, pdf.length, sha256Hex(pdf)],
+    );
+    await db.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`,
+      [uuidv7(), tenant, env, fileId, JSON.stringify([{ width: 600, height: 800 }])],
+    );
     return { tenant, env, senderEmail: `ana-${sender.slice(-8)}@x.com` };
   }
 

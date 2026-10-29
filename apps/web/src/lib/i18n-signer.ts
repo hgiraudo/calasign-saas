@@ -33,7 +33,8 @@ const es = {
   "delegate.phone": "Teléfono (opcional, +código país)",
   "delegate.phoneRequired": "Teléfono (+código país)",
   "delegate.contactHint": "Indicá el correo o el teléfono de la persona (al menos uno).",
-  "stamp.overflow": "«{label}» es demasiado largo para su espacio: en el documento firmado se va a ver con letra muy chica o saliéndose del recuadro.",
+  "stamp.overflow":
+    "«{label}» es demasiado largo para su espacio: en el documento firmado se va a ver con letra muy chica o saliéndose del recuadro.",
   "delegate.phoneInvalid": "El teléfono tiene que empezar con + y el código de país (por ejemplo +5491122334455).",
   "delegate.reason": "Motivo",
   "delegate.confirm": "Delegar",
@@ -80,7 +81,8 @@ const es = {
   "verify.noMatchText": "El archivo no coincide con ningún documento sellado por CalaSign: pudo haber sido modificado o no se firmó con CalaSign.",
   "verify.envelope": "Sobre",
   "verify.subject": "Asunto",
-  "verify.olderVersion": "Este archivo es la versión {n} del documento firmado. Existe una versión archivada más nueva ({latest}) con el sello de tiempo renovado; ambas son auténticas.",
+  "verify.olderVersion":
+    "Este archivo es la versión {n} del documento firmado. Existe una versión archivada más nueva ({latest}) con el sello de tiempo renovado; ambas son auténticas.",
   "verify.org": "Organización",
   "verify.completed": "Completado",
   "verify.participants": "Firmantes",
@@ -89,7 +91,8 @@ const es = {
   "verify.chainOk": "Íntegro ({n} eventos)",
   "verify.chainBroken": "Con inconsistencias",
   "verify.brokenTitle": "Documento registrado, con inconsistencias",
-  "verify.brokenText": "El PDF coincide con un sobre de la plataforma, pero su registro de eventos no está íntegro. No lo des por válido sin consultar al remitente.",
+  "verify.brokenText":
+    "El PDF coincide con un sobre de la plataforma, pero su registro de eventos no está íntegro. No lo des por válido sin consultar al remitente.",
   "verify.hash": "SHA-256 del archivo",
   "verify.another": "Verificar otro",
   "role.approver": "Aprobador",
@@ -170,10 +173,12 @@ const ptBR: Dict = {
   "verify.matchTitle": "Documento válido",
   "verify.matchText": "Este PDF é idêntico ao que a CalaSign selou ao concluir a assinatura.",
   "verify.noMatchTitle": "Não confere",
-  "verify.noMatchText": "O arquivo não corresponde a nenhum documento selado pela CalaSign: pode ter sido alterado ou não foi assinado com a CalaSign.",
+  "verify.noMatchText":
+    "O arquivo não corresponde a nenhum documento selado pela CalaSign: pode ter sido alterado ou não foi assinado com a CalaSign.",
   "verify.envelope": "Envelope",
   "verify.subject": "Assunto",
-  "verify.olderVersion": "Este arquivo é a versão {n} do documento assinado. Existe uma versão arquivada mais nova ({latest}) com o carimbo do tempo renovado; ambas são autênticas.",
+  "verify.olderVersion":
+    "Este arquivo é a versão {n} do documento assinado. Existe uma versão arquivada mais nova ({latest}) com o carimbo do tempo renovado; ambas são autênticas.",
   "verify.org": "Organização",
   "verify.completed": "Concluído",
   "verify.participants": "Signatários",
@@ -182,7 +187,8 @@ const ptBR: Dict = {
   "verify.chainOk": "Íntegro ({n} eventos)",
   "verify.chainBroken": "Com inconsistências",
   "verify.brokenTitle": "Documento registrado, com inconsistências",
-  "verify.brokenText": "O PDF corresponde a um envelope da plataforma, mas o registro de eventos não está íntegro. Não o considere válido sem consultar o remetente.",
+  "verify.brokenText":
+    "O PDF corresponde a um envelope da plataforma, mas o registro de eventos não está íntegro. Não o considere válido sem consultar o remetente.",
   "verify.hash": "SHA-256 do arquivo",
   "verify.another": "Verificar outro",
   "role.approver": "Aprovador",
@@ -263,7 +269,8 @@ const en: Dict = {
   "verify.noMatchText": "The file doesn't match any document sealed by CalaSign: it may have been modified or wasn't signed with CalaSign.",
   "verify.envelope": "Envelope",
   "verify.subject": "Subject",
-  "verify.olderVersion": "This file is version {n} of the signed document. A newer archived version ({latest}) with a renewed timestamp exists; both are authentic.",
+  "verify.olderVersion":
+    "This file is version {n} of the signed document. A newer archived version ({latest}) with a renewed timestamp exists; both are authentic.",
   "verify.org": "Organization",
   "verify.completed": "Completed",
   "verify.participants": "Signers",
@@ -272,7 +279,8 @@ const en: Dict = {
   "verify.chainOk": "Intact ({n} events)",
   "verify.chainBroken": "Inconsistent",
   "verify.brokenTitle": "Registered document, with inconsistencies",
-  "verify.brokenText": "The PDF matches an envelope on the platform, but its event log is not intact. Don't treat it as valid without checking with the sender.",
+  "verify.brokenText":
+    "The PDF matches an envelope on the platform, but its event log is not intact. Don't treat it as valid without checking with the sender.",
   "verify.hash": "File SHA-256",
   "verify.another": "Verify another",
   "role.approver": "Approver",

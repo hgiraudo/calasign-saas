@@ -10,8 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-doctpl-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let cookie: string;
@@ -56,20 +56,37 @@ async function template(name: string, source: string) {
 describe("plantillas de documentos", () => {
   it("PATCH con X-Expected-Updated-At: 409 version_changed si cambió; updatedAt estrictamente creciente", async () => {
     const t = await template("Versionada", "# Hola\n\n{{firma:Cliente}}");
-    const first = await app.inject({ method: "PATCH", url: `/v1/document-templates/${t.id}`, headers: H({ "x-expected-updated-at": t.updatedAt }), payload: { name: "V2" } });
+    const first = await app.inject({
+      method: "PATCH",
+      url: `/v1/document-templates/${t.id}`,
+      headers: H({ "x-expected-updated-at": t.updatedAt }),
+      payload: { name: "V2" },
+    });
     expect(first.statusCode, first.body).toBe(200);
     expect(Date.parse(first.json().updatedAt)).toBeGreaterThan(Date.parse(t.updatedAt));
     // La pestaña que cargó la versión anterior ya no pisa el cambio.
-    const stale = await app.inject({ method: "PATCH", url: `/v1/document-templates/${t.id}`, headers: H({ "x-expected-updated-at": t.updatedAt }), payload: { name: "Pisada" } });
+    const stale = await app.inject({
+      method: "PATCH",
+      url: `/v1/document-templates/${t.id}`,
+      headers: H({ "x-expected-updated-at": t.updatedAt }),
+      payload: { name: "Pisada" },
+    });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("version_changed");
     expect(stale.json().error.details.updatedAt).toBe(first.json().updatedAt);
     // Dos guardados seguidos dan updatedAt distintos (el siguiente guardado con el devuelto pasa).
-    const second = await app.inject({ method: "PATCH", url: `/v1/document-templates/${t.id}`, headers: H({ "x-expected-updated-at": first.json().updatedAt }), payload: { name: "V3" } });
+    const second = await app.inject({
+      method: "PATCH",
+      url: `/v1/document-templates/${t.id}`,
+      headers: H({ "x-expected-updated-at": first.json().updatedAt }),
+      payload: { name: "V3" },
+    });
     expect(second.statusCode).toBe(200);
     expect(second.json().updatedAt).not.toBe(first.json().updatedAt);
     // Sin el encabezado no se controla (integraciones).
-    expect((await app.inject({ method: "PATCH", url: `/v1/document-templates/${t.id}`, headers: H(), payload: { name: "V4" } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "PATCH", url: `/v1/document-templates/${t.id}`, headers: H(), payload: { name: "V4" } })).statusCode).toBe(
+      200,
+    );
   });
 
   it("un rol de firma de más de 80 caracteres no se guarda", async () => {
@@ -85,16 +102,21 @@ describe("plantillas de documentos", () => {
   it("el listado no trae la fuente; trae el análisis (también de las cláusulas) y se actualiza al cambiar una cláusula", async () => {
     expect((await clause("firma-testigo", "{{firma:Testigo}}")).statusCode).toBe(201);
     const t = await template("Con testigo", "# Acta\n\n{{firma:Cliente}}\n\n{{clausula:firma-testigo}}");
-    const list = async () => (await app.inject({ method: "GET", url: "/v1/document-templates", headers: H() })).json().items.find((x: any) => x.id === t.id);
+    const list = async () =>
+      (await app.inject({ method: "GET", url: "/v1/document-templates", headers: H() })).json().items.find((x: any) => x.id === t.id);
     const item = await list();
     expect(item).toBeTruthy();
     expect(item.source).toBeUndefined();
     expect(item.analysis.roles).toEqual(["Cliente", "Testigo"]);
     const cl = (await app.inject({ method: "GET", url: "/v1/clauses", headers: H() })).json().items.find((c: any) => c.slug === "firma-testigo");
-    expect((await app.inject({ method: "PATCH", url: `/v1/clauses/${cl.id}`, headers: H(), payload: { body: "{{firma:Garante}}" } })).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "PATCH", url: `/v1/clauses/${cl.id}`, headers: H(), payload: { body: "{{firma:Garante}}" } })).statusCode,
+    ).toBe(200);
     expect((await list()).analysis.roles).toEqual(["Cliente", "Garante"]);
     // El detalle sí trae la fuente.
-    expect((await app.inject({ method: "GET", url: `/v1/document-templates/${t.id}`, headers: H() })).json().source).toContain("{{clausula:firma-testigo}}");
+    expect((await app.inject({ method: "GET", url: `/v1/document-templates/${t.id}`, headers: H() })).json().source).toContain(
+      "{{clausula:firma-testigo}}",
+    );
   });
 });
 
@@ -114,10 +136,20 @@ describe("cláusulas", () => {
 
   it("PATCH con X-Expected-Updated-At: 409 version_changed si cambió", async () => {
     const c = (await clause("versionada", "v1")).json();
-    const ok = await app.inject({ method: "PATCH", url: `/v1/clauses/${c.id}`, headers: H({ "x-expected-updated-at": c.updatedAt }), payload: { body: "v2" } });
+    const ok = await app.inject({
+      method: "PATCH",
+      url: `/v1/clauses/${c.id}`,
+      headers: H({ "x-expected-updated-at": c.updatedAt }),
+      payload: { body: "v2" },
+    });
     expect(ok.statusCode).toBe(200);
     expect(Date.parse(ok.json().updatedAt)).toBeGreaterThan(Date.parse(c.updatedAt));
-    const stale = await app.inject({ method: "PATCH", url: `/v1/clauses/${c.id}`, headers: H({ "x-expected-updated-at": c.updatedAt }), payload: { body: "v3" } });
+    const stale = await app.inject({
+      method: "PATCH",
+      url: `/v1/clauses/${c.id}`,
+      headers: H({ "x-expected-updated-at": c.updatedAt }),
+      payload: { body: "v3" },
+    });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("version_changed");
   });
@@ -132,7 +164,10 @@ describe("cláusulas", () => {
     await template("Otra", "{{clausula:garantia-extendida}}");
     const usage = await app.inject({ method: "GET", url: `/v1/clauses/${base.id}/usage`, headers: H() });
     expect(usage.statusCode).toBe(200);
-    expect(usage.json()).toEqual({ templates: [{ id: t.id, name: "Venta con garantía" }], clauses: [{ id: other.id, slug: "postventa", title: "Cláusula postventa" }] });
+    expect(usage.json()).toEqual({
+      templates: [{ id: t.id, name: "Venta con garantía" }],
+      clauses: [{ id: other.id, slug: "postventa", title: "Cláusula postventa" }],
+    });
     const del = await app.inject({ method: "DELETE", url: `/v1/clauses/${base.id}`, headers: H() });
     expect(del.statusCode).toBe(409);
     expect(del.json().error.code).toBe("clause_in_use");
@@ -148,7 +183,13 @@ describe("cláusulas: grafo desde los ancestros, cambios sin texto y uso con err
   const insertRaw = async (slug: string, body: string) => {
     const tenant = await db.one<any>(`SELECT tenant_id FROM clauses LIMIT 1`);
     const id = crypto.randomUUID();
-    await db.query(`INSERT INTO clauses (id, tenant_id, slug, title, body) VALUES ($1,$2,$3,$4,$5)`, [id, tenant.tenant_id, slug, `Cláusula ${slug}`, body]);
+    await db.query(`INSERT INTO clauses (id, tenant_id, slug, title, body) VALUES ($1,$2,$3,$4,$5)`, [
+      id,
+      tenant.tenant_id,
+      slug,
+      `Cláusula ${slug}`,
+      body,
+    ]);
     return id;
   };
 
@@ -160,7 +201,12 @@ describe("cláusulas: grafo desde los ancestros, cambios sin texto y uso con err
     expect(leaf.statusCode).toBe(201);
     const n8 = (await app.inject({ method: "GET", url: "/v1/clauses", headers: H() })).json().items.find((x: any) => x.slug === "n8");
     // Desde n8 son 2 niveles, pero desde n1 serían 9.
-    const deep = await app.inject({ method: "PATCH", url: `/v1/clauses/${n8.id}`, headers: H(), payload: { body: "Fin\n{{#if x}}\n{{clausula:n9}}\n{{/if}}" } });
+    const deep = await app.inject({
+      method: "PATCH",
+      url: `/v1/clauses/${n8.id}`,
+      headers: H(),
+      payload: { body: "Fin\n{{#if x}}\n{{clausula:n9}}\n{{/if}}" },
+    });
     expect(deep.statusCode, deep.body).toBe(400);
     expect(deep.json().error.message).toMatch(/niveles/);
     // Una cláusula nueva por encima de n1 sería el 9º nivel.
@@ -199,7 +245,12 @@ describe("generar", () => {
       { role: "Inquilino", name: "Ana", email: "ana@x.test" },
       { role: "Garante", name: "Gus", phone: "+5491112345678" },
     ];
-    const r = await app.inject({ method: "POST", url: `/v1/document-templates/${t.id}/generate`, headers: H(), payload: { data: {}, recipients, send: false } });
+    const r = await app.inject({
+      method: "POST",
+      url: `/v1/document-templates/${t.id}/generate`,
+      headers: H(),
+      payload: { data: {}, recipients, send: false },
+    });
     expect(r.statusCode, r.body).toBe(201);
     expect(r.json().warnings).toEqual([expect.objectContaining({ code: "signer_without_marks", roles: ["Garante"] })]);
     const envId = r.json().envelopeId;
@@ -208,24 +259,46 @@ describe("generar", () => {
     const env = await db.one<any>(`SELECT metadata FROM envelopes WHERE id = $1`, [envId]);
     expect(env.metadata.documentProvenance).toEqual({ sourceSha256: sha(source), clauses: { reserva: sha(body) } });
     // Con garante, entran los dos y sin avisos.
-    const both = await app.inject({ method: "POST", url: `/v1/document-templates/${t.id}/generate`, headers: H(), payload: { data: { garante: "Gus" }, recipients, send: false } });
+    const both = await app.inject({
+      method: "POST",
+      url: `/v1/document-templates/${t.id}/generate`,
+      headers: H(),
+      payload: { data: { garante: "Gus" }, recipients, send: false },
+    });
     expect(both.statusCode, both.body).toBe(201);
     expect(both.json().warnings).toEqual([]);
     // Faltar el firmante de una marca que sí salió sigue siendo 422 missing_roles; ninguno con marcas, 422 unknown_roles.
-    const missing = await app.inject({ method: "POST", url: `/v1/document-templates/${t.id}/generate`, headers: H(), payload: { data: { garante: "Gus" }, recipients: [recipients[0]], send: false } });
+    const missing = await app.inject({
+      method: "POST",
+      url: `/v1/document-templates/${t.id}/generate`,
+      headers: H(),
+      payload: { data: { garante: "Gus" }, recipients: [recipients[0]], send: false },
+    });
     expect(missing.json().error.code).toBe("missing_roles");
     const none = await app.inject({
       method: "POST",
       url: `/v1/document-templates/${t.id}/generate`,
       headers: H(),
-      payload: { data: {}, recipients: [{ role: "Otro", name: "X", email: "x@x.test" }, { role: "inquilino", name: "Ana", email: "ana@x.test" }], send: false },
+      payload: {
+        data: {},
+        recipients: [
+          { role: "Otro", name: "X", email: "x@x.test" },
+          { role: "inquilino", name: "Ana", email: "ana@x.test" },
+        ],
+        send: false,
+      },
     });
     // "inquilino" es el mismo rol que "Inquilino" (sin distinguir mayúsculas); "Otro" no figura en la plantilla: 422 (un
     // rol desconocido suele ser un error de tipeo; solo se omiten los roles que la plantilla declara en otra rama).
     expect(none.statusCode, none.body).toBe(422);
     expect(none.json().error.code).toBe("unknown_roles");
     expect(none.json().error.details.roles).toEqual(["Otro"]);
-    const allUnknown = await app.inject({ method: "POST", url: `/v1/document-templates/${t.id}/generate`, headers: H(), payload: { data: {}, recipients: [{ role: "Otro", name: "X", email: "x@x.test" }], send: false } });
+    const allUnknown = await app.inject({
+      method: "POST",
+      url: `/v1/document-templates/${t.id}/generate`,
+      headers: H(),
+      payload: { data: {}, recipients: [{ role: "Otro", name: "X", email: "x@x.test" }], send: false },
+    });
     expect(allUnknown.statusCode).toBe(422);
   });
 
@@ -235,7 +308,12 @@ describe("generar", () => {
       method: "POST",
       url: `/v1/document-templates/${t.id}/generate`,
       headers: H(),
-      payload: { data: {}, recipients: [{ role: "Cliente", name: "Ana", email: "ana@x.test" }], send: false, metadata: { documentProvenance: "falsa", ref: "A-1" } },
+      payload: {
+        data: {},
+        recipients: [{ role: "Cliente", name: "Ana", email: "ana@x.test" }],
+        send: false,
+        metadata: { documentProvenance: "falsa", ref: "A-1" },
+      },
     });
     expect(r.statusCode, r.body).toBe(201);
     const env = await db.one<any>(`SELECT metadata FROM envelopes WHERE id = $1`, [r.json().envelopeId]);

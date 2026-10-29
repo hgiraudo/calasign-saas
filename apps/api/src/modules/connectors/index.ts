@@ -8,7 +8,6 @@ import { ZodError } from "zod";
 import {
   CONNECTOR_CATEGORY,
   CONNECTOR_CREDENTIAL_FIELDS,
-
   CONNECTOR_PROVIDERS,
   CONNECTOR_PROVIDER_OBJECTS,
   CreateConnectorConnectionInput,
@@ -158,9 +157,11 @@ function asAppError(err: unknown): AppError {
     return new AppError(422, "connector_invalid_record", `El registro tiene datos que no sirven para el sobre: ${detail}`.slice(0, 1000));
   }
   if (err instanceof PdfIngestBusyError) return new AppError(503, err.code, err.message);
-  if (err instanceof InvalidPdfError) return new AppError(422, "connector_invalid_document", `El documento del sistema de origen no es un PDF válido: ${err.message}`);
+  if (err instanceof InvalidPdfError)
+    return new AppError(422, "connector_invalid_document", `El documento del sistema de origen no es un PDF válido: ${err.message}`);
   if (err instanceof ConnectorError) {
-    if (err.authFailed) return new AppError(409, "connector_reauth_required", `La conexión ya no tiene acceso: hay que volver a conectarla (${err.message})`);
+    if (err.authFailed)
+      return new AppError(409, "connector_reauth_required", `La conexión ya no tiene acceso: hay que volver a conectarla (${err.message})`);
     if (err.status === 404) return new AppError(404, "connector_record_not_found", err.message);
     if (err.status === 400 || err.status === 422) return new AppError(422, "connector_invalid", err.message);
     return new AppError(502, "connector_provider_error", err.message);
@@ -169,7 +170,9 @@ function asAppError(err: unknown): AppError {
 }
 
 const permanent = (err: unknown) =>
-  (err instanceof ConnectorError && (err.authFailed || err.status === 422)) || err instanceof MappingError || (err instanceof AppError && err.status < 500);
+  (err instanceof ConnectorError && (err.authFailed || err.status === 422)) ||
+  err instanceof MappingError ||
+  (err instanceof AppError && err.status < 500);
 
 /**
  * JSON del webhook a partir del cuerpo crudo (el parser propio de la ruta no pasa por el de Fastify): se quita el BOM
@@ -199,11 +202,10 @@ async function connectorAccountShared(db: Db, r: any): Promise<boolean> {
   if (!key) return false;
   const value = r.config?.[key];
   if (value == null || value === "") return false;
-  const row = await db.one(`SELECT 1 FROM connector_connections WHERE provider = $1 AND auth_type = 'oauth' AND id <> $2 AND config->>'${key}' = $3 LIMIT 1`, [
-    r.provider,
-    r.id,
-    String(value),
-  ]);
+  const row = await db.one(
+    `SELECT 1 FROM connector_connections WHERE provider = $1 AND auth_type = 'oauth' AND id <> $2 AND config->>'${key}' = $3 LIMIT 1`,
+    [r.provider, r.id, String(value)],
+  );
   return !!row;
 }
 
@@ -280,7 +282,15 @@ export async function sendFromConnector(
       const doc = await fetchDocument(conn, flow.object_type, record.id, record);
       const { info, bytes } = await preparePdfUpload(doc.bytes);
       const fileId = uuidv7();
-      source = { name: doc.name.slice(0, 200), key: `tenants/${ctx.tenantId}/connectors/${fileId}.pdf`, fileId, sha: sha256Hex(bytes), uploadedSha: sha256Hex(doc.bytes), info, bytes };
+      source = {
+        name: doc.name.slice(0, 200),
+        key: `tenants/${ctx.tenantId}/connectors/${fileId}.pdf`,
+        fileId,
+        sha: sha256Hex(bytes),
+        uploadedSha: sha256Hex(doc.bytes),
+        info,
+        bytes,
+      };
       await d.blobs.put(source.key, bytes, "application/pdf");
       storedKey = source.key;
     }
@@ -296,10 +306,10 @@ export async function sendFromConnector(
             [flow.id, [...new Set([recordId, record.id])]],
           );
           if (openEnv) {
-            await t.query(`UPDATE connector_runs SET status = 'succeeded', error = NULL, detail = detail || $2::jsonb, updated_at = now() WHERE id = $1`, [
-              runId,
-              JSON.stringify({ skipped: "ya hay un sobre en curso para este registro", envelopeId: openEnv.envelope_id }),
-            ]);
+            await t.query(
+              `UPDATE connector_runs SET status = 'succeeded', error = NULL, detail = detail || $2::jsonb, updated_at = now() WHERE id = $1`,
+              [runId, JSON.stringify({ skipped: "ya hay un sobre en curso para este registro", envelopeId: openEnv.envelope_id })],
+            );
             return { envelopeId: openEnv.envelope_id as string, linkId: null as string | null, skipped: true };
           }
         }
@@ -307,51 +317,55 @@ export async function sendFromConnector(
         if (source) {
           // El contrato del sistema de origen va primero; la plantilla aporta la hoja de firmas.
           const pos = await t.one<any>(`SELECT COALESCE(MIN(position), 1) - 1 AS p FROM documents WHERE envelope_id = $1`, [envelopeId]);
-          await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
-            source.fileId,
-            ctx.tenantId,
-            source.key,
-            source.bytes.length,
-            source.sha,
-          ]);
+          await t.query(
+            `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`,
+            [source.fileId, ctx.tenantId, source.key, source.bytes.length, source.sha],
+          );
           const docId = uuidv7();
-          await t.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [
-            docId,
-            ctx.tenantId,
-            envelopeId,
-            pos.p,
-            source.name,
-            source.fileId,
-            source.info.pageCount,
-            JSON.stringify(source.info.pages),
-          ]);
+          await t.query(
+            `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [docId, ctx.tenantId, envelopeId, pos.p, source.name, source.fileId, source.info.pageCount, JSON.stringify(source.info.pages)],
+          );
           await appendEvent(t, {
             tenantId: ctx.tenantId,
             envelopeId,
             type: "document.added",
             actor: ctx.actor,
-            data: { documentId: docId, name: source.name, sha256: source.sha, uploadedSha256: source.uploadedSha, pages: source.info.pageCount, source: connRow.provider, ...(source.info.hadSignatures ? { hadSignatures: true } : {}) },
+            data: {
+              documentId: docId,
+              name: source.name,
+              sha256: source.sha,
+              uploadedSha256: source.uploadedSha,
+              pages: source.info.pageCount,
+              source: connRow.provider,
+              ...(source.info.hadSignatures ? { hadSignatures: true } : {}),
+            },
           });
         }
         // También sin enviar (sendEnvelope lo vuelve a chequear): el documento de origen se suma a los de la plantilla.
         await assertDocumentLimits(t, "envelope", envelopeId);
         const linkId = uuidv7();
         // El vínculo va antes del envío: así el evento envelope.sent ya encuentra el registro.
-        await t.query(`INSERT INTO connector_links (id, tenant_id, connection_id, flow_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
-          linkId,
-          ctx.tenantId,
-          connRow.id,
-          flow.id,
-          envelopeId,
-          flow.object_type,
-          record.id,
-        ]);
+        await t.query(
+          `INSERT INTO connector_links (id, tenant_id, connection_id, flow_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [linkId, ctx.tenantId, connRow.id, flow.id, envelopeId, flow.object_type, record.id],
+        );
         if (send) await sendEnvelope(t, ctx.tenantId, envelopeId, ctx.actor);
-        await t.query(`UPDATE connector_runs SET status = 'succeeded', envelope_id = $2, error = NULL, detail = detail || $3::jsonb, updated_at = now() WHERE id = $1`, [
-          runId,
-          envelopeId,
-          JSON.stringify({ envelopeId, linkId, recipients: recipients.length, sent: send, sourceDocument: Boolean(source), ...(source?.info.hadSignatures ? { sourceHadSignatures: true } : {}) }),
-        ]);
+        await t.query(
+          `UPDATE connector_runs SET status = 'succeeded', envelope_id = $2, error = NULL, detail = detail || $3::jsonb, updated_at = now() WHERE id = $1`,
+          [
+            runId,
+            envelopeId,
+            JSON.stringify({
+              envelopeId,
+              linkId,
+              recipients: recipients.length,
+              sent: send,
+              sourceDocument: Boolean(source),
+              ...(source?.info.hadSignatures ? { sourceHadSignatures: true } : {}),
+            }),
+          ],
+        );
         return { envelopeId, linkId: linkId as string | null, skipped: false };
       });
     const out = await work();
@@ -364,7 +378,8 @@ export async function sendFromConnector(
     if (storedKey) await d.blobs.delete(storedKey).catch(() => {});
     const e = asAppError(err);
     await db.query(`UPDATE connector_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`, [runId, e.message.slice(0, 1000)]);
-    if (err instanceof ConnectorError) await db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [connRow.id, e.message.slice(0, 500)]);
+    if (err instanceof ConnectorError)
+      await db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [connRow.id, e.message.slice(0, 500)]);
     throw e;
   }
 }
@@ -380,7 +395,21 @@ export async function queueConnectorEvents(db: Db, tenantId: string, envelopeId:
     [envelopeId, tenantId],
   );
   for (const l of links) {
-    await queueRun(db, { tenantId, connectionId: l.connection_id, flowId: l.flow_id, linkId: l.id, envelopeId, kind: "write_back", event: status, objectType: l.object_type, objectId: l.object_id }, `cn:wb:${l.id}:${status}`);
+    await queueRun(
+      db,
+      {
+        tenantId,
+        connectionId: l.connection_id,
+        flowId: l.flow_id,
+        linkId: l.id,
+        envelopeId,
+        kind: "write_back",
+        event: status,
+        objectType: l.object_type,
+        objectId: l.object_id,
+      },
+      `cn:wb:${l.id}:${status}`,
+    );
   }
 }
 
@@ -402,7 +431,20 @@ async function queueRun(db: Db, r: RunSpec, dedupeKey: string) {
   const ins = await db.query<{ id: string }>(
     `INSERT INTO connector_runs (id, tenant_id, connection_id, flow_id, link_id, envelope_id, kind, event, object_type, object_id, detail, dedupe_key)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
-    [id, r.tenantId, r.connectionId, r.flowId, r.linkId, r.envelopeId, r.kind, r.event, r.objectType, r.objectId, JSON.stringify(r.detail ?? {}), dedupeKey],
+    [
+      id,
+      r.tenantId,
+      r.connectionId,
+      r.flowId,
+      r.linkId,
+      r.envelopeId,
+      r.kind,
+      r.event,
+      r.objectType,
+      r.objectId,
+      JSON.stringify(r.detail ?? {}),
+      dedupeKey,
+    ],
   );
   if (ins.length) await enqueue(db, "platform", { kind: "connector", runId: id }, { dedupeKey: `cnjob:${id}`, tenantId: r.tenantId });
   return ins.length > 0;
@@ -423,13 +465,27 @@ interface ClaimOut {
 async function releaseClaim(db: Db, out: ClaimOut) {
   const c = out.claim;
   if (!c || c.written || c.previous === c.claimed) return;
-  const back = await db.query(`UPDATE connector_links SET last_status = $2 WHERE id = $1 AND last_status = $3 RETURNING id`, [c.linkId, c.previous, c.claimed]);
+  const back = await db.query(`UPDATE connector_links SET last_status = $2 WHERE id = $1 AND last_status = $3 RETURNING id`, [
+    c.linkId,
+    c.previous,
+    c.claimed,
+  ]);
   if (back.length) {
-    await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [out.runId, JSON.stringify({ lastStatusRestored: { from: c.claimed, to: c.previous } })]);
+    await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [
+      out.runId,
+      JSON.stringify({ lastStatusRestored: { from: c.claimed, to: c.previous } }),
+    ]);
   }
 }
 
-async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any, flow: any | null, status: string, claimOut?: ClaimOut): Promise<Record<string, unknown>> {
+async function writeBack(
+  d: { db: Db; blobs: BlobStore },
+  conn: Conn,
+  link: any,
+  flow: any | null,
+  status: string,
+  claimOut?: ClaimOut,
+): Promise<Record<string, unknown>> {
   const { db } = d;
   const wb = { uploadSigned: true, uploadEvidence: false, ...(flow?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
@@ -450,7 +506,11 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
   if (claimOut) {
     let previous = claimed.previous;
     if (claimOut.prior) previous = claimOut.prior.previous;
-    else await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [claimOut.runId, JSON.stringify({ claimPrevious: previous })]);
+    else
+      await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [
+        claimOut.runId,
+        JSON.stringify({ claimPrevious: previous }),
+      ]);
     claimOut.claim = { linkId: link.id, previous, claimed: status, written: claimOut.prior?.written ?? false };
   }
   const objectType = link.object_type as ConnectorObjectType;
@@ -464,7 +524,14 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
         // El PDF ya entregado en un intento anterior no se vuelve a subir (falló la evidencia o el estado).
         let signedRef: string | null = link.signed_ref;
         if (!signedRef) {
-          signedRef = await deliverFile(conn, objectType, link.object_id, { name: `${bundle.baseName}.pdf`, bytes: bundle.pdf, contentType: "application/pdf" }, wb.folder, "signed");
+          signedRef = await deliverFile(
+            conn,
+            objectType,
+            link.object_id,
+            { name: `${bundle.baseName}.pdf`, bytes: bundle.pdf, contentType: "application/pdf" },
+            wb.folder,
+            "signed",
+          );
           await db.query(`UPDATE connector_links SET signed_ref = $2, signed_sha256 = $3 WHERE id = $1`, [link.id, signedRef, bundle.sha256]);
           signedSha = bundle.sha256;
         } else signedSha = link.signed_sha256 ?? null;
@@ -473,7 +540,16 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
       if (wb.uploadEvidence) {
         if (acceptsEvidenceFile(conn.provider, objectType)) {
           const ev = await evidenceCertificate(db, link.envelope_id, { signedSha256: signedSha });
-          refs.push(await deliverFile(conn, objectType, link.object_id, { name: `${bundle.baseName} - evidencia.json`, bytes: ev, contentType: "application/json" }, wb.folder, "evidence"));
+          refs.push(
+            await deliverFile(
+              conn,
+              objectType,
+              link.object_id,
+              { name: `${bundle.baseName} - evidencia.json`, bytes: ev, contentType: "application/json" },
+              wb.folder,
+              "evidence",
+            ),
+          );
         } else detail.evidence = `${conn.provider} (${objectType}) no recibe archivos adicionales: la evidencia va dentro del PDF sellado`;
       }
       await db.query(`UPDATE connector_links SET delivered_at = now(), remote_ref = $2 WHERE id = $1`, [link.id, refs.join(" ") || null]);
@@ -489,7 +565,8 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
       claimOut.claim.written = true;
     }
     detail.statusWritten = { property: wb.statusProperty, value };
-    const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]))?.last_status ?? null;
+    const after =
+      (await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]))?.last_status ?? null;
     if (after && statusRank(after) > statusRank(status)) {
       const finalValue = statusValue(wb, after as any);
       await writeStatus(conn, objectType, link.object_id, wb.statusProperty, finalValue);
@@ -507,7 +584,9 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
   if (!run || run.status === "succeeded") return;
   const connRow = run.connection_id ? await db.one<any>(`SELECT * FROM connector_connections WHERE id = $1`, [run.connection_id]) : null;
   if (!connRow || !connRow.active) {
-    await db.query(`UPDATE connector_runs SET status = 'failed', error = 'conexión inexistente o desactivada', updated_at = now() WHERE id = $1`, [run.id]);
+    await db.query(`UPDATE connector_runs SET status = 'failed', error = 'conexión inexistente o desactivada', updated_at = now() WHERE id = $1`, [
+      run.id,
+    ]);
     return;
   }
   await db.query(`UPDATE connector_runs SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [run.id]);
@@ -526,7 +605,10 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
       const link = await db.one<any>(`SELECT * FROM connector_links WHERE id = $1`, [run.link_id]);
       if (!link) throw new AppError(409, "connector_link_missing", "vínculo inexistente");
       const detail = await writeBack(d, conn, link, flow, run.event, claimOut);
-      await db.query(`UPDATE connector_runs SET status = 'succeeded', error = NULL, detail = detail || $2::jsonb, updated_at = now() WHERE id = $1`, [run.id, JSON.stringify(detail)]);
+      await db.query(`UPDATE connector_runs SET status = 'succeeded', error = NULL, detail = detail || $2::jsonb, updated_at = now() WHERE id = $1`, [
+        run.id,
+        JSON.stringify(detail),
+      ]);
     } else {
       // Envío disparado por webhook del sistema de origen.
       if (!flow) throw new AppError(409, "connector_flow_missing", "flujo inexistente");
@@ -534,7 +616,10 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
       const owner = { tenantId: run.tenant_id, userId: flow.created_by_api_key ? null : flow.created_by, apiKeyId: flow.created_by_api_key ?? null };
       const ownerGone = await ownerCanStillCreate(db, owner, flow.template_id);
       if (ownerGone) throw new AppError(409, "connector_flow_owner_gone", `${ownerGone}: hay que volver a crear el flujo`);
-      await sendFromConnector(d, { ...owner, actor: { type: "system", label: `${conn.provider} (webhook)` } }, flow, run.object_id, { runId: run.id, skipIfOpen: true });
+      await sendFromConnector(d, { ...owner, actor: { type: "system", label: `${conn.provider} (webhook)` } }, flow, run.object_id, {
+        runId: run.id,
+        skipIfOpen: true,
+      });
     }
     await db.query(`UPDATE connector_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [conn.row.id]);
   } catch (err) {
@@ -606,7 +691,13 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     } catch (err) {
       throw badRequest("connector_credentials", (err as Error).message);
     }
-    const row: any = { id: uuidv7(), provider: input.provider, auth_type: "api_key", credentials_enc: encrypt(JSON.stringify(norm.creds)), config: norm.config };
+    const row: any = {
+      id: uuidv7(),
+      provider: input.provider,
+      auth_type: "api_key",
+      credentials_enc: encrypt(JSON.stringify(norm.creds)),
+      config: norm.config,
+    };
     let test;
     try {
       test = await testConnection(new Conn(row, null));
@@ -617,9 +708,25 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     await s.db.query(
       `INSERT INTO connector_connections (id, tenant_id, provider, category, name, auth_type, credentials_enc, config, account_label, webhook_token_hash, webhook_token_enc, created_by, last_success_at)
        VALUES ($1,$2,$3,$4,$5,'api_key',$6,$7,$8,$9,$10,$11, now())`,
-      [row.id, a.tenantId, input.provider, CONNECTOR_CATEGORY[input.provider], input.name, row.credentials_enc, JSON.stringify(norm.config), test.label, hook.hash, hook.enc, a.userId],
+      [
+        row.id,
+        a.tenantId,
+        input.provider,
+        CONNECTOR_CATEGORY[input.provider],
+        input.name,
+        row.credentials_enc,
+        JSON.stringify(norm.config),
+        test.label,
+        hook.hash,
+        hook.enc,
+        a.userId,
+      ],
     );
-    await auditFromRequest(s.db, req, a, "connector.connected", { targetType: "connector_connection", targetId: row.id, data: { provider: input.provider, name: input.name } });
+    await auditFromRequest(s.db, req, a, "connector.connected", {
+      targetType: "connector_connection",
+      targetId: row.id,
+      data: { provider: input.provider, name: input.name },
+    });
     reply.code(201);
     return toConnection(await loadConn(s.db, a.tenantId, row.id));
   });
@@ -631,7 +738,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     if (!oauthConfigured(p)) throw new AppError(409, "provider_not_configured", "Este proveedor no está configurado en el servidor");
     if (!a.userId) throw new AppError(403, "session_required", "Conectar una cuenta requiere iniciar sesión en la web");
     const input = StartConnectorOAuthInput.parse(req.body ?? {});
-    const region = p === "ironclad" ? input.region ?? "na1" : null;
+    const region = p === "ironclad" ? (input.region ?? "na1") : null;
     const cfg = oauthApp(p, region);
     // PKCE S256 siempre (Ironclad y Factorial lo aceptan; un proveedor que no lo use lo ignora).
     const verifier = randomBytes(32).toString("base64url");
@@ -663,19 +770,46 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
       if (!hasPerm(a, "settings:manage")) return back("error=forbidden");
       if (req.query.error || !req.query.code) return back(`error=${encodeURIComponent(req.query.error ?? "no_code")}`);
       try {
-        const body = await oauthTokenRequest(st.p, st.r, { grant_type: "authorization_code", code: req.query.code, redirect_uri: connectorRedirectUri(st.p), code_verifier: st.v });
-        const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
+        const body = await oauthTokenRequest(st.p, st.r, {
+          grant_type: "authorization_code",
+          code: req.query.code,
+          redirect_uri: connectorRedirectUri(st.p),
+          code_verifier: st.v,
+        });
+        const creds = {
+          access_token: body.access_token,
+          refresh_token: body.refresh_token,
+          expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null,
+        };
         const cfg: Record<string, unknown> = st.p === "ironclad" ? { region: st.r ?? "na1" } : {};
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new Conn(row, null);
-        const test: { label: string | null; config?: Record<string, unknown>; warning?: string } = await testConnection(conn).catch(() => ({ label: null }));
+        const test: { label: string | null; config?: Record<string, unknown>; warning?: string } = await testConnection(conn).catch(() => ({
+          label: null,
+        }));
         const hook = newWebhookToken();
         await s.db.query(
           `INSERT INTO connector_connections (id, tenant_id, provider, category, name, auth_type, credentials_enc, config, account_label, webhook_token_hash, webhook_token_enc, created_by, last_success_at)
            VALUES ($1,$2,$3,$4,$5,'oauth',$6,$7,$8,$9,$10,$11, now())`,
-          [row.id, a.tenantId, st.p, CONNECTOR_CATEGORY[st.p], st.n, encrypt(JSON.stringify(conn.creds)), JSON.stringify({ ...cfg, ...(test.config ?? {}) }), test.label, hook.hash, hook.enc, a.userId],
+          [
+            row.id,
+            a.tenantId,
+            st.p,
+            CONNECTOR_CATEGORY[st.p],
+            st.n,
+            encrypt(JSON.stringify(conn.creds)),
+            JSON.stringify({ ...cfg, ...(test.config ?? {}) }),
+            test.label,
+            hook.hash,
+            hook.enc,
+            a.userId,
+          ],
         );
-        await auditFromRequest(s.db, req, a, "connector.connected", { targetType: "connector_connection", targetId: row.id, data: { provider: st.p, name: st.n } });
+        await auditFromRequest(s.db, req, a, "connector.connected", {
+          targetType: "connector_connection",
+          targetId: row.id,
+          data: { provider: st.p, name: st.n },
+        });
         // Sin la cuenta (Factorial sin compañía): se avisa en la consola, como al probar la conexión.
         return back(`connected=${st.p}${test.warning === "account_unknown" ? "&warning=account_unknown" : ""}`);
       } catch (err) {
@@ -689,14 +823,24 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const r = await loadConn(s.db, a.tenantId, req.params.id);
     const input = UpdateConnectorConnectionInput.parse(req.body);
-    await s.db.query(`UPDATE connector_connections SET name = COALESCE($2, name), active = COALESCE($3, active), updated_at = now() WHERE id = $1`, [r.id, input.name ?? null, input.active ?? null]);
+    await s.db.query(`UPDATE connector_connections SET name = COALESCE($2, name), active = COALESCE($3, active), updated_at = now() WHERE id = $1`, [
+      r.id,
+      input.name ?? null,
+      input.active ?? null,
+    ]);
     const after = await loadConn(s.db, a.tenantId, r.id);
     if (after.active !== r.active || after.name !== r.name) {
-      await auditFromRequest(s.db, req, a, after.active !== r.active ? (after.active ? "connector.activated" : "connector.deactivated") : "connector.updated", {
-        targetType: "connector_connection",
-        targetId: r.id,
-        data: { provider: r.provider, name: after.name, from: { name: r.name, active: r.active }, to: { name: after.name, active: after.active } },
-      });
+      await auditFromRequest(
+        s.db,
+        req,
+        a,
+        after.active !== r.active ? (after.active ? "connector.activated" : "connector.deactivated") : "connector.updated",
+        {
+          targetType: "connector_connection",
+          targetId: r.id,
+          data: { provider: r.provider, name: after.name, from: { name: r.name, active: r.active }, to: { name: after.name, active: after.active } },
+        },
+      );
     }
     return toConnection(after);
   });
@@ -707,8 +851,14 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     // El historial de ejecuciones se conserva (connection_id pasa a NULL, migración 0081) con el nombre y el proveedor.
     // Las pendientes no se van a procesar sin la conexión: se marcan fallidas.
     await s.db.tx(async (t) => {
-      await t.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [r.id, JSON.stringify({ connection: { name: r.name, provider: r.provider } })]);
-      await t.query(`UPDATE connector_runs SET status = 'failed', error = 'La conexión se desconectó', updated_at = now() WHERE connection_id = $1 AND status = 'pending'`, [r.id]);
+      await t.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [
+        r.id,
+        JSON.stringify({ connection: { name: r.name, provider: r.provider } }),
+      ]);
+      await t.query(
+        `UPDATE connector_runs SET status = 'failed', error = 'La conexión se desconectó', updated_at = now() WHERE connection_id = $1 AND status = 'pending'`,
+        [r.id],
+      );
       await t.query(`DELETE FROM connector_connections WHERE id = $1`, [r.id]);
     });
     // Después del commit se revoca el token en el proveedor (si tiene endpoint), sin bloquear la desconexión si falla.
@@ -722,37 +872,52 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
       revoked = "failed";
       req.log.warn({ err: String(err), provider: r.provider, connectionId: r.id }, "no se pudo revocar el token del conector");
     }
-    await auditFromRequest(s.db, req, a, "connector.disconnected", { targetType: "connector_connection", targetId: r.id, data: { provider: r.provider, name: r.name, tokenRevoked: revoked } });
+    await auditFromRequest(s.db, req, a, "connector.disconnected", {
+      targetType: "connector_connection",
+      targetId: r.id,
+      data: { provider: r.provider, name: r.name, tokenRevoked: revoked },
+    });
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string } }>("/v1/connectors/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req) => {
-    const a = A(req);
-    const r = await loadConn(s.db, a.tenantId, req.params.id);
-    try {
-      const t = await testConnection(open(s.db, r));
-      await s.db.query(`UPDATE connector_connections SET last_success_at = now(), last_error = NULL, account_label = COALESCE($2, account_label), config = config || $3::jsonb WHERE id = $1`, [
-        r.id,
-        t.label,
-        JSON.stringify(t.config ?? {}),
-      ]);
-      // warning "account_unknown" (Factorial OAuth): no se pudo determinar la compañía; al desconectar se revoca el
-      // token aunque otra conexión use la misma cuenta.
-      const warning = t.warning && r.auth_type === "oauth" && !(r.config?.companyId) ? t.warning : null;
-      return { ok: true, error: null, warning };
-    } catch (err) {
-      const msg = asAppError(err).message.slice(0, 300);
-      await s.db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [r.id, msg]);
-      return { ok: false, error: msg };
-    }
-  });
+  app.post<{ Params: { id: string } }>(
+    "/v1/connectors/connections/:id/test",
+    { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } },
+    async (req) => {
+      const a = A(req);
+      const r = await loadConn(s.db, a.tenantId, req.params.id);
+      try {
+        const t = await testConnection(open(s.db, r));
+        await s.db.query(
+          `UPDATE connector_connections SET last_success_at = now(), last_error = NULL, account_label = COALESCE($2, account_label), config = config || $3::jsonb WHERE id = $1`,
+          [r.id, t.label, JSON.stringify(t.config ?? {})],
+        );
+        // warning "account_unknown" (Factorial OAuth): no se pudo determinar la compañía; al desconectar se revoca el
+        // token aunque otra conexión use la misma cuenta.
+        const warning = t.warning && r.auth_type === "oauth" && !r.config?.companyId ? t.warning : null;
+        return { ok: true, error: null, warning };
+      } catch (err) {
+        const msg = asAppError(err).message.slice(0, 300);
+        await s.db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [r.id, msg]);
+        return { ok: false, error: msg };
+      }
+    },
+  );
 
   app.post<{ Params: { id: string } }>("/v1/connectors/connections/:id/rotate-webhook", { preHandler: auth }, async (req) => {
     const a = A(req);
     const r = await loadConn(s.db, a.tenantId, req.params.id);
     const hook = newWebhookToken();
-    await s.db.query(`UPDATE connector_connections SET webhook_token_hash = $2, webhook_token_enc = $3, updated_at = now() WHERE id = $1`, [r.id, hook.hash, hook.enc]);
-    await auditFromRequest(s.db, req, a, "connector.webhook_rotated", { targetType: "connector_connection", targetId: r.id, data: { provider: r.provider } });
+    await s.db.query(`UPDATE connector_connections SET webhook_token_hash = $2, webhook_token_enc = $3, updated_at = now() WHERE id = $1`, [
+      r.id,
+      hook.hash,
+      hook.enc,
+    ]);
+    await auditFromRequest(s.db, req, a, "connector.webhook_rotated", {
+      targetType: "connector_connection",
+      targetId: r.id,
+      data: { provider: r.provider },
+    });
     return toConnection(await loadConn(s.db, a.tenantId, r.id));
   });
 
@@ -763,7 +928,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
       const a = A(req);
       const r = await loadConn(s.db, a.tenantId, req.params.id);
       const objectType = (req.query.objectType ?? CONNECTOR_PROVIDER_OBJECTS[r.provider as ConnectorProvider][0]) as ConnectorObjectType;
-      if (!CONNECTOR_PROVIDER_OBJECTS[r.provider as ConnectorProvider].includes(objectType)) throw badRequest("connector_object_type", "Tipo de registro no admitido");
+      if (!CONNECTOR_PROVIDER_OBJECTS[r.provider as ConnectorProvider].includes(objectType))
+        throw badRequest("connector_object_type", "Tipo de registro no admitido");
       try {
         return { items: await searchRecords(open(s.db, r), objectType, String(req.query.q ?? "").slice(0, 100)) };
       } catch (err) {
@@ -824,7 +990,9 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     return toFlow(await loadFlow(s.db, a.tenantId, id));
   });
 
-  app.get<{ Params: { id: string } }>("/v1/connectors/flows/:id", { preHandler: auth }, async (req) => toFlow(await loadFlow(s.db, A(req).tenantId, req.params.id)));
+  app.get<{ Params: { id: string } }>("/v1/connectors/flows/:id", { preHandler: auth }, async (req) =>
+    toFlow(await loadFlow(s.db, A(req).tenantId, req.params.id)),
+  );
 
   app.patch<{ Params: { id: string } }>("/v1/connectors/flows/:id", { preHandler: auth }, async (req) => {
     const a = A(req);
@@ -876,15 +1044,24 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Con Idempotency-Key, como POST /v1/envelopes: un reintento después de un timeout no crea ni envía otro sobre.
-  app.post<{ Params: { id: string } }>("/v1/connectors/flows/:id/send", { preHandler: auth, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) =>
-    idempotent(s, req, reply, async () => {
-      const a = A(req);
-      const f = await loadFlow(s.db, a.tenantId, req.params.id);
-      const input = SendFromConnectorInput.parse(req.body);
-      if (f.template_id) await assertTemplateAccess(s.db, a, f.template_id, "view");
-      const out = await sendFromConnector(d, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, f, input.recordId, input);
-      return { status: 201, body: out! };
-    }),
+  app.post<{ Params: { id: string } }>(
+    "/v1/connectors/flows/:id/send",
+    { preHandler: auth, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (req, reply) =>
+      idempotent(s, req, reply, async () => {
+        const a = A(req);
+        const f = await loadFlow(s.db, a.tenantId, req.params.id);
+        const input = SendFromConnectorInput.parse(req.body);
+        if (f.template_id) await assertTemplateAccess(s.db, a, f.template_id, "view");
+        const out = await sendFromConnector(
+          d,
+          { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor },
+          f,
+          input.recordId,
+          input,
+        );
+        return { status: 201, body: out! };
+      }),
   );
 
   // ───────── Vínculos y ejecuciones ─────────
@@ -893,39 +1070,46 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     if (!req.query.envelopeId || !UUID.test(req.query.envelopeId)) throw badRequest("envelope_required", "Indicá envelopeId");
     await assertEnvelopeAccess(s.db, a, req.query.envelopeId, "view");
-    const rows = await s.db.query(`SELECT * FROM connector_links WHERE tenant_id = $1 AND envelope_id = $2 ORDER BY created_at`, [a.tenantId, req.query.envelopeId]);
+    const rows = await s.db.query(`SELECT * FROM connector_links WHERE tenant_id = $1 AND envelope_id = $2 ORDER BY created_at`, [
+      a.tenantId,
+      req.query.envelopeId,
+    ]);
     return { items: rows.map(toLink) };
   });
 
-  app.get<{ Querystring: { connectionId?: string; envelopeId?: string; status?: string; limit?: string } }>("/v1/connectors/runs", { preHandler: auth }, async (req) => {
-    const a = A(req);
-    const params: unknown[] = [a.tenantId];
-    let where = `r.tenant_id = $1`;
-    if (req.query.connectionId && UUID.test(req.query.connectionId)) {
-      params.push(req.query.connectionId);
-      where += ` AND r.connection_id = $${params.length}`;
-    }
-    if (req.query.envelopeId && UUID.test(req.query.envelopeId)) {
-      params.push(req.query.envelopeId);
-      where += ` AND r.envelope_id = $${params.length}`;
-    }
-    if (req.query.status && ["pending", "succeeded", "failed"].includes(req.query.status)) {
-      params.push(req.query.status);
-      where += ` AND r.status = $${params.length}`;
-    }
-    // Sin settings:manage, solo las ejecuciones de sobres que uno puede ver (como /v1/crm/runs).
-    if (!hasPerm(a, "settings:manage")) {
-      where += ` AND r.envelope_id IS NOT NULL AND EXISTS (SELECT 1 FROM envelopes e WHERE e.id = r.envelope_id AND e.tenant_id = r.tenant_id${envelopeVisibilitySql(a, params)})`;
-    }
-    params.push(Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50)));
-    const rows = await s.db.query(
-      `SELECT r.*, COALESCE(c.name, r.detail->'connection'->>'name') AS connection_name, COALESCE(c.provider, r.detail->'connection'->>'provider') AS provider
+  app.get<{ Querystring: { connectionId?: string; envelopeId?: string; status?: string; limit?: string } }>(
+    "/v1/connectors/runs",
+    { preHandler: auth },
+    async (req) => {
+      const a = A(req);
+      const params: unknown[] = [a.tenantId];
+      let where = `r.tenant_id = $1`;
+      if (req.query.connectionId && UUID.test(req.query.connectionId)) {
+        params.push(req.query.connectionId);
+        where += ` AND r.connection_id = $${params.length}`;
+      }
+      if (req.query.envelopeId && UUID.test(req.query.envelopeId)) {
+        params.push(req.query.envelopeId);
+        where += ` AND r.envelope_id = $${params.length}`;
+      }
+      if (req.query.status && ["pending", "succeeded", "failed"].includes(req.query.status)) {
+        params.push(req.query.status);
+        where += ` AND r.status = $${params.length}`;
+      }
+      // Sin settings:manage, solo las ejecuciones de sobres que uno puede ver (como /v1/crm/runs).
+      if (!hasPerm(a, "settings:manage")) {
+        where += ` AND r.envelope_id IS NOT NULL AND EXISTS (SELECT 1 FROM envelopes e WHERE e.id = r.envelope_id AND e.tenant_id = r.tenant_id${envelopeVisibilitySql(a, params)})`;
+      }
+      params.push(Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50)));
+      const rows = await s.db.query(
+        `SELECT r.*, COALESCE(c.name, r.detail->'connection'->>'name') AS connection_name, COALESCE(c.provider, r.detail->'connection'->>'provider') AS provider
          FROM connector_runs r LEFT JOIN connector_connections c ON c.id = r.connection_id
         WHERE ${where} ORDER BY r.created_at DESC LIMIT $${params.length}`,
-      params,
-    );
-    return { items: rows.map(toRun) };
-  });
+        params,
+      );
+      return { items: rows.map(toRun) };
+    },
+  );
 
   app.post<{ Params: { id: string } }>("/v1/connectors/runs/:id/retry", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
@@ -933,7 +1117,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.one<any>(`SELECT * FROM connector_runs WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!r) throw notFound("Ejecución");
     if (r.status === "succeeded") throw new AppError(409, "already_succeeded", "Ya se completó");
-    if (r.kind === "send" && !r.detail?.webhook) throw new AppError(409, "not_retryable", "Un envío manual se vuelve a hacer desde el registro (POST /v1/connectors/flows/:id/send)");
+    if (r.kind === "send" && !r.detail?.webhook)
+      throw new AppError(409, "not_retryable", "Un envío manual se vuelve a hacer desde el registro (POST /v1/connectors/flows/:id/send)");
     await s.db.query(`UPDATE connector_runs SET status = 'pending', error = NULL, updated_at = now() WHERE id = $1`, [r.id]);
     await enqueue(s.db, "platform", { kind: "connector", runId: r.id }, { dedupeKey: `cnjob:${r.id}:${Date.now()}`, tenantId: a.tenantId });
     reply.code(202);
@@ -950,7 +1135,9 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
       { config: { rateLimit: { max: 300, timeWindow: "1 minute" } }, bodyLimit: 512 * 1024 },
       async (req, reply) => {
         const token = String(req.params.token ?? "");
-        const c = token.startsWith("cshk_") ? await s.db.one<any>(`SELECT * FROM connector_connections WHERE webhook_token_hash = $1`, [hashToken(token)]) : null;
+        const c = token.startsWith("cshk_")
+          ? await s.db.one<any>(`SELECT * FROM connector_connections WHERE webhook_token_hash = $1`, [hashToken(token)])
+          : null;
         if (!c) return reply.code(404).send({ error: { code: "not_found", message: "Webhook inexistente" } });
         if (!c.active) return reply.code(409).send({ error: { code: "connector_connection_inactive", message: "La conexión está desactivada" } });
         const raw = typeof req.body === "string" ? req.body : "";
@@ -1015,17 +1202,28 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
               if (recent) return false;
               return queueRun(
                 t,
-                { tenantId: c.tenant_id, connectionId: c.id, flowId: f.id, linkId: null, envelopeId: null, kind: "send", event: ev.event ?? "webhook", objectType: f.object_type, objectId: ev.recordId, detail: { webhook: true, signed: signedOk.get(f.id) === true } },
+                {
+                  tenantId: c.tenant_id,
+                  connectionId: c.id,
+                  flowId: f.id,
+                  linkId: null,
+                  envelopeId: null,
+                  kind: "send",
+                  event: ev.event ?? "webhook",
+                  objectType: f.object_type,
+                  objectId: ev.recordId,
+                  detail: { webhook: true, signed: signedOk.get(f.id) === true },
+                },
                 `${baseKey}:${bucket}`,
               );
             });
             if (ok) queued++;
           }
         }
-        if (matched > 0 && rejected === matched) return reply.code(401).send({ error: { code: "invalid_signature", message: "Firma inválida o ausente" } });
+        if (matched > 0 && rejected === matched)
+          return reply.code(401).send({ error: { code: "invalid_signature", message: "Firma inválida o ausente" } });
         return { ok: true, queued, ...(rejected ? { rejected } : {}) };
       },
     );
   });
 }
-

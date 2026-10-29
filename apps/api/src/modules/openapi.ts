@@ -139,36 +139,55 @@ const CreateApiKeyBody = CreateApiKeyInput.extend({
 const unwrapObject = (t: ZodTypeAny): AnyZodObject => (t instanceof ZodEffects ? unwrapObject(t.innerType()) : (t as AnyZodObject));
 const FieldObject = unwrapObject(FieldInput);
 const InlineFieldDoc = (base: AnyZodObject) =>
-  base
-    .omit({ recipientId: true, documentId: true })
-    .extend({
-      recipient: z.union([z.number().int().min(0), z.string()]).optional().describe("Destinatario: posición en `recipients` (0 = el primero), su `ref` o su email. Opcional con un solo firmante."),
-      document: z.union([z.number().int().min(0), z.string()]).optional().describe("Documento: posición en `documents` o su `ref`. Opcional con un solo documento (con `anchor`, sin él se busca en todos)."),
-      recipientId: z.string().uuid().optional().describe("Alternativa a `recipient`: el `id` propio que se le dio al destinatario."),
-    });
+  base.omit({ recipientId: true, documentId: true }).extend({
+    recipient: z
+      .union([z.number().int().min(0), z.string()])
+      .optional()
+      .describe("Destinatario: posición en `recipients` (0 = el primero), su `ref` o su email. Opcional con un solo firmante."),
+    document: z
+      .union([z.number().int().min(0), z.string()])
+      .optional()
+      .describe("Documento: posición en `documents` o su `ref`. Opcional con un solo documento (con `anchor`, sin él se busca en todos)."),
+    recipientId: z.string().uuid().optional().describe("Alternativa a `recipient`: el `id` propio que se le dio al destinatario."),
+  });
 const CreateEnvelopeRequestBody = CreateEnvelopeInput.extend({
-  documents: z.array(InlineDocumentInput).max(ONE_SHOT_MAX_DOCUMENTS).optional().describe("PDF del sobre, en orden. Cada uno con base64, url o file (parte del multipart)."),
+  documents: z
+    .array(InlineDocumentInput)
+    .max(ONE_SHOT_MAX_DOCUMENTS)
+    .optional()
+    .describe("PDF del sobre, en orden. Cada uno con base64, url o file (parte del multipart)."),
   recipients: z.array(InlineRecipientInput).max(50).optional().describe("Destinatarios (formato de PUT /recipients) con `ref` opcional."),
   fields: z
     .array(z.union([InlineFieldDoc(FieldObject), InlineFieldDoc(AnchorFieldInput)]))
     .max(500)
     .optional()
     .describe("Campos con coordenadas o con `anchor` (como PUT /fields)."),
-  send: z.boolean().optional().describe("true: lo envía en la misma llamada (equivale a status \"sent\")."),
+  send: z.boolean().optional().describe('true: lo envía en la misma llamada (equivale a status "sent").'),
   status: z.enum(["draft", "sent"]).optional().describe("Estado en que queda: draft (por defecto) o sent."),
   embeddedSigning: CreateSigningUrlInput.optional().describe("Opciones (returnUrl, frameAncestors) de las URLs de firma embebida de la respuesta."),
 });
-const CreateEnvelopeResponseSchema = named("CreateEnvelopeResponse", EnvelopeDetailSchema.extend({
-  documents: z.array(UploadedDocumentSchema).describe("Los documentos creados, con `hadSignatures` (firmas previas del archivo que se perdieron al sanearlo) y `formAppearanceMismatch` (aviso: alguna apariencia de formulario no se pudo regenerar y se fijó la guardada)."),
-  signingUrls: z
-    .array(SigningUrlSchema.extend({ recipientId: z.string().uuid() }))
-    .optional()
-    .describe("Con send y destinatarios embedded: la URL de firma embebida (un solo uso, 5 minutos) de cada uno al que ya le toca. Al repetir el pedido con la misma Idempotency-Key se emiten URLs nuevas (no se guardan)."),
-  signingUrlsHint: z
-    .string()
-    .optional()
-    .describe("Solo al repetir con la misma Idempotency-Key, si alguna URL ya no se pudo emitir: cómo pedirla (POST /v1/envelopes/{id}/recipients/{recipientId}/signing-url)."),
-}));
+const CreateEnvelopeResponseSchema = named(
+  "CreateEnvelopeResponse",
+  EnvelopeDetailSchema.extend({
+    documents: z
+      .array(UploadedDocumentSchema)
+      .describe(
+        "Los documentos creados, con `hadSignatures` (firmas previas del archivo que se perdieron al sanearlo) y `formAppearanceMismatch` (aviso: alguna apariencia de formulario no se pudo regenerar y se fijó la guardada).",
+      ),
+    signingUrls: z
+      .array(SigningUrlSchema.extend({ recipientId: z.string().uuid() }))
+      .optional()
+      .describe(
+        "Con send y destinatarios embedded: la URL de firma embebida (un solo uso, 5 minutos) de cada uno al que ya le toca. Al repetir el pedido con la misma Idempotency-Key se emiten URLs nuevas (no se guardan).",
+      ),
+    signingUrlsHint: z
+      .string()
+      .optional()
+      .describe(
+        "Solo al repetir con la misma Idempotency-Key, si alguna URL ya no se pudo emitir: cómo pedirla (POST /v1/envelopes/{id}/recipients/{recipientId}/signing-url).",
+      ),
+  }),
+);
 
 const PaymentStateSchema = named(
   "EnvelopePaymentState",
@@ -182,8 +201,16 @@ const PaymentStateSchema = named(
 const PutFieldsWithAnchors = z.object({ fields: z.array(z.union([FieldInput, AnchorFieldInput])).max(500) });
 /** addRecipients y addFields se validan con RecipientInput y FieldInput (en el contrato son unknown[]). */
 const CorrectEnvelopeBody = CorrectEnvelopeInput.extend({
-  addRecipients: z.array(RecipientInput).max(20).optional().describe("Destinatarios nuevos (formato de PUT /recipients). Solo en grupos de ruteo que no empezaron."),
-  addFields: z.array(FieldInput).max(500).optional().describe("Campos nuevos (formato de PUT /fields, sin anclas) para destinatarios que todavía no abrieron el sobre."),
+  addRecipients: z
+    .array(RecipientInput)
+    .max(20)
+    .optional()
+    .describe("Destinatarios nuevos (formato de PUT /recipients). Solo en grupos de ruteo que no empezaron."),
+  addFields: z
+    .array(FieldInput)
+    .max(500)
+    .optional()
+    .describe("Campos nuevos (formato de PUT /fields, sin anclas) para destinatarios que todavía no abrieron el sobre."),
 });
 
 // ───────── Parámetros de query ─────────
@@ -195,10 +222,22 @@ const Q = {
     schema: { type: "integer", minimum: 1, maximum: max, default: def },
   }),
   cursor: { name: "cursor", description: "Valor de `nextCursor` de la página anterior (opaco)." },
-  from: { name: "from", description: "Desde (ISO 8601). Por defecto, el día 1 del mes que está 5 meses antes de `to` (6 meses calendario).", schema: { type: "string", format: "date-time" } },
+  from: {
+    name: "from",
+    description: "Desde (ISO 8601). Por defecto, el día 1 del mes que está 5 meses antes de `to` (6 meses calendario).",
+    schema: { type: "string", format: "date-time" },
+  },
   to: { name: "to", description: "Hasta (ISO 8601). Por defecto, ahora. Rango máximo: 3 años.", schema: { type: "string", format: "date-time" } },
-  tz: { name: "tz", description: "Zona horaria IANA (p. ej. America/Argentina/Buenos_Aires). Sin distinguir mayúsculas. Una desconocida (o mal escrita) no es un error: se usa UTC; en los CSV el header `X-Time-Zone` informa la zona usada." },
-  sep: { name: "sep", description: "Separador del CSV: `,` (por defecto) o `;` (Excel en español o portugués). También `comma` / `semicolon`.", schema: { type: "string", enum: [",", ";", "comma", "semicolon"] } },
+  tz: {
+    name: "tz",
+    description:
+      "Zona horaria IANA (p. ej. America/Argentina/Buenos_Aires). Sin distinguir mayúsculas. Una desconocida (o mal escrita) no es un error: se usa UTC; en los CSV el header `X-Time-Zone` informa la zona usada.",
+  },
+  sep: {
+    name: "sep",
+    description: "Separador del CSV: `,` (por defecto) o `;` (Excel en español o portugués). También `comma` / `semicolon`.",
+    schema: { type: "string", enum: [",", ";", "comma", "semicolon"] },
+  },
 };
 const AUDIT_QUERY = [
   { name: "action", description: "Acción exacta (p. ej. api_key.created) o prefijo terminado en * (p. ej. member.*)." },
@@ -220,7 +259,8 @@ const OPS: Op[] = [
     operationId: "signup",
     tag: "Identidad",
     summary: "Crear cuenta y organización",
-    description: "Crea el usuario (propietario) y la organización y deja la sesión en la cookie de sesión (__Host-cs_session). 10 pedidos por minuto por IP.",
+    description:
+      "Crea el usuario (propietario) y la organización y deja la sesión en la cookie de sesión (__Host-cs_session). 10 pedidos por minuto por IP.",
     body: SignupInput,
     status: 201,
     response: MeSchema,
@@ -246,10 +286,18 @@ const OPS: Op[] = [
     operationId: "getMe",
     tag: "Identidad",
     summary: "Usuario y organización actuales",
-    description: "Con una API key, `user` describe la key (id de la key, email vacío). Sirve para probar una credencial: no exige el plan con acceso por API.",
+    description:
+      "Con una API key, `user` describe la key (id de la key, email vacío). Sirve para probar una credencial: no exige el plan con acceso por API.",
     response: MeSchema,
   },
-  { method: "get", path: "/v1/api-keys", operationId: "listApiKeys", tag: "Identidad", summary: "Listar API keys", response: z.object({ items: z.array(ApiKeySchema) }) },
+  {
+    method: "get",
+    path: "/v1/api-keys",
+    operationId: "listApiKeys",
+    tag: "Identidad",
+    summary: "Listar API keys",
+    response: z.object({ items: z.array(ApiKeySchema) }),
+  },
   {
     method: "post",
     path: "/v1/api-keys",
@@ -263,7 +311,15 @@ const OPS: Op[] = [
     response: z.object({ apiKey: ApiKeySchema, secret: z.string().describe("cs_live_… / cs_test_…; se muestra una sola vez.") }),
     errors: ["invalid_role"],
   },
-  { method: "delete", path: "/v1/api-keys/{id}", operationId: "revokeApiKey", tag: "Identidad", summary: "Revocar API key", response: "none", status: 204 },
+  {
+    method: "delete",
+    path: "/v1/api-keys/{id}",
+    operationId: "revokeApiKey",
+    tag: "Identidad",
+    summary: "Revocar API key",
+    response: "none",
+    status: 204,
+  },
 
   // Sobres
   {
@@ -298,7 +354,7 @@ const OPS: Op[] = [
       "parte `file` de un multipart), destinatarios (`recipients`, formato de PUT /recipients más un `ref` opcional) y " +
       "campos (`fields`, con coordenadas o `anchor`; el destinatario y el documento se citan con `recipient` / `document`: " +
       "posición en la lista, `ref` o, para el destinatario, su email; se pueden omitir si hay un solo firmante / documento). " +
-      "Con `send: true` (o `status: \"sent\"`) también lo envía y la respuesta trae `signingUrls` para los firmantes " +
+      'Con `send: true` (o `status: "sent"`) también lo envía y la respuesta trae `signingUrls` para los firmantes ' +
       "`embedded` a los que ya les toca. Es atómico: si algo falla (PDF inválido, ancla que no aparece, sobre incompleto " +
       "para enviar) no se crea nada. Sin esos agregados, crea un borrador vacío para completarlo paso a paso. " +
       "En multipart/form-data, el JSON va en la parte `payload` y cada PDF en su propia parte (sin `documents`, cada " +
@@ -346,7 +402,14 @@ const OPS: Op[] = [
       "frame_ancestor_not_allowed",
     ],
   },
-  { method: "get", path: "/v1/envelopes/{id}", operationId: "getEnvelope", tag: "Sobres", summary: "Detalle del sobre", response: EnvelopeDetailSchema },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}",
+    operationId: "getEnvelope",
+    tag: "Sobres",
+    summary: "Detalle del sobre",
+    response: EnvelopeDetailSchema,
+  },
   {
     method: "patch",
     path: "/v1/envelopes/{id}",
@@ -360,7 +423,16 @@ const OPS: Op[] = [
     expectedUpdatedAt: true,
     errors: ["not_draft", "invalid_brand", "plan_limit_white_label", "version_changed"],
   },
-  { method: "delete", path: "/v1/envelopes/{id}", operationId: "deleteEnvelope", tag: "Sobres", summary: "Borrar borrador", response: "none", status: 204, errors: ["not_draft"] },
+  {
+    method: "delete",
+    path: "/v1/envelopes/{id}",
+    operationId: "deleteEnvelope",
+    tag: "Sobres",
+    summary: "Borrar borrador",
+    response: "none",
+    status: 204,
+    errors: ["not_draft"],
+  },
   {
     method: "post",
     path: "/v1/envelopes/{id}/documents",
@@ -375,7 +447,16 @@ const OPS: Op[] = [
     response: UploadedDocumentSchema,
     errors: ["not_draft", "not_pdf", "too_many_documents"],
   },
-  { method: "delete", path: "/v1/envelopes/{id}/documents/{documentId}", operationId: "deleteEnvelopeDocument", tag: "Sobres", summary: "Quitar documento", response: "none", status: 204, errors: ["not_draft"] },
+  {
+    method: "delete",
+    path: "/v1/envelopes/{id}/documents/{documentId}",
+    operationId: "deleteEnvelopeDocument",
+    tag: "Sobres",
+    summary: "Quitar documento",
+    response: "none",
+    status: 204,
+    errors: ["not_draft"],
+  },
   {
     method: "get",
     path: "/v1/envelopes/{id}/documents/{documentId}/file",
@@ -410,7 +491,16 @@ const OPS: Op[] = [
     body: PutFieldsWithAnchors,
     response: EnvelopeDetailSchema,
     expectedUpdatedAt: true,
-    errors: ["not_draft", "invalid_field", "anchor_not_found", "too_many_fields", "pdf_too_heavy", "pdf_reader_busy", "logic_order", "version_changed"],
+    errors: [
+      "not_draft",
+      "invalid_field",
+      "anchor_not_found",
+      "too_many_fields",
+      "pdf_too_heavy",
+      "pdf_reader_busy",
+      "logic_order",
+      "version_changed",
+    ],
   },
   {
     method: "post",
@@ -419,7 +509,8 @@ const OPS: Op[] = [
     tag: "Sobres",
     summary: "Enviar",
     description:
-      "Valida el borrador (documentos, firmantes con campo de firma, vencimiento, fórmulas, cobro) y envía las invitaciones al primer grupo de ruteo. Cuenta para el cupo mensual del plan." + IDEMPOTENT_NOTE,
+      "Valida el borrador (documentos, firmantes con campo de firma, vencimiento, fórmulas, cobro) y envía las invitaciones al primer grupo de ruteo. Cuenta para el cupo mensual del plan." +
+      IDEMPOTENT_NOTE,
     response: EnvelopeDetailSchema,
     idempotent: true,
     expectedUpdatedAt: true,
@@ -431,7 +522,8 @@ const OPS: Op[] = [
     operationId: "voidEnvelope",
     tag: "Sobres",
     summary: "Anular un sobre en curso",
-    description: "Con X-Expected-Updated-At (opcional), 409 version_changed si el sobre cambió desde que se leyó (p. ej. alguien firmó) en vez de anular algo distinto de lo revisado.",
+    description:
+      "Con X-Expected-Updated-At (opcional), 409 version_changed si el sobre cambió desde que se leyó (p. ej. alguien firmó) en vez de anular algo distinto de lo revisado.",
     body: VoidEnvelopeInput,
     response: EnvelopeDetailSchema,
     expectedUpdatedAt: true,
@@ -460,8 +552,23 @@ const OPS: Op[] = [
     response: z.object({ queued: z.literal(true) }),
     errors: ["not_finalizing", "finalize_in_progress"],
   },
-  { method: "get", path: "/v1/envelopes/{id}/events", operationId: "listEnvelopeEvents", tag: "Sobres", summary: "Registro de eventos (cadena de hashes)", response: z.object({ items: z.array(EnvelopeEventSchema) }) },
-  { method: "get", path: "/v1/envelopes/{id}/signed.pdf", operationId: "downloadSignedPdf", tag: "Sobres", summary: "PDF final sellado (PAdES) con certificado de finalización", description: "404 hasta que el sobre está completed.", response: "pdf" },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}/events",
+    operationId: "listEnvelopeEvents",
+    tag: "Sobres",
+    summary: "Registro de eventos (cadena de hashes)",
+    response: z.object({ items: z.array(EnvelopeEventSchema) }),
+  },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}/signed.pdf",
+    operationId: "downloadSignedPdf",
+    tag: "Sobres",
+    summary: "PDF final sellado (PAdES) con certificado de finalización",
+    description: "404 hasta que el sobre está completed.",
+    response: "pdf",
+  },
   {
     method: "post",
     path: "/v1/envelopes/{id}/corrections",
@@ -509,8 +616,24 @@ const OPS: Op[] = [
     response: z.object({ items: z.array(TemplateSummarySchema), nextCursor: z.string().nullable() }),
     errors: ["invalid_cursor"],
   },
-  { method: "post", path: "/v1/templates", operationId: "createTemplate", tag: "Plantillas", summary: "Crear plantilla", body: CreateTemplateInput, status: 201, response: TemplateDetailSchema },
-  { method: "get", path: "/v1/templates/{id}", operationId: "getTemplate", tag: "Plantillas", summary: "Detalle de la plantilla (documentos, roles y campos)", response: TemplateDetailSchema },
+  {
+    method: "post",
+    path: "/v1/templates",
+    operationId: "createTemplate",
+    tag: "Plantillas",
+    summary: "Crear plantilla",
+    body: CreateTemplateInput,
+    status: 201,
+    response: TemplateDetailSchema,
+  },
+  {
+    method: "get",
+    path: "/v1/templates/{id}",
+    operationId: "getTemplate",
+    tag: "Plantillas",
+    summary: "Detalle de la plantilla (documentos, roles y campos)",
+    response: TemplateDetailSchema,
+  },
   {
     method: "patch",
     path: "/v1/templates/{id}",
@@ -528,7 +651,8 @@ const OPS: Op[] = [
     operationId: "deleteTemplate",
     tag: "Plantillas",
     summary: "Borrar plantilla",
-    description: "Los sobres ya creados desde la plantilla no cambian. Sus formularios web se borran con ella: con alguno que todavía recibe envíos (activo, sin vencer ni agotar), 409 template_has_forms con sus nombres en `details.names` (desactivarlos o borrarlos antes).",
+    description:
+      "Los sobres ya creados desde la plantilla no cambian. Sus formularios web se borran con ella: con alguno que todavía recibe envíos (activo, sin vencer ni agotar), 409 template_has_forms con sus nombres en `details.names` (desactivarlos o borrarlos antes).",
     response: "none",
     status: 204,
     errors: ["template_has_forms"],
@@ -547,19 +671,43 @@ const OPS: Op[] = [
     response: UploadedDocumentSchema,
     errors: ["not_pdf", "too_many_documents"],
   },
-  { method: "delete", path: "/v1/templates/{id}/documents/{documentId}", operationId: "deleteTemplateDocument", tag: "Plantillas", summary: "Quitar documento", response: "none", status: 204 },
-  { method: "get", path: "/v1/templates/{id}/documents/{documentId}/file", operationId: "downloadTemplateDocument", tag: "Plantillas", summary: "Descargar el PDF del documento", response: "pdf" },
+  {
+    method: "delete",
+    path: "/v1/templates/{id}/documents/{documentId}",
+    operationId: "deleteTemplateDocument",
+    tag: "Plantillas",
+    summary: "Quitar documento",
+    response: "none",
+    status: 204,
+  },
+  {
+    method: "get",
+    path: "/v1/templates/{id}/documents/{documentId}/file",
+    operationId: "downloadTemplateDocument",
+    tag: "Plantillas",
+    summary: "Descargar el PDF del documento",
+    response: "pdf",
+  },
   {
     method: "put",
     path: "/v1/templates/{id}/roles",
     operationId: "putTemplateRoles",
     tag: "Plantillas",
     summary: "Reemplazar roles",
-    description: "Reemplaza la lista completa (un id existente actualiza ese rol). Los nombres son únicos sin distinguir mayúsculas. Un rol cc o approver pierde sus campos.",
+    description:
+      "Reemplaza la lista completa (un id existente actualiza ese rol). Los nombres son únicos sin distinguir mayúsculas. Un rol cc o approver pierde sus campos.",
     body: PutTemplateRolesInput,
     response: TemplateDetailSchema,
     expectedUpdatedAt: true,
-    errors: ["duplicate_ids", "duplicate_roles", "template_id_in_use", "certificate_not_applicable", "logic_order", "template_has_forms_edit", "version_changed"],
+    errors: [
+      "duplicate_ids",
+      "duplicate_roles",
+      "template_id_in_use",
+      "certificate_not_applicable",
+      "logic_order",
+      "template_has_forms_edit",
+      "version_changed",
+    ],
   },
   {
     method: "put",
@@ -567,7 +715,8 @@ const OPS: Op[] = [
     operationId: "putTemplateFields",
     tag: "Plantillas",
     summary: "Reemplazar campos",
-    description: "Reemplaza la lista completa. Coordenadas normalizadas como en los sobres (sin anclas); cada campo va con el roleId de un rol signer. Las condiciones siguen la misma regla de orden que en los sobres (422 logic_order).",
+    description:
+      "Reemplaza la lista completa. Coordenadas normalizadas como en los sobres (sin anclas); cada campo va con el roleId de un rol signer. Las condiciones siguen la misma regla de orden que en los sobres (422 logic_order).",
     body: PutTemplateFieldsInput,
     response: TemplateDetailSchema,
     expectedUpdatedAt: true,
@@ -599,7 +748,17 @@ const OPS: Op[] = [
     status: 201,
     response: EnvelopeDetailSchema,
     idempotent: true,
-    errors: ["template_empty", "unknown_role", "duplicate_role", "unknown_prefill", "readonly_field", "invalid_prefill", "roles_missing", "envelope_incomplete", "plan_limit_envelopes"],
+    errors: [
+      "template_empty",
+      "unknown_role",
+      "duplicate_role",
+      "unknown_prefill",
+      "readonly_field",
+      "invalid_prefill",
+      "roles_missing",
+      "envelope_incomplete",
+      "plan_limit_envelopes",
+    ],
   },
 
   // Firma embebida
@@ -617,7 +776,14 @@ const OPS: Op[] = [
     response: SigningUrlSchema,
     errors: ["frame_ancestor_not_allowed", "not_available", "not_embedded", "otp_not_embeddable"],
   },
-  { method: "get", path: "/v1/settings/embed", operationId: "getEmbedSettings", tag: "Firma embebida", summary: "Orígenes autorizados a enmarcar la firma", response: z.object({ frameAncestors: z.array(z.string()) }) },
+  {
+    method: "get",
+    path: "/v1/settings/embed",
+    operationId: "getEmbedSettings",
+    tag: "Firma embebida",
+    summary: "Orígenes autorizados a enmarcar la firma",
+    response: z.object({ frameAncestors: z.array(z.string()) }),
+  },
   {
     method: "patch",
     path: "/v1/settings/embed",
@@ -650,14 +816,26 @@ const OPS: Op[] = [
     operationId: "createWebhook",
     tag: "Webhooks",
     summary: "Crear webhook (el secreto se devuelve una sola vez)",
-    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización (cuentan los activos y los desactivados en los últimos 30 días). Sin `events`, recibe todos. Responde con el header `Location` (URL del webhook): DELETE a esa URL lo borra, como hacen los triggers REST hook de Power Automate y Logic Apps. Un webhook recibe los datos de todos los sobres de la organización: crearlo o modificarlo pide `webhooks:manage` y además `envelopes:view_all` (p. ej. el rol admin). Creado con una API key o con el token OAuth de un usuario (REST hooks de Zapier, Make, Power Automate), queda atado a esa credencial: si se revoca la key o la app, el usuario la desconecta (o se revocan sus tokens) o deja la organización, el webhook pasa a `active: false` (al listar los webhooks o en el próximo evento, antes de cualquier entrega; queda en la auditoría como webhook.deactivated). Reactivar uno desactivado por eso (PATCH `active: true`) lo pasa a la credencial de quien lo reactiva; desde una sesión web queda como webhook de la organización, sin credencial de origen. Pausar y reanudar uno que funciona no cambia su origen. Lo mismo si la credencial sigue vigente pero pierde `webhooks:manage` o `envelopes:view_all` (cambio de rol de la key o del usuario, o scopes de la app): `deactivatedReason: permission_lost`. Además se desactiva solo si el receptor responde 410 Gone (`gone`, sin reintentos) o con 50 entregas fallidas definitivas seguidas o 7 días fallando sin ninguna exitosa y con al menos 5 fallas seguidas (`failing`); cada desactivación automática queda en la auditoría y se avisa por correo a quienes tienen `webhooks:manage`. Cada evento lleva un `id` estable: re-procesarlo no genera una entrega nueva para el mismo endpoint.",
+    description:
+      "URL https (sin credenciales ni destinos locales). Máximo 20 por organización (cuentan los activos y los desactivados en los últimos 30 días). Sin `events`, recibe todos. Responde con el header `Location` (URL del webhook): DELETE a esa URL lo borra, como hacen los triggers REST hook de Power Automate y Logic Apps. Un webhook recibe los datos de todos los sobres de la organización: crearlo o modificarlo pide `webhooks:manage` y además `envelopes:view_all` (p. ej. el rol admin). Creado con una API key o con el token OAuth de un usuario (REST hooks de Zapier, Make, Power Automate), queda atado a esa credencial: si se revoca la key o la app, el usuario la desconecta (o se revocan sus tokens) o deja la organización, el webhook pasa a `active: false` (al listar los webhooks o en el próximo evento, antes de cualquier entrega; queda en la auditoría como webhook.deactivated). Reactivar uno desactivado por eso (PATCH `active: true`) lo pasa a la credencial de quien lo reactiva; desde una sesión web queda como webhook de la organización, sin credencial de origen. Pausar y reanudar uno que funciona no cambia su origen. Lo mismo si la credencial sigue vigente pero pierde `webhooks:manage` o `envelopes:view_all` (cambio de rol de la key o del usuario, o scopes de la app): `deactivatedReason: permission_lost`. Además se desactiva solo si el receptor responde 410 Gone (`gone`, sin reintentos) o con 50 entregas fallidas definitivas seguidas o 7 días fallando sin ninguna exitosa y con al menos 5 fallas seguidas (`failing`); cada desactivación automática queda en la auditoría y se avisa por correo a quienes tienen `webhooks:manage`. Cada evento lleva un `id` estable: re-procesarlo no genera una entrega nueva para el mismo endpoint.",
     body: CreateWebhookInput,
     status: 201,
     response: z.object({ webhook: WebhookSchema, secret: z.string().describe("whsec_…: verifica la firma HMAC. Se muestra una sola vez.") }),
     errors: ["invalid_url", "too_many_webhooks", "plan_limit_webhooks"],
   },
   { method: "get", path: "/v1/webhooks/{id}", operationId: "getWebhook", tag: "Webhooks", summary: "Detalle", response: WebhookSchema },
-  { method: "patch", path: "/v1/webhooks/{id}", operationId: "updateWebhook", tag: "Webhooks", summary: "Modificar", description: "Como al crearlo, pide `webhooks:manage` y además `envelopes:view_all`. Con `active: true` sobre un webhook desactivado porque se revocó la credencial que lo creó o porque perdió los permisos, pasa a la credencial de quien lo reactiva (ver crear). Reactivar uno inactivo reinicia el conteo de fallas y vuelve a ocupar un lugar del tope de 20 (400 too_many_webhooks si no hay lugar). Activarlo (`active: true`) o cambiar `url` o `events` sin pausarlo exige webhooks en el plan (402); pausarlo o cambiar solo la descripción, no.", body: UpdateWebhookInput, response: WebhookSchema, errors: ["invalid_url", "too_many_webhooks", "plan_limit_webhooks"] },
+  {
+    method: "patch",
+    path: "/v1/webhooks/{id}",
+    operationId: "updateWebhook",
+    tag: "Webhooks",
+    summary: "Modificar",
+    description:
+      "Como al crearlo, pide `webhooks:manage` y además `envelopes:view_all`. Con `active: true` sobre un webhook desactivado porque se revocó la credencial que lo creó o porque perdió los permisos, pasa a la credencial de quien lo reactiva (ver crear). Reactivar uno inactivo reinicia el conteo de fallas y vuelve a ocupar un lugar del tope de 20 (400 too_many_webhooks si no hay lugar). Activarlo (`active: true`) o cambiar `url` o `events` sin pausarlo exige webhooks en el plan (402); pausarlo o cambiar solo la descripción, no.",
+    body: UpdateWebhookInput,
+    response: WebhookSchema,
+    errors: ["invalid_url", "too_many_webhooks", "plan_limit_webhooks"],
+  },
   { method: "delete", path: "/v1/webhooks/{id}", operationId: "deleteWebhook", tag: "Webhooks", summary: "Borrar", response: "none", status: 204 },
   {
     method: "get",
@@ -674,7 +852,8 @@ const OPS: Op[] = [
     operationId: "testWebhook",
     tag: "Webhooks",
     summary: "Enviar un evento de prueba",
-    description: "Encola un evento webhook.test (un solo intento, también con el endpoint inactivo). Exige webhooks en el plan (402). Hasta 10 pruebas por minuto (429 rate_limited).",
+    description:
+      "Encola un evento webhook.test (un solo intento, también con el endpoint inactivo). Exige webhooks en el plan (402). Hasta 10 pruebas por minuto (429 rate_limited).",
     status: 202,
     response: WebhookDeliverySchema,
     errors: ["plan_limit_webhooks"],
@@ -685,7 +864,8 @@ const OPS: Op[] = [
     operationId: "retryWebhookDelivery",
     tag: "Webhooks",
     summary: "Reintentar una entrega",
-    description: "Un intento manual inmediato. Con el endpoint inactivo (pausado o desactivado), 409 endpoint_inactive: primero hay que reactivarlo. Con la entrega pendiente de su reintento automático, lo adelanta (no la manda dos veces); si ya hay un intento en curso o un reintento manual pedido, 409 delivery_pending. Pide `webhooks:manage` y además `envelopes:view_all`, y webhooks en el plan (402).",
+    description:
+      "Un intento manual inmediato. Con el endpoint inactivo (pausado o desactivado), 409 endpoint_inactive: primero hay que reactivarlo. Con la entrega pendiente de su reintento automático, lo adelanta (no la manda dos veces); si ya hay un intento en curso o un reintento manual pedido, 409 delivery_pending. Pide `webhooks:manage` y además `envelopes:view_all`, y webhooks en el plan (402).",
     status: 202,
     response: WebhookDeliverySchema,
     errors: ["delivery_pending", "endpoint_inactive", "plan_limit_webhooks"],
@@ -698,7 +878,8 @@ const OPS: Op[] = [
     operationId: "getBulkCsvTemplate",
     tag: "Envío masivo",
     summary: "CSV de ejemplo para una plantilla",
-    description: "Encabezados `subject`, `<Rol>.name`, `<Rol>.email`, `<Rol>.phone`, `<Rol>.channels` por rol y `field.<Etiqueta>` por campo prellenable, con una fila de ejemplo. UTF-8 con BOM.",
+    description:
+      "Encabezados `subject`, `<Rol>.name`, `<Rol>.email`, `<Rol>.phone`, `<Rol>.channels` por rol y `field.<Etiqueta>` por campo prellenable, con una fila de ejemplo. UTF-8 con BOM.",
     response: "csv",
   },
   {
@@ -737,7 +918,14 @@ const OPS: Op[] = [
     description: "Los 100 más recientes. Sin envelopes:view_all, solo los que lanzó la credencial.",
     response: z.object({ items: z.array(BulkSendSchema) }),
   },
-  { method: "get", path: "/v1/bulk-sends/{id}", operationId: "getBulkSend", tag: "Envío masivo", summary: "Estado y contadores", response: BulkSendSchema },
+  {
+    method: "get",
+    path: "/v1/bulk-sends/{id}",
+    operationId: "getBulkSend",
+    tag: "Envío masivo",
+    summary: "Estado y contadores",
+    response: BulkSendSchema,
+  },
   {
     method: "get",
     path: "/v1/bulk-sends/{id}/items",
@@ -766,7 +954,8 @@ const OPS: Op[] = [
     operationId: "cancelBulkSend",
     tag: "Envío masivo",
     summary: "Cancelar",
-    description: "Las filas pendientes pasan a cancelled; los sobres ya enviados no se tocan. Lo hace quien lo lanzó o quien tiene envelopes:manage_all.",
+    description:
+      "Las filas pendientes pasan a cancelled; los sobres ya enviados no se tocan. Lo hace quien lo lanzó o quien tiene envelopes:manage_all.",
     response: BulkSendSchema,
     errors: ["not_cancellable"],
   },
@@ -818,7 +1007,15 @@ const OPS: Op[] = [
     response: WebFormSchema,
     errors: ["invalid_role", "invalid_form", "plan_limit_web_forms"],
   },
-  { method: "delete", path: "/v1/web-forms/{id}", operationId: "deleteWebForm", tag: "Formularios web", summary: "Borrar", response: "none", status: 204 },
+  {
+    method: "delete",
+    path: "/v1/web-forms/{id}",
+    operationId: "deleteWebForm",
+    tag: "Formularios web",
+    summary: "Borrar",
+    response: "none",
+    status: 204,
+  },
   {
     method: "get",
     path: "/v1/web-forms/{id}/envelopes",
@@ -863,7 +1060,9 @@ const OPS: Op[] = [
       captchaSiteKey: z
         .string()
         .nullable()
-        .describe("Clave pública de Cloudflare Turnstile si la plataforma exige el desafío: el envío tiene que traer `captchaToken` (si no, 400 captcha_failed). null: sin desafío."),
+        .describe(
+          "Clave pública de Cloudflare Turnstile si la plataforma exige el desafío: el envío tiene que traer `captchaToken` (si no, 400 captcha_failed). null: sin desafío.",
+        ),
     }),
     auth: "none",
   },
@@ -880,9 +1079,22 @@ const OPS: Op[] = [
       "429 form_recent_submission (el mismo correo desde la misma IP hace poco) o form_rate_limited (topes por formulario y por organización; sin Retry-After).",
     body: SubmitWebFormInput,
     status: 201,
-    response: z.object({ envelopeId: z.string().uuid(), signingPath: z.string().describe("Ruta relativa a la página de firma (con ?embed=1 si corresponde).") }),
+    response: z.object({
+      envelopeId: z.string().uuid(),
+      signingPath: z.string().describe("Ruta relativa a la página de firma (con ?embed=1 si corresponde)."),
+    }),
     auth: "none",
-    errors: ["invalid_form_token", "phone_required", "captcha_failed", "too_fast", "form_inactive", "form_unavailable", "form_misconfigured", "form_recent_submission", "form_rate_limited"],
+    errors: [
+      "invalid_form_token",
+      "phone_required",
+      "captcha_failed",
+      "too_fast",
+      "form_inactive",
+      "form_unavailable",
+      "form_misconfigured",
+      "form_recent_submission",
+      "form_rate_limited",
+    ],
   },
 
   // Cobros
@@ -908,7 +1120,8 @@ const OPS: Op[] = [
     operationId: "putEnvelopePayment",
     tag: "Cobros",
     summary: "Configurar el cobro (borrador)",
-    description: "Uno por sobre (reemplaza el anterior). Paga un firmante: before_sign bloquea su firma hasta pagar; after_sign cobra después de firmar y el sobre se completa recién con el pago. Cambia el `updatedAt` del sobre (devuelto en `envelopeUpdatedAt`).",
+    description:
+      "Uno por sobre (reemplaza el anterior). Paga un firmante: before_sign bloquea su firma hasta pagar; after_sign cobra después de firmar y el sobre se completa recién con el pago. Cambia el `updatedAt` del sobre (devuelto en `envelopeUpdatedAt`).",
     body: EnvelopePaymentInput,
     response: PaymentStateSchema,
     expectedUpdatedAt: true,
@@ -927,8 +1140,22 @@ const OPS: Op[] = [
   },
 
   // Firmante
-  { method: "get", path: "/v1/signing/{token}", operationId: "getSigningSession", tag: "Firmante", summary: "Sesión de firma (token del link)", auth: "token" },
-  { method: "post", path: "/v1/signing/{token}/consent", operationId: "consentSigning", tag: "Firmante", summary: "Aceptar el uso de medios electrónicos", auth: "token" },
+  {
+    method: "get",
+    path: "/v1/signing/{token}",
+    operationId: "getSigningSession",
+    tag: "Firmante",
+    summary: "Sesión de firma (token del link)",
+    auth: "token",
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/consent",
+    operationId: "consentSigning",
+    tag: "Firmante",
+    summary: "Aceptar el uso de medios electrónicos",
+    auth: "token",
+  },
   {
     method: "post",
     path: "/v1/signing/{token}/complete",
@@ -939,9 +1166,35 @@ const OPS: Op[] = [
     auth: "token",
     errors: ["payment_required", "identity_required"],
   },
-  { method: "post", path: "/v1/signing/{token}/decline", operationId: "declineSigning", tag: "Firmante", summary: "Rechazar", body: DeclineInput, auth: "token" },
-  { method: "get", path: "/v1/signing/{token}/signed.pdf", operationId: "downloadSigningSignedPdf", tag: "Firmante", summary: "PDF final (si el sobre está completo)", response: "pdf", auth: "token" },
-  { method: "get", path: "/v1/signing/{token}/copy.pdf", operationId: "downloadSigningCopyPdf", tag: "Firmante", summary: "Copia en curso con lo firmado hasta ahora", description: "Para quien ya firmó (o recibe copia) mientras el sobre sigue en curso: los documentos con los campos completados hasta ahora, marcados como copia en curso, sin certificado ni sello. Cuando el sobre se completa, usar signed.pdf.", response: "pdf", auth: "token" },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/decline",
+    operationId: "declineSigning",
+    tag: "Firmante",
+    summary: "Rechazar",
+    body: DeclineInput,
+    auth: "token",
+  },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/signed.pdf",
+    operationId: "downloadSigningSignedPdf",
+    tag: "Firmante",
+    summary: "PDF final (si el sobre está completo)",
+    response: "pdf",
+    auth: "token",
+  },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/copy.pdf",
+    operationId: "downloadSigningCopyPdf",
+    tag: "Firmante",
+    summary: "Copia en curso con lo firmado hasta ahora",
+    description:
+      "Para quien ya firmó (o recibe copia) mientras el sobre sigue en curso: los documentos con los campos completados hasta ahora, marcados como copia en curso, sin certificado ni sello. Cuando el sobre se completa, usar signed.pdf.",
+    response: "pdf",
+    auth: "token",
+  },
   {
     method: "post",
     path: "/v1/signing/{token}/request-copy",
@@ -957,7 +1210,8 @@ const OPS: Op[] = [
     operationId: "downloadSigningDocument",
     tag: "Firmante",
     summary: "PDF de un documento del sobre (para el visor)",
-    description: "Exige haber validado el código OTP si el firmante lo tiene (401 otp_required) y la verificación de identidad pendiente (403 identity_required). Si el sobre se anuló o venció, 410 envelope_closed.",
+    description:
+      "Exige haber validado el código OTP si el firmante lo tiene (401 otp_required) y la verificación de identidad pendiente (403 identity_required). Si el sobre se anuló o venció, 410 envelope_closed.",
     response: "pdf",
     auth: "token",
     errors: ["identity_required", "envelope_closed"],
@@ -970,7 +1224,12 @@ const OPS: Op[] = [
     summary: "Enviar el código de verificación (OTP) al firmante",
     description:
       "Por correo, SMS o WhatsApp según el método del destinatario. Errores: 409 otp_not_required, otp_no_destination, otp_destination_suppressed; 410 envelope_closed; 429 otp_cooldown (details.resendInSeconds), otp_too_many, otp_daily_limit, otp_destination_limit, otp_tenant_limit; 502 otp_delivery_failed (reintentable en unos segundos).",
-    response: z.object({ sent: z.literal(true), destination: z.string().describe("Destino enmascarado."), resendInSeconds: z.number().int(), expiresAt: iso }),
+    response: z.object({
+      sent: z.literal(true),
+      destination: z.string().describe("Destino enmascarado."),
+      resendInSeconds: z.number().int(),
+      expiresAt: iso,
+    }),
     auth: "token",
     errors: ["envelope_closed"],
   },
@@ -980,7 +1239,8 @@ const OPS: Op[] = [
     operationId: "verifySigningOtp",
     tag: "Firmante",
     summary: "Validar el código de verificación",
-    description: "Errores: 400 invalid_code (details con los intentos que quedan), otp_expired (vencido, inexistente o ya usado: pedir otro); 429 otp_locked (demasiados intentos).",
+    description:
+      "Errores: 400 invalid_code (details con los intentos que quedan), otp_expired (vencido, inexistente o ya usado: pedir otro); 429 otp_locked (demasiados intentos).",
     body: OtpVerifyInput,
     auth: "token",
   },
@@ -990,7 +1250,8 @@ const OPS: Op[] = [
     operationId: "uploadSigningAttachment",
     tag: "Firmante",
     summary: "Subir el archivo de un campo adjunto",
-    description: "PDF, JPG o PNG de hasta 10 MB (400 invalid_attachment si no). Solo el firmante al que le toca y que ya aceptó el uso de medios electrónicos (409 not_signable, not_your_turn, consent_required); 410 envelope_closed. Devuelve el campo.",
+    description:
+      "PDF, JPG o PNG de hasta 10 MB (400 invalid_attachment si no). Solo el firmante al que le toca y que ya aceptó el uso de medios electrónicos (409 not_signable, not_your_turn, consent_required); 410 envelope_closed. Devuelve el campo.",
     multipart: true,
     fileDescription: "PDF, JPG o PNG (máx. 10 MB).",
     auth: "token",
@@ -1043,7 +1304,8 @@ const OPS: Op[] = [
     operationId: "uploadSigningIdentityCapture",
     tag: "Firmante",
     summary: "Subir una foto de la verificación propia (documento o selfie)",
-    description: "JPG o PNG de hasta 8 MB (400 invalid_image). 400 invalid_capture si `kind` no corresponde al nivel pedido; 409 no_active_capture sin verificación iniciada.",
+    description:
+      "JPG o PNG de hasta 8 MB (400 invalid_image). 400 invalid_capture si `kind` no corresponde al nivel pedido; 409 no_active_capture sin verificación iniciada.",
     multipart: true,
     fileDescription: "Foto JPG o PNG (máx. 8 MB).",
     auth: "token",
@@ -1071,7 +1333,8 @@ const OPS: Op[] = [
     operationId: "startSigningPaymentCheckout",
     tag: "Firmante",
     summary: "Iniciar (o retomar) el pago",
-    description: "Devuelve la URL del checkout del proveedor. 409 already_paid, payment_not_available (after_sign antes de firmar o sobre cerrado) o payment_processing; 502 payment_provider_error. 20 pedidos por minuto.",
+    description:
+      "Devuelve la URL del checkout del proveedor. 409 already_paid, payment_not_available (after_sign antes de firmar o sobre cerrado) o payment_processing; 502 payment_provider_error. 20 pedidos por minuto.",
     response: z.object({ url: z.string() }),
     auth: "token",
   },
@@ -1092,11 +1355,27 @@ const OPS: Op[] = [
     tag: "Firma en persona",
     summary: "Abrir la firma en persona en el dispositivo del anfitrión",
     errors: ["not_in_progress"],
-    description: "La abre un usuario de la organización (sesión web; una API key recibe 403). Devuelve la ruta de la página del firmante y deja la sesión del firmante como cookie en ese navegador (1 h).",
+    description:
+      "La abre un usuario de la organización (sesión web; una API key recibe 403). Devuelve la ruta de la página del firmante y deja la sesión del firmante como cookie en ese navegador (1 h).",
     response: z.object({ url: z.string(), expiresAt: iso }),
   },
-  { method: "post", path: "/v1/signing/{token}/in-person/confirm", operationId: "confirmInPersonSigning", tag: "Firma en persona", summary: "El firmante confirma su identidad en el dispositivo", body: InPersonConfirmInput, auth: "token" },
-  { method: "post", path: "/v1/signing/{token}/in-person/end", operationId: "endInPersonSigning", tag: "Firma en persona", summary: "Cerrar la sesión en persona (el dispositivo vuelve al anfitrión)", auth: "token" },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/in-person/confirm",
+    operationId: "confirmInPersonSigning",
+    tag: "Firma en persona",
+    summary: "El firmante confirma su identidad en el dispositivo",
+    body: InPersonConfirmInput,
+    auth: "token",
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/in-person/end",
+    operationId: "endInPersonSigning",
+    tag: "Firma en persona",
+    summary: "Cerrar la sesión en persona (el dispositivo vuelve al anfitrión)",
+    auth: "token",
+  },
 
   // Reportes
   {
@@ -1105,7 +1384,8 @@ const OPS: Op[] = [
     operationId: "getReportsSummary",
     tag: "Reportes",
     summary: "Resumen de actividad",
-    description: "Totales, sobres por mes, remitentes y notificaciones por canal. Los meses de `byMonth` son meses calendario en `tz` (UTC por defecto). Exige envelopes:view_all.",
+    description:
+      "Totales, sobres por mes, remitentes y notificaciones por canal. Los meses de `byMonth` son meses calendario en `tz` (UTC por defecto). Exige envelopes:view_all.",
     query: [Q.from, Q.to, { ...Q.tz, description: `Zona de los meses de byMonth. ${Q.tz.description}` }],
     response: ReportsSummarySchema,
     errors: ["invalid_range"],
@@ -1118,15 +1398,39 @@ const OPS: Op[] = [
     summary: "Exportar sobres a CSV",
     description:
       "UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas). Hasta 50.000 sobres (los más recientes del rango): si hay más, header `X-Truncated: true` y una fila final TRUNCADO. Las fechas van en ISO UTC; con `tz` se agregan columnas *_local en esa zona y el header `X-Time-Zone` dice cuál se usó (UTC si `tz` no se reconoce). La exportación queda en la auditoría (reports.exported). Exige envelopes:view_all.",
-    query: [Q.from, Q.to, Q.sep, { ...Q.tz, description: `Agrega las columnas creado_local, enviado_local, completado_local y vence_local. ${Q.tz.description}` }],
+    query: [
+      Q.from,
+      Q.to,
+      Q.sep,
+      { ...Q.tz, description: `Agrega las columnas creado_local, enviado_local, completado_local y vence_local. ${Q.tz.description}` },
+    ],
     response: "csv",
     errors: ["invalid_range", "invalid_query"],
   },
 
   // Evidencia
-  { method: "get", path: "/v1/settings/evidence", operationId: "getEvidenceSettings", tag: "Evidencia", summary: "Nivel PAdES de la organización y el que se aplica hoy" },
-  { method: "patch", path: "/v1/settings/evidence", operationId: "updateEvidenceSettings", tag: "Evidencia", summary: "Elegir nivel PAdES (auto, B-B, B-T, B-LT, B-LTA)", body: UpdateEvidenceSettingsInput },
-  { method: "get", path: "/v1/certificates", operationId: "listCertificates", tag: "Evidencia", summary: "Listar certificados de la organización (sin material de clave)" },
+  {
+    method: "get",
+    path: "/v1/settings/evidence",
+    operationId: "getEvidenceSettings",
+    tag: "Evidencia",
+    summary: "Nivel PAdES de la organización y el que se aplica hoy",
+  },
+  {
+    method: "patch",
+    path: "/v1/settings/evidence",
+    operationId: "updateEvidenceSettings",
+    tag: "Evidencia",
+    summary: "Elegir nivel PAdES (auto, B-B, B-T, B-LT, B-LTA)",
+    body: UpdateEvidenceSettingsInput,
+  },
+  {
+    method: "get",
+    path: "/v1/certificates",
+    operationId: "listCertificates",
+    tag: "Evidencia",
+    summary: "Listar certificados de la organización (sin material de clave)",
+  },
   {
     method: "post",
     path: "/v1/certificates",
@@ -1148,7 +1452,14 @@ const OPS: Op[] = [
     status: 204,
     errors: ["certificate_in_use"],
   },
-  { method: "get", path: "/v1/envelopes/{id}/seal-options", operationId: "getSealOptions", tag: "Evidencia", summary: "Sello de empresa y nivel de firma del sobre", response: SealOptionsSchema },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}/seal-options",
+    operationId: "getSealOptions",
+    tag: "Evidencia",
+    summary: "Sello de empresa y nivel de firma del sobre",
+    response: SealOptionsSchema,
+  },
   {
     method: "put",
     path: "/v1/envelopes/{id}/seal-options",
@@ -1167,7 +1478,8 @@ const OPS: Op[] = [
     operationId: "validatePdfSignatures",
     tag: "Evidencia",
     summary: "Validar las firmas de un PDF (público)",
-    description: "Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES. Sirve para cualquier PDF firmado. `chain.revocationUnknown` (y `summary.revocationUnknown`) indica que de algún certificado que no es la raíz no se pudo saber si estaba revocado (sin OCSP/CRL en el PDF ni consulta online, o un OCSP que respondió \"unknown\"). `weakAlgorithm` (con `weakAlgorithmReasons`) marca una firma o sello con algoritmos débiles (resumen SHA-1/MD5 en la firma, el sello de tiempo o un certificado que no es la raíz, o clave RSA de menos de 2048 bits): puede verificar, pero no cuenta para `summary.allValid` ni `summary.allTrusted`; `summary.anyWeakAlgorithm` indica si alguna lo tiene. `warnings` (solo si hay) lista lo que no se pudo comprobar sin invalidar la firma (p. ej. un signingCertificateV2 con un resumen no soportado, como SHA-224 o SHA-3).",
+    description:
+      'Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES. Sirve para cualquier PDF firmado. `chain.revocationUnknown` (y `summary.revocationUnknown`) indica que de algún certificado que no es la raíz no se pudo saber si estaba revocado (sin OCSP/CRL en el PDF ni consulta online, o un OCSP que respondió "unknown"). `weakAlgorithm` (con `weakAlgorithmReasons`) marca una firma o sello con algoritmos débiles (resumen SHA-1/MD5 en la firma, el sello de tiempo o un certificado que no es la raíz, o clave RSA de menos de 2048 bits): puede verificar, pero no cuenta para `summary.allValid` ni `summary.allTrusted`; `summary.anyWeakAlgorithm` indica si alguna lo tiene. `warnings` (solo si hay) lista lo que no se pudo comprobar sin invalidar la firma (p. ej. un signingCertificateV2 con un resumen no soportado, como SHA-224 o SHA-3).',
     multipart: true,
     fileDescription: "PDF firmado.",
     auth: "none",
@@ -1186,8 +1498,22 @@ const OPS: Op[] = [
     response: VerifyResponseSchema,
     auth: "none",
   },
-  { method: "get", path: "/v1/signature-providers", operationId: "listSignatureProviders", tag: "Evidencia", summary: "Conectores de firma (plataforma, CSC v2, CA de Calasign)" },
-  { method: "post", path: "/v1/signature-providers/{id}/test", operationId: "testSignatureProvider", tag: "Evidencia", summary: "Probar un conector CSC (firma un hash de prueba; devuelve si funcionó y el titular, sin credenciales; hasta 5 por hora por organización, una a la vez)", errors: ["provider_test_limit", "provider_test_in_progress"] },
+  {
+    method: "get",
+    path: "/v1/signature-providers",
+    operationId: "listSignatureProviders",
+    tag: "Evidencia",
+    summary: "Conectores de firma (plataforma, CSC v2, CA de Calasign)",
+  },
+  {
+    method: "post",
+    path: "/v1/signature-providers/{id}/test",
+    operationId: "testSignatureProvider",
+    tag: "Evidencia",
+    summary:
+      "Probar un conector CSC (firma un hash de prueba; devuelve si funcionó y el titular, sin credenciales; hasta 5 por hora por organización, una a la vez)",
+    errors: ["provider_test_limit", "provider_test_in_progress"],
+  },
 
   // Firma XML
   {
@@ -1201,10 +1527,24 @@ const OPS: Op[] = [
     body: XmlSignInput,
     errors: ["xml_sign_failed"],
   },
-  { method: "post", path: "/v1/xml/verify", operationId: "verifyXml", tag: "Firma XML", summary: "Verificar una firma XML (digests, SignatureValue, SigningCertificate)", body: XmlVerifyInput },
+  {
+    method: "post",
+    path: "/v1/xml/verify",
+    operationId: "verifyXml",
+    tag: "Firma XML",
+    summary: "Verificar una firma XML (digests, SignatureValue, SigningCertificate)",
+    body: XmlVerifyInput,
+  },
 
   // Marca
-  { method: "get", path: "/v1/settings/branding", operationId: "getBranding", tag: "Marca", summary: "Marca de la organización", response: BrandingSchema },
+  {
+    method: "get",
+    path: "/v1/settings/branding",
+    operationId: "getBranding",
+    tag: "Marca",
+    summary: "Marca de la organización",
+    response: BrandingSchema,
+  },
   {
     method: "patch",
     path: "/v1/settings/branding",
@@ -1222,23 +1562,39 @@ const OPS: Op[] = [
     operationId: "uploadBrandingLogo",
     tag: "Marca",
     summary: "Subir el logo",
-    description: "multipart/form-data, campo `file`: PNG, JPG o SVG de hasta 200 KB (el tipo se detecta por el contenido). Un SVG con scripts o referencias externas se rechaza. El certificado de finalización usa el logo solo si es PNG o JPG.",
+    description:
+      "multipart/form-data, campo `file`: PNG, JPG o SVG de hasta 200 KB (el tipo se detecta por el contenido). Un SVG con scripts o referencias externas se rechaza. El certificado de finalización usa el logo solo si es PNG o JPG.",
     multipart: true,
     fileDescription: "PNG, JPG o SVG (máx. 200 KB).",
     response: BrandingSchema,
     errors: ["invalid_logo", "plan_limit_branding"],
   },
-  { method: "delete", path: "/v1/settings/branding/logo", operationId: "deleteBrandingLogo", tag: "Marca", summary: "Quitar el logo", response: BrandingSchema },
+  {
+    method: "delete",
+    path: "/v1/settings/branding/logo",
+    operationId: "deleteBrandingLogo",
+    tag: "Marca",
+    summary: "Quitar el logo",
+    response: BrandingSchema,
+  },
 
   // Verificación de identidad
-  { method: "get", path: "/v1/settings/identity", operationId: "getIdentitySettings", tag: "Verificación de identidad", summary: "Configuración de verificación de identidad", response: IdentitySettingsSchema },
+  {
+    method: "get",
+    path: "/v1/settings/identity",
+    operationId: "getIdentitySettings",
+    tag: "Verificación de identidad",
+    summary: "Configuración de verificación de identidad",
+    response: IdentitySettingsSchema,
+  },
   {
     method: "patch",
     path: "/v1/settings/identity",
     operationId: "updateIdentitySettings",
     tag: "Verificación de identidad",
     summary: "Cambiar proveedor y nivel por defecto, umbral de nombre e intentos",
-    description: "`mock` configura el proveedor de prueba, que en producción no se ofrece (providers[].configured = false). Para exigir la verificación a un firmante, usar `idVerification` en PUT /v1/envelopes/{id}/recipients.",
+    description:
+      "`mock` configura el proveedor de prueba, que en producción no se ofrece (providers[].configured = false). Para exigir la verificación a un firmante, usar `idVerification` en PUT /v1/envelopes/{id}/recipients.",
     body: IdentitySettingsInput,
     response: IdentitySettingsSchema,
     errors: ["identity_provider_unavailable"],
@@ -1272,7 +1628,8 @@ const OPS: Op[] = [
     operationId: "listAuditLog",
     tag: "Auditoría",
     summary: "Registro de auditoría de la cuenta",
-    description: "Acciones administrativas (API keys, webhooks, miembros, roles, ajustes, ingresos…), de la más nueva a la más vieja. Exige audit:view.",
+    description:
+      "Acciones administrativas (API keys, webhooks, miembros, roles, ajustes, ingresos…), de la más nueva a la más vieja. Exige audit:view.",
     query: [...AUDIT_QUERY, Q.cursor, Q.limit(50, 200)],
     response: z.object({ items: z.array(AuditLogEntrySchema), nextCursor: z.string().nullable() }),
     errors: ["invalid_query", "invalid_cursor"],
@@ -1289,7 +1646,12 @@ const OPS: Op[] = [
       ...AUDIT_QUERY,
       Q.sep,
       { ...Q.tz, description: `Agrega la columna occurred_at_local. ${Q.tz.description}` },
-      { name: "beforeId", description: "Continuar un export truncado: solo las filas anteriores a la fila con este id (el de `X-Next-Before-Id`), sin saltear ni repetir.", schema: { type: "string" } },
+      {
+        name: "beforeId",
+        description:
+          "Continuar un export truncado: solo las filas anteriores a la fila con este id (el de `X-Next-Before-Id`), sin saltear ni repetir.",
+        schema: { type: "string" },
+      },
     ],
     response: "csv",
     errors: ["invalid_query"],
@@ -1304,7 +1666,14 @@ const OPS: Op[] = [
     summary: "Rol, permisos y grupos de la credencial",
     response: AccessSchema,
   },
-  { method: "get", path: "/v1/members", operationId: "listMembers", tag: "Equipo", summary: "Miembros de la organización", response: z.object({ items: z.array(MemberSchema) }) },
+  {
+    method: "get",
+    path: "/v1/members",
+    operationId: "listMembers",
+    tag: "Equipo",
+    summary: "Miembros de la organización",
+    response: z.object({ items: z.array(MemberSchema) }),
+  },
   {
     method: "patch",
     path: "/v1/members/{userId}",
@@ -1347,7 +1716,15 @@ const OPS: Op[] = [
     response: z.object({ invitation: InvitationSchema, acceptUrl: z.string().describe("Link de aceptación; se devuelve solo al crearla.") }),
     errors: ["invalid_role", "already_member", "plan_limit_users"],
   },
-  { method: "delete", path: "/v1/invitations/{id}", operationId: "revokeInvitation", tag: "Equipo", summary: "Revocar una invitación pendiente", response: "none", status: 204 },
+  {
+    method: "delete",
+    path: "/v1/invitations/{id}",
+    operationId: "revokeInvitation",
+    tag: "Equipo",
+    summary: "Revocar una invitación pendiente",
+    response: "none",
+    status: 204,
+  },
   {
     method: "get",
     path: "/v1/roles",
@@ -1359,25 +1736,78 @@ const OPS: Op[] = [
       builtin: z.array(z.object({ role: z.enum(["owner", "admin", "member"]), name: z.string(), permissions: z.array(z.string()) })),
     }),
   },
-  { method: "post", path: "/v1/roles", operationId: "createRole", tag: "Equipo", summary: "Crear rol personalizado", body: CreateRoleInput, status: 201, response: CustomRoleSchema, errors: ["role_conflict"] },
-  { method: "patch", path: "/v1/roles/{id}", operationId: "updateRole", tag: "Equipo", summary: "Modificar rol personalizado", body: UpdateRoleInput, response: CustomRoleSchema, errors: ["role_conflict"] },
-  { method: "delete", path: "/v1/roles/{id}", operationId: "deleteRole", tag: "Equipo", summary: "Borrar rol personalizado (sin asignar)", response: "none", status: 204, errors: ["role_conflict"] },
-  { method: "get", path: "/v1/groups", operationId: "listGroups", tag: "Equipo", summary: "Grupos", response: z.object({ items: z.array(GroupSchema) }) },
+  {
+    method: "post",
+    path: "/v1/roles",
+    operationId: "createRole",
+    tag: "Equipo",
+    summary: "Crear rol personalizado",
+    body: CreateRoleInput,
+    status: 201,
+    response: CustomRoleSchema,
+    errors: ["role_conflict"],
+  },
+  {
+    method: "patch",
+    path: "/v1/roles/{id}",
+    operationId: "updateRole",
+    tag: "Equipo",
+    summary: "Modificar rol personalizado",
+    body: UpdateRoleInput,
+    response: CustomRoleSchema,
+    errors: ["role_conflict"],
+  },
+  {
+    method: "delete",
+    path: "/v1/roles/{id}",
+    operationId: "deleteRole",
+    tag: "Equipo",
+    summary: "Borrar rol personalizado (sin asignar)",
+    response: "none",
+    status: 204,
+    errors: ["role_conflict"],
+  },
+  {
+    method: "get",
+    path: "/v1/groups",
+    operationId: "listGroups",
+    tag: "Equipo",
+    summary: "Grupos",
+    response: z.object({ items: z.array(GroupSchema) }),
+  },
   { method: "get", path: "/v1/groups/{id}", operationId: "getGroup", tag: "Equipo", summary: "Detalle del grupo", response: GroupSchema },
-  { method: "post", path: "/v1/groups", operationId: "createGroup", tag: "Equipo", summary: "Crear grupo", body: CreateGroupInput, status: 201, response: GroupSchema, errors: ["invalid_member", "role_conflict"] },
+  {
+    method: "post",
+    path: "/v1/groups",
+    operationId: "createGroup",
+    tag: "Equipo",
+    summary: "Crear grupo",
+    body: CreateGroupInput,
+    status: 201,
+    response: GroupSchema,
+    errors: ["invalid_member", "role_conflict"],
+  },
   {
     method: "patch",
     path: "/v1/groups/{id}",
     operationId: "updateGroup",
     tag: "Equipo",
     summary: "Modificar grupo",
-    description: "`memberIds` reemplaza la lista. Sumar personas les da acceso a lo compartido con el grupo: lo hace un propietario, un miembro del grupo o quien tiene envelopes:view_all y templates:manage.",
+    description:
+      "`memberIds` reemplaza la lista. Sumar personas les da acceso a lo compartido con el grupo: lo hace un propietario, un miembro del grupo o quien tiene envelopes:view_all y templates:manage.",
     body: UpdateGroupInput,
     response: GroupSchema,
     errors: ["invalid_member", "role_conflict"],
   },
   { method: "delete", path: "/v1/groups/{id}", operationId: "deleteGroup", tag: "Equipo", summary: "Borrar grupo", response: "none", status: 204 },
-  { method: "get", path: "/v1/envelopes/{id}/shares", operationId: "getEnvelopeShares", tag: "Equipo", summary: "Grupos con los que se comparte el sobre", response: SharesSchema },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}/shares",
+    operationId: "getEnvelopeShares",
+    tag: "Equipo",
+    summary: "Grupos con los que se comparte el sobre",
+    response: SharesSchema,
+  },
   {
     method: "put",
     path: "/v1/envelopes/{id}/shares",
@@ -1416,7 +1846,11 @@ const OPS: Op[] = [
     operationId: "listApiKeyRoles",
     tag: "Equipo",
     summary: "Rol de cada API key",
-    response: z.object({ items: z.array(z.object({ id: z.string().uuid(), role: z.enum(["admin", "member", "custom"]), roleId: z.string().uuid().nullable(), roleName: z.string() })) }),
+    response: z.object({
+      items: z.array(
+        z.object({ id: z.string().uuid(), role: z.enum(["admin", "member", "custom"]), roleId: z.string().uuid().nullable(), roleName: z.string() }),
+      ),
+    }),
   },
   {
     method: "patch",
@@ -1425,7 +1859,12 @@ const OPS: Op[] = [
     tag: "Equipo",
     summary: "Cambiar el rol de una API key",
     body: RoleAssignment,
-    response: z.object({ id: z.string().uuid(), role: z.enum(["admin", "member", "custom"]), roleId: z.string().uuid().nullable(), roleName: z.string() }),
+    response: z.object({
+      id: z.string().uuid(),
+      role: z.enum(["admin", "member", "custom"]),
+      roleId: z.string().uuid().nullable(),
+      roleName: z.string(),
+    }),
     errors: ["invalid_role"],
   },
   {
@@ -1674,7 +2113,10 @@ export function buildOpenApi() {
     seenIds.add(operationId);
     usedTags.add(op.tag);
 
-    const scope = op.auth === "none" || op.auth === "token" || op.auth === "client" ? null : requiredScope(op.path.replace(/\{(\w+)\}/g, ":$1"), op.method.toUpperCase());
+    const scope =
+      op.auth === "none" || op.auth === "token" || op.auth === "client"
+        ? null
+        : requiredScope(op.path.replace(/\{(\w+)\}/g, ":$1"), op.method.toUpperCase());
     const params: unknown[] = [...pathParams(op.path), ...queryParams(op.query)];
     if (op.idempotent) params.push({ $ref: "#/components/parameters/IdempotencyKey" });
     if (op.expectedUpdatedAt) params.push({ $ref: "#/components/parameters/ExpectedUpdatedAt" });
@@ -1713,7 +2155,7 @@ export function buildOpenApi() {
         "Reintentables con espera creciente: 429 rate_limited (según Retry-After), 502 tsa_unavailable y ai_unavailable, 503 storage_unavailable, pdf_reader_busy, pdf_busy (con Retry-After) y ai_rate_limited, 504 ai_timeout; los 429 con código propio (reminded_recently, form_rate_limited…) no traen Retry-After y no se reintentan en un loop. " +
         "Nombres: cuerpos y respuestas JSON en camelCase. Los parámetros de query también, salvo los filtros de búsqueda de GET /v1/envelopes (created_from, sent_to, template_id, created_via…) y de GET /v1/events (envelope_id, max_seconds), en snake_case, y los de /oauth/* (RFC 6749). " +
         "Límite general: 600 pedidos por minuto por credencial (API key o token OAuth del header Authorization: Bearer) y, sin credencial, por IP (algunas rutas tienen uno menor, que con credencial cuenta por organización: todas las API keys y tokens de la organización comparten ese cupo); cada servidor de la API lleva su propia cuenta; cada respuesta trae X-RateLimit-Limit, X-RateLimit-Remaining y X-RateLimit-Reset, y un 429 trae Retry-After. " +
-        "Webhooks firmados con `CalaSign-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>` (ver la sección webhooks). " +
+        'Webhooks firmados con `CalaSign-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>` (ver la sección webhooks). ' +
         `Eventos: ${WEBHOOK_EVENT_TYPES.join(", ")}.`,
     },
     servers: [{ url: config.appUrl }],
@@ -1749,11 +2191,22 @@ export function buildOpenApi() {
         apiKey: {
           type: "http",
           scheme: "bearer",
-          description: "API key de la organización: `cs_live_…` en producción, `cs_test_…` en los demás entornos. Se crea con POST /v1/api-keys (requiere un plan con acceso por API).",
+          description:
+            "API key de la organización: `cs_live_…` en producción, `cs_test_…` en los demás entornos. Se crea con POST /v1/api-keys (requiere un plan con acceso por API).",
         },
-        session: { type: "apiKey", in: "cookie", name: "__Host-cs_session", description: "Sesión de la web (POST /v1/auth/login). Con HTTPS la cookie es __Host-cs_session; en local sin HTTPS, cs_session. No usar en integraciones." },
+        session: {
+          type: "apiKey",
+          in: "cookie",
+          name: "__Host-cs_session",
+          description:
+            "Sesión de la web (POST /v1/auth/login). Con HTTPS la cookie es __Host-cs_session; en local sin HTTPS, cs_session. No usar en integraciones.",
+        },
         oauth2: OAUTH2_SECURITY_SCHEME,
-        clientBasic: { type: "http", scheme: "basic", description: "client_id:client_secret de la app OAuth (o client_id/client_secret en el cuerpo)." },
+        clientBasic: {
+          type: "http",
+          scheme: "basic",
+          description: "client_id:client_secret de la app OAuth (o client_id/client_secret en el cuerpo).",
+        },
       },
     },
   };

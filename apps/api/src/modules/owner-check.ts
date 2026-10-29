@@ -23,9 +23,15 @@ export async function ownerProblem(
     // Configurado con una API key y el plan ya no incluye la API: como el envío masivo y los formularios, deja de
     // crear sobres en nombre de esa key (webhooks de CRM y conectores, links públicos de workflows).
     const { plan } = await tenantPlan(db, owner.tenantId);
-    if (!plan.features.includes("api")) return { code: "plan_api", message: "El plan de la organización ya no incluye la API con la que se configuró" };
+    if (!plan.features.includes("api"))
+      return { code: "plan_api", message: "El plan de la organización ya no incluye la API con la que se configuró" };
   }
-  const a = { tenantId: owner.tenantId, userId: owner.apiKeyId ? null : owner.userId, apiKeyId: owner.apiKeyId, actor: { type: "system", label: "dueño" } } as AuthContext;
+  const a = {
+    tenantId: owner.tenantId,
+    userId: owner.apiKeyId ? null : owner.userId,
+    apiKeyId: owner.apiKeyId,
+    actor: { type: "system", label: "dueño" },
+  } as AuthContext;
   try {
     a.access = await loadAccess(db, a);
   } catch {

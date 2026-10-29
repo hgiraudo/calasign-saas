@@ -131,13 +131,26 @@ export function XmlSignPage() {
           )}
           <label className="field">
             <span>{ev("xml.input")}</span>
-            <textarea rows={10} className="mono small" value={xml} onChange={(e) => setXml(e.target.value)} required spellCheck={false} data-testid="xml-input" />
+            <textarea
+              rows={10}
+              className="mono small"
+              value={xml}
+              onChange={(e) => setXml(e.target.value)}
+              required
+              spellCheck={false}
+              data-testid="xml-input"
+            />
           </label>
           <div className="row-wrap">
             <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
               {ev("xml.loadFile")}
             </button>
-            <input ref={fileRef} type="file" accept=".xml,application/xml,text/xml" className="sr-only" onChange={(e) => {
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xml,application/xml,text/xml"
+              className="sr-only"
+              onChange={(e) => {
                 const f = e.target.files?.[0];
                 // Vaciado: volver a elegir el mismo archivo (después de editar el texto) no disparaba onChange.
                 e.target.value = "";

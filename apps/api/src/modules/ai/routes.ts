@@ -28,7 +28,15 @@ import { identityBlocking } from "../identity/kyc";
 import { iso, uuidv7 } from "../../lib/util";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { recipientActor, resolveToken } from "../signing";
-import { heuristicFieldSuggestions, locateQuote, pairPlaybookFindings, placeSuggestion, resolveDocLineId, type DocText, type RawSuggestion } from "./heuristics";
+import {
+  heuristicFieldSuggestions,
+  locateQuote,
+  pairPlaybookFindings,
+  placeSuggestion,
+  resolveDocLineId,
+  type DocText,
+  type RawSuggestion,
+} from "./heuristics";
 import { aiProviderStatus, getAiProvider, type RawCitation } from "./provider";
 import { assertAiBudgetWithinPlan, planById } from "../billing/plans";
 import {
@@ -71,7 +79,12 @@ function citations(docs: DocText[], raw: RawCitation[]): AiCitation[] {
     .slice(0, 8)
     .map((c) => {
       const loc = locateQuote(docs, c.quote, c.page);
-      return { page: loc.verified ? loc.page : (c.page ?? loc.page), documentId: loc.documentId, quote: c.quote.trim().slice(0, 500), verified: loc.verified };
+      return {
+        page: loc.verified ? loc.page : (c.page ?? loc.page),
+        documentId: loc.documentId,
+        quote: c.quote.trim().slice(0, 500),
+        verified: loc.verified,
+      };
     });
 }
 
@@ -106,7 +119,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.patch("/v1/settings/ai", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const input = UpdateAiSettingsInput.parse(req.body);
-    const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version, ai_renewal_alert_days, billing_plan FROM tenants WHERE id = $1`, [a.tenantId]);
+    const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version, ai_renewal_alert_days, billing_plan FROM tenants WHERE id = $1`, [
+      a.tenantId,
+    ]);
     const prevDays = Number(t?.ai_renewal_alert_days ?? 30);
     const before = await s.db.one<any>(`SELECT ai_enabled, ai_auto_extract, ai_monthly_token_budget FROM tenants WHERE id = $1`, [a.tenantId]);
     // Valores anteriores para la auditoría (settings.changed registra también los nuevos).
@@ -231,14 +246,25 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       const text = previewText(docs, "detect_fields");
       sent = sentSummary(docs, text);
       usage = usageInfo(r.usage);
-      await recordAiUse(s.db, { reservationId: rid, tenantId: a.tenantId, envelopeId: e.id, feature: "detect_fields", usage: r.usage, actor: a.actor, data: { suggestions: ai.length } });
+      await recordAiUse(s.db, {
+        reservationId: rid,
+        tenantId: a.tenantId,
+        envelopeId: e.id,
+        feature: "detect_fields",
+        usage: r.usage,
+        actor: a.actor,
+        data: { suggestions: ai.length },
+      });
     }
 
     const merged = new Map<string, RawSuggestion>();
     for (const x of [...heur, ...ai]) {
       const k = `${x.documentId}|${x.lineId}|${x.type}`;
       const prev = merged.get(k);
-      merged.set(k, prev ? { ...prev, roleHint: prev.roleHint ?? x.roleHint, confidence: Math.max(prev.confidence, x.confidence), source: prev.source } : x);
+      merged.set(
+        k,
+        prev ? { ...prev, roleHint: prev.roleHint ?? x.roleHint, confidence: Math.max(prev.confidence, x.confidence), source: prev.source } : x,
+      );
     }
     const roles: string[] = [];
     const suggestions: FieldSuggestion[] = [];
@@ -287,7 +313,13 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       // Con el sobre ya enviado, el firmante ve (o deja de ver) la asistencia de IA a mitad de camino: queda en la
       // evidencia, como los demás cambios del remitente. En borrador no hace falta (el envío fija lo vigente).
       if (cur.status !== "draft" && Boolean(cur.ai_signer_assist) !== Boolean(input.signerAssist))
-        await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.ai_settings_updated", actor: a.actor, data: { signerAssist: input.signerAssist } });
+        await appendEvent(t, {
+          tenantId: a.tenantId,
+          envelopeId: e.id,
+          type: "envelope.ai_settings_updated",
+          actor: a.actor,
+          data: { signerAssist: input.signerAssist },
+        });
       return metadataViewOf(row);
     });
   });
@@ -330,9 +362,13 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       actor: a.actor,
       ...(outcome === "saved" ? {} : { data: { discarded: outcome } }),
     });
-    if (outcome === "documents_changed") throw conflict("documents_changed", "Los documentos del sobre cambiaron durante la extracción: volvé a extraer los metadatos");
+    if (outcome === "documents_changed")
+      throw conflict("documents_changed", "Los documentos del sobre cambiaron durante la extracción: volvé a extraer los metadatos");
     if (outcome === "metadata_changed") {
-      throw conflict("metadata_changed", "Los metadatos del contrato cambiaron mientras se extraían (alguien los editó o los volvió a extraer): revisalos y, si hace falta, volvé a extraerlos");
+      throw conflict(
+        "metadata_changed",
+        "Los metadatos del contrato cambiaron mientras se extraían (alguien los editó o los volvió a extraer): revisalos y, si hace falta, volvé a extraerlos",
+      );
     }
     return { ...(await metadataView(s, e.id)), usage: usageInfo(r.usage) };
   });
@@ -345,7 +381,13 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     await saveMetadata(s.db, e.id, a.tenantId, input.metadata, {}, "manual");
     await s.db.tx(async (t) => {
       await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "ai.metadata_edited", actor: a.actor, data: { fields: Object.keys(input.metadata) } });
+      await appendEvent(t, {
+        tenantId: a.tenantId,
+        envelopeId: e.id,
+        type: "ai.metadata_edited",
+        actor: a.actor,
+        data: { fields: Object.keys(input.metadata) },
+      });
     });
     return metadataView(s, e.id);
   });
@@ -384,7 +426,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         status: f.status,
         severity: f.severity,
         explanation: f.explanation,
-        citation: f.quote ? citations(docs, [{ page: f.page, quote: f.quote }])[0] ?? null : null,
+        citation: f.quote ? (citations(docs, [{ page: f.page, quote: f.quote }])[0] ?? null) : null,
       })),
       reviewedAt: new Date().toISOString(),
       sent: sentSummary(docs, text),
@@ -418,7 +460,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
 
   const signerGate = async (req: FastifyRequest & { params: { token: string } }) => {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
-    const t = await s.db.one<any>(`SELECT ai_enabled, ai_notice_version, ai_notice_accepted_at, billing_plan FROM tenants WHERE id = $1`, [e.tenant_id]);
+    const t = await s.db.one<any>(`SELECT ai_enabled, ai_notice_version, ai_notice_accepted_at, billing_plan FROM tenants WHERE id = $1`, [
+      e.tenant_id,
+    ]);
     // Aviso vigente aceptado, proveedor configurado y un plan que incluya IA: si no, la asistencia no se ofrece.
     const aiUsable =
       Boolean(t?.ai_enabled && t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION) &&
@@ -454,7 +498,13 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
         // Sobre anulado, rechazado o vencido mientras tanto: no se suma el evento a su evidencia.
         if (["voided", "declined", "expired"].includes(cur?.status)) return;
-        await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.summary", actor: recipientActor(req, r), data: { feature: "summary", cached: true, model: out.usage.model } });
+        await appendEvent(t, {
+          tenantId: e.tenant_id,
+          envelopeId: e.id,
+          type: "ai.summary",
+          actor: recipientActor(req, r),
+          data: { feature: "summary", cached: true, model: out.usage.model },
+        });
       });
     } else {
       const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs), signer: { envelopeId: e.id, recipientId: r.id } });
@@ -477,7 +527,17 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       for (const [k, v] of summaryCache) if (now - v.at >= 3600_000) summaryCache.delete(k);
       while (summaryCache.size >= 500) summaryCache.delete(summaryCache.keys().next().value!);
       summaryCache.set(key, { at: now, value: out });
-      await recordAiUse(s.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor, recipientId: r.id, data: { locale }, skipEventIfClosed: true });
+      await recordAiUse(s.db, {
+        reservationId: rid,
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        feature: "summary",
+        usage: res.usage,
+        actor,
+        recipientId: r.id,
+        data: { locale },
+        skipEventIfClosed: true,
+      });
     }
     return out;
   });

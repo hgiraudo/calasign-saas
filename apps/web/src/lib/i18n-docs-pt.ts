@@ -50,7 +50,8 @@ export const docsPt: Record<DocsKey, string> = {
     "A API REST da CalaSign permite enviar documentos para assinatura, acompanhar cada assinatura em tempo real e baixar o PDF selado com sua evidência, a partir do seu próprio sistema. É a mesma API usada pela web da CalaSign: tudo o que dá para fazer no app pode ser automatizado.",
   "intro.build.h": "O que você pode construir",
   "intro.build.send.t": "Enviar para assinatura a partir do seu sistema",
-  "intro.build.send.d": "Crie um envelope com um ou mais PDFs, adicione signatários por e-mail, WhatsApp ou Telegram e envie com poucas requisições HTTP.",
+  "intro.build.send.d":
+    "Crie um envelope com um ou mais PDFs, adicione signatários por e-mail, WhatsApp ou Telegram e envie com poucas requisições HTTP.",
   "intro.build.embed.t": "Assinatura dentro do seu app",
   "intro.build.embed.d": "Mostre a cerimônia de assinatura em um iframe da sua aplicação, sem que o signatário saia do seu produto.",
   "intro.build.webhooks.t": "Reagir a cada evento",
@@ -70,7 +71,7 @@ export const docsPt: Record<DocsKey, string> = {
   "intro.base.mcp": "Servidor MCP (agentes de IA)",
   "intro.base.oauth": "OAuth 2.0",
   "intro.base.conventions":
-    "- Corpos em JSON (UTF-8) com `Content-Type: application/json`; os PDFs são enviados como `multipart/form-data`.\n- Identificadores UUID, datas ISO 8601 em UTC (`2026-03-01T14:30:00.000Z`).\n- Autenticação com `Authorization: Bearer <API key ou access token>` (veja [Autenticação](/developers/authentication)).\n- Erros sempre com o mesmo formato: `{ \"error\": { \"code\", \"message\", \"details\" } }` (veja [Erros](/developers/errors)).\n\nUma primeira requisição para testar sua credencial: retorna a sua organização.",
+    '- Corpos em JSON (UTF-8) com `Content-Type: application/json`; os PDFs são enviados como `multipart/form-data`.\n- Identificadores UUID, datas ISO 8601 em UTC (`2026-03-01T14:30:00.000Z`).\n- Autenticação com `Authorization: Bearer <API key ou access token>` (veja [Autenticação](/developers/authentication)).\n- Erros sempre com o mesmo formato: `{ "error": { "code", "message", "details" } }` (veja [Erros](/developers/errors)).\n\nUma primeira requisição para testar sua credencial: retorna a sua organização.',
   "intro.env.h": "Ambientes e testes",
   "intro.env.p":
     "**{{BASE}}** é o ambiente de desenvolvimento e testes. Crie uma conta grátis, gere uma API key e teste sem custo: as organizações novas deste ambiente têm todas as funções habilitadas (API, webhooks, envios em massa, pagamentos simulados, verificação de identidade simulada).\n\nAs API keys deste ambiente começam com `cs_test_`; as de produção, com `cs_live_`. Cada ambiente tem suas próprias contas, credenciais e dados: nada é compartilhado entre eles.",
@@ -158,7 +159,7 @@ export const docsPt: Record<DocsKey, string> = {
   "auth.cmp.code": "Um app que age em nome de usuários de outras organizações (marketplace, agentes de IA).",
   "auth.keys.h": "API keys",
   "auth.keys.p":
-    "São criadas em **Configurações → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) ou com `POST /v1/api-keys` a partir de uma sessão. O segredo completo é exibido **uma única vez**; depois só aparecem o prefixo (os primeiros 12 caracteres) e a data do último uso.\n\n- Formato: `cs_test_…` no ambiente de testes e `cs_live_…` em produção.\n- Cada key pertence à organização e tem um **papel** (`admin`, `member` ou um papel personalizado) que define o que ela pode fazer; ninguém pode criar uma key com mais permissões do que as próprias. Para criar webhooks ou integrações (gatilhos, armazenamento, CRM) a key também precisa de `envelopes:view_all`, como o papel `admin`.\n- Os envelopes criados com uma key ficam registrados como criados pela API (`createdVia: \"api\"`) e a evidência nomeia a key como ator.",
+    'São criadas em **Configurações → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) ou com `POST /v1/api-keys` a partir de uma sessão. O segredo completo é exibido **uma única vez**; depois só aparecem o prefixo (os primeiros 12 caracteres) e a data do último uso.\n\n- Formato: `cs_test_…` no ambiente de testes e `cs_live_…` em produção.\n- Cada key pertence à organização e tem um **papel** (`admin`, `member` ou um papel personalizado) que define o que ela pode fazer; ninguém pode criar uma key com mais permissões do que as próprias. Para criar webhooks ou integrações (gatilhos, armazenamento, CRM) a key também precisa de `envelopes:view_all`, como o papel `admin`.\n- Os envelopes criados com uma key ficam registrados como criados pela API (`createdVia: "api"`) e a evidência nomeia a key como ator.',
   "auth.keys.rotate.h": "Rotação e revogação",
   "auth.keys.rotate.p":
     "As keys não expiram. Para rotacionar uma: crie uma nova, implante-a no seu sistema, confira na lista que a antiga deixou de ser usada (*último uso*) e revogue-a com **Revogar** ou `DELETE /v1/api-keys/{id}`. A revogação é imediata: a próxima requisição com essa key recebe `401 unauthorized`.",
@@ -166,12 +167,14 @@ export const docsPt: Record<DocsKey, string> = {
     "Uma API key dá acesso a toda a organização conforme o seu papel. Nunca a coloque em um app móvel, em JavaScript do navegador nem em um repositório. Se uma key vazar, revogue-a imediatamente.",
   "auth.oauth.h": "OAuth 2.0",
   "auth.oauth.p":
-    "Registre uma aplicação em **Configurações → Apps OAuth** ([`/app/settings/oauth-apps`](/app/settings/oauth-apps)) ou com `POST /v1/oauth/apps`. Você recebe um `client_id` (`csapp_…`) e, se o app for **confidencial**, um `client_secret` (`cssec_…`, exibido uma vez; pode ser rotacionado). Um app **público** (desktop, móvel, SPA) não tem segredo e só pode usar authorization code com PKCE.\n\nOs tokens são opacos: access token `csat_…` válido por **1 hora**, refresh token `csrt_…` válido por **30 dias** e código de autorização válido por **10 minutos**. Os erros de `/oauth/*` seguem a RFC 6749: `{ \"error\": \"invalid_grant\", \"error_description\": \"…\" }`.",
+    'Registre uma aplicação em **Configurações → Apps OAuth** ([`/app/settings/oauth-apps`](/app/settings/oauth-apps)) ou com `POST /v1/oauth/apps`. Você recebe um `client_id` (`csapp_…`) e, se o app for **confidencial**, um `client_secret` (`cssec_…`, exibido uma vez; pode ser rotacionado). Um app **público** (desktop, móvel, SPA) não tem segredo e só pode usar authorization code com PKCE.\n\nOs tokens são opacos: access token `csat_…` válido por **1 hora**, refresh token `csrt_…` válido por **30 dias** e código de autorização válido por **10 minutos**. Os erros de `/oauth/*` seguem a RFC 6749: `{ "error": "invalid_grant", "error_description": "…" }`.',
   "auth.ep.endpoint": "Endpoint",
   "auth.ep.use": "Para quê",
   "auth.ep.authorize": "Tela de consentimento no navegador (authorization code + PKCE).",
-  "auth.ep.token": "Emitir tokens: `authorization_code`, `client_credentials` e `refresh_token`. Corpo `application/x-www-form-urlencoded` (também aceita JSON).",
-  "auth.ep.revoke": "Revogar um token (RFC 7009). Revogar um refresh token revoga toda a autorização. Um token desconhecido ou de outro app também responde 200.",
+  "auth.ep.token":
+    "Emitir tokens: `authorization_code`, `client_credentials` e `refresh_token`. Corpo `application/x-www-form-urlencoded` (também aceita JSON).",
+  "auth.ep.revoke":
+    "Revogar um token (RFC 7009). Revogar um refresh token revoga toda a autorização. Um token desconhecido ou de outro app também responde 200.",
   "auth.ep.introspect": "Consultar se um token está válido (RFC 7662). Somente clientes confidenciais e tokens do mesmo app.",
   "auth.ep.register": "Registro dinâmico de clientes (RFC 7591), pensado para agentes de IA e clientes MCP.",
   "auth.code.h": "Authorization code + PKCE",
@@ -208,12 +211,13 @@ export const docsPt: Record<DocsKey, string> = {
     "Os clientes MCP enviam o parâmetro `resource` com a URL do servidor MCP (`{{MCP_URL}}`) em `/oauth/authorize` e em `/oauth/token`, para pedir um token destinado a esse recurso. A CalaSign o aceita nas duas etapas; você não precisa enviá-lo se chamar a API REST diretamente.",
   "auth.discovery.h": "Descoberta",
   "auth.discovery.p":
-    "Os metadados padrão permitem que um cliente configure o OAuth apenas a partir da URL do servidor MCP. Quando uma requisição a `/mcp` chega sem credencial, a resposta `401` traz `WWW-Authenticate: Bearer resource_metadata=\"…\"` apontando para estes documentos.",
+    'Os metadados padrão permitem que um cliente configure o OAuth apenas a partir da URL do servidor MCP. Quando uma requisição a `/mcp` chega sem credencial, a resposta `401` traz `WWW-Authenticate: Bearer resource_metadata="…"` apontando para estes documentos.',
   "auth.disc.prm": "Metadados do recurso protegido (RFC 9728): recurso, servidor de autorização e scopes.",
   "auth.disc.as": "Metadados do servidor de autorização (RFC 8414): endpoints, grants, métodos de autenticação e PKCE.",
   // ───────── Conceitos ─────────
   "concepts.title": "Conceitos",
-  "concepts.lead": "O modelo da CalaSign em uma página: envelopes, destinatários, documentos, campos, modelos e a evidência que respalda cada assinatura.",
+  "concepts.lead":
+    "O modelo da CalaSign em uma página: envelopes, destinatários, documentos, campos, modelos e a evidência que respalda cada assinatura.",
   "concepts.col.meaning": "Significado",
   "concepts.lifecycle.h": "Ciclo de vida do envelope",
   "concepts.lifecycle.p":
@@ -245,7 +249,8 @@ export const docsPt: Record<DocsKey, string> = {
   "concepts.rstatus.signed": "Assinou (ou aprovou, se for `approver`).",
   "concepts.rstatus.declined": "Recusou; o envelope passa para `declined`.",
   "concepts.rstatus.completed": "Cópia (`cc`) que já recebeu o documento final.",
-  "concepts.rstatus.delegated": "Delegou a assinatura a outra pessoa (se o envelope permitir com `allowDelegation`). `replacedBy` aponta para o novo destinatário.",
+  "concepts.rstatus.delegated":
+    "Delegou a assinatura a outra pessoa (se o envelope permitir com `allowDelegation`). `replacedBy` aponta para o novo destinatário.",
   "concepts.rstatus.reassigned": "O remetente o substituiu por outra pessoa. `replacedBy` aponta para o novo destinatário.",
   "concepts.channels.h": "Canais de notificação",
   "concepts.channels.p":
@@ -291,7 +296,8 @@ export const docsPt: Record<DocsKey, string> = {
   "concepts.pades.bb": "Assinatura básica com o certificado do selo.",
   "concepts.pades.bt": "Carimbo do tempo RFC 3161 de uma autoridade de carimbo do tempo: prova quando foi assinado.",
   "concepts.pades.blt": "Certificados, OCSP e CRL incorporados: pode ser validado mesmo que a CA não responda mais.",
-  "concepts.pades.blta": "Carimbo do tempo de documento que protege tudo o que veio antes; é renovado antes de expirar, para arquivamento de longo prazo.",
+  "concepts.pades.blta":
+    "Carimbo do tempo de documento que protege tudo o que veio antes; é renovado antes de expirar, para arquivamento de longo prazo.",
   "concepts.verify.h": "Verificação",
   "concepts.verify.p":
     "Qualquer pessoa pode verificar um documento na página pública [`/verify`](/verify), sem conta: a CalaSign busca o SHA-256 do arquivo entre os documentos que selou e mostra a organização, os participantes, o selo e o estado da cadeia de evidência; além disso, valida cada assinatura do PDF (integridade, carimbo do tempo, cadeia de certificados e revogação). Via API: `POST /v1/verify` (busca por hash) e `POST /v1/validate` (validação de assinaturas), ambos públicos e com `multipart` campo `file`. Se não foi possível saber se algum certificado estava revogado (sem OCSP/CRL no PDF nem consulta online, ou só com respostas OCSP «unknown»), `POST /v1/validate` o marca com `revocationUnknown` (por assinatura, em `chain`, e em `summary`).",
@@ -310,7 +316,7 @@ export const docsPt: Record<DocsKey, string> = {
     "Este endpoint aceita `Idempotency-Key`: envie uma chave única por envelope e, se tentar de novo após um timeout ou um 5xx com a mesma chave e o mesmo corpo, você recebe o envelope já criado em vez de criar (e enviar) outro.",
   "g.tpl.prefill.h": "Pré-preencher campos",
   "g.tpl.prefill.p":
-    "`prefill` é um objeto `{ \"clave\": \"valor\" }` em que a chave é o `id` de um campo do modelo ou o seu **rótulo** (`label`, sem diferenciar maiúsculas nem espaços nas pontas). Pelo rótulo são preenchidos todos os campos com esse rótulo que aceitam um valor (texto, número, lista, empresa ou cargo; editáveis e sem fórmula). Uma chave que não corresponde a nenhum campo retorna `400 unknown_prefill`. Os campos com `readOnly` no modelo ficam bloqueados para o signatário.",
+    '`prefill` é um objeto `{ "clave": "valor" }` em que a chave é o `id` de um campo do modelo ou o seu **rótulo** (`label`, sem diferenciar maiúsculas nem espaços nas pontas). Pelo rótulo são preenchidos todos os campos com esse rótulo que aceitam um valor (texto, número, lista, empresa ou cargo; editáveis e sem fórmula). Uma chave que não corresponde a nenhum campo retorna `400 unknown_prefill`. Os campos com `readOnly` no modelo ficam bloqueados para o signatário.',
   // ───────── Guia: assinatura incorporada ─────────
   "g.embed.title": "Assinatura incorporada",
   "g.embed.lead":
@@ -339,7 +345,7 @@ export const docsPt: Record<DocsKey, string> = {
   "g.embed.ev.closed":
     "O envelope terminou sem que esta pessoa assinasse ou recusasse: foi anulado, expirou, outro destinatário recusou ou já estava concluído. Inclui `status` com o status do envelope (`voided`, `expired`, `declined` ou `completed`). Não redireciona para o `returnUrl`.",
   "g.embed.events.p":
-    "Cada mensagem é `{ source: \"calasign\", type, envelopeId, recipientId }` (mais `status` em `closed`) e é enviada uma única vez por tipo. Trate os eventos do navegador como um sinal para a interface: a confirmação de negócio são os [webhooks](/developers/webhooks), que são assinados.",
+    'Cada mensagem é `{ source: "calasign", type, envelopeId, recipientId }` (mais `status` em `closed`) e é enviada uma única vez por tipo. Trate os eventos do navegador como um sinal para a interface: a confirmação de negócio são os [webhooks](/developers/webhooks), que são assinados.',
   "g.embed.security":
     "Com assinatura incorporada, **a sua aplicação** é quem autentica a pessoa: a evidência registra que a sessão foi aberta pela sua integração («autenticada pelo integrador»). Peça a URL apenas para a pessoa que fez login e que corresponde a esse destinatário.",
   // ───────── Guia: âncoras ─────────
@@ -356,7 +362,8 @@ export const docsPt: Record<DocsKey, string> = {
   "g.anchor.o.size": "Tamanho do campo em pontos PDF (1 pt = 1/72 de polegada). Obrigatórios.",
   "g.anchor.o.offset": "Deslocamento em pontos a partir do canto superior esquerdo do texto encontrado. Negativo = para cima ou para a esquerda.",
   "g.anchor.o.case": "Diferenciar maiúsculas e minúsculas.",
-  "g.anchor.o.ignore": "Se for `false` e o texto não aparecer, a requisição falha com `400 anchor_not_found`. Com `true` o campo simplesmente não é criado.",
+  "g.anchor.o.ignore":
+    "Se for `false` e o texto não aparecer, a requisição falha com `400 anchor_not_found`. Com `true` o campo simplesmente não é criado.",
   "g.anchor.o.alldocs": "todos",
   "g.anchor.o.doc": "Buscar apenas nesse documento.",
   "g.anchor.tips.h": "Dicas",
@@ -372,7 +379,8 @@ export const docsPt: Record<DocsKey, string> = {
   "g.bulk.validate":
     "Antes de enviar, você pode validar sem criar nada com `POST /v1/bulk-sends/validate` (mesmo corpo): responde `{ total, valid, invalid, errors: [{ row, line, errors }], columns }` (`row` é o número da linha de dados, 1 para a primeira depois do cabeçalho; `line`, só com CSV, a linha do arquivo onde ela começa, contando o cabeçalho e as linhas vazias). Ao criar, se houver linhas inválidas a resposta é `422 rows_invalid` com esse mesmo detalhe, a menos que você envie `skipInvalid: true`: nesse caso as válidas são enviadas e as outras ficam como falhas. A validação também avisa, sem recusar, as linhas repetidas (`duplicates`: mesmos destinatários e preenchimento de uma anterior) e quantos envelopes restam na cota do mês (`quotaRemaining`): se as linhas válidas não couberem na cota, criar o envio responde `402 plan_limit` sem criar nada. Colunas repetidas ou uma aspa sem fechar dão `422 invalid_csv`.",
   "g.bulk.json.h": "Com linhas JSON",
-  "g.bulk.json.p": "Em vez de `csv` você pode enviar `rows` (um dos dois). Cada linha aceita destinatários por papel, `prefill`, um `subject` próprio e `metadata`, que é salvo no envelope e volta para você nos webhooks.",
+  "g.bulk.json.p":
+    "Em vez de `csv` você pode enviar `rows` (um dos dois). Cada linha aceita destinatários por papel, `prefill`, um `subject` próprio e `metadata`, que é salvo no envelope e volta para você nos webhooks.",
   "g.bulk.track.h": "Acompanhamento",
   "g.bulk.track.p":
     "A resposta é o envio em massa com seu estado (`queued`, `running`, `completed`, `cancelled`) e contadores (`total`, `sent`, `failed`, `retryable`, `pending`). Consulte `GET /v1/bulk-sends/{id}`, o detalhe por linha com `GET /v1/bulk-sends/{id}/items` (filtrável por `status`) ou baixe `results.csv` (com a coluna `line`: a linha do CSV de origem). `POST /v1/bulk-sends/{id}/cancel` interrompe as linhas que ainda não foram processadas. Se a cota do mês acabar durante o envio, as linhas restantes ficam como falhas; `POST /v1/bulk-sends/{id}/retry-failed` coloca de novo na fila as que falharam pela cota, pelo modelo ou por um erro interno (as de dados inválidos são corrigidas em um envio novo). Cada envelope criado dispara seus próprios webhooks.",
@@ -409,7 +417,7 @@ export const docsPt: Record<DocsKey, string> = {
     "Um signatário pode assinar também com **o seu próprio certificado digital** —token USB ou cartão (PKCS#11), certificado instalado no Windows ou arquivo `.p12/.pfx`— nos casos que exigem assinatura digital do titular: ICP-Brasil A1/A3, DNIe do Peru, certificados de entidades credenciadas pela ONAC (Colômbia), INDOTEL (República Dominicana) ou o IP (Honduras).",
   "g.cert.setup.h": "Configurar o signatário",
   "g.cert.setup.p":
-    "Adicione `signatureType: \"certificate\"` ao destinatário (somente papel `signer`; também pode ser definido nos papéis de um modelo). Um signatário com certificado não precisa de campo de assinatura no documento.",
+    'Adicione `signatureType: "certificate"` ao destinatário (somente papel `signer`; também pode ser definido nos papéis de um modelo). Um signatário com certificado não precisa de campo de assinatura no documento.',
   "g.cert.flow.h": "Como o envelope segue",
   "g.cert.flow.p":
     "1. Todos assinam eletronicamente, como sempre.\n2. A CalaSign monta o PDF final com o certificado de conclusão e o envelope passa para `awaiting_certificates`. O primeiro signatário com certificado recebe a solicitação.\n3. Cada um assina em ordem com o **Firmador CalaSign**, um app desktop que pode ser baixado em [`/firmador`](/firmador). A chave privada nunca sai do dispositivo: a CalaSign envia um hash e recebe a assinatura (PAdES B-T, com carimbo do tempo).\n4. Com a última assinatura o envelope passa para `finalizing`, o selo da plataforma é adicionado e ele fica `completed`.\n\nO progresso de cada assinatura com certificado é consultado assim:",
@@ -418,7 +426,8 @@ export const docsPt: Record<DocsKey, string> = {
     "- `matchIdDocument`: o certificado precisa corresponder ao `idDocumentNumber` do signatário (CPF, cédula, DNI…). Por padrão `false`. Se for pedido, o destinatário precisa ter `idDocumentNumber` (senão, 400 `missing_id_document` ao salvar). Nos envelopes criados a partir de um modelo (formulários web, envios em massa, CRM, conectores) e nas substituições, se faltar o documento a verificação é omitida e fica registrada na evidência (`idDocumentMatch: skipped_missing_id_document`); exige que a cadeia chegue a uma raiz confiável.\n- `allowedIssuers`: partes do nome do emissor aceitas (por exemplo `ICP-Brasil`, `RENIEC`). Vazio = qualquer um.\n- `requireQualified`: exigir uma CA do repositório confiável da plataforma.\n\nAlém disso, são verificados a validade, o uso da chave (`digitalSignature` ou `nonRepudiation`) e que não seja um certificado de CA. As tentativas recusadas ficam na evidência.",
   // ───────── Guia: identidade ─────────
   "g.idv.title": "Autenticação e verificação de identidade",
-  "g.idv.lead": "Por padrão, ter o link pessoal basta para assinar. Você pode exigir mais: um código de uso único ou uma verificação de identidade com documento e selfie.",
+  "g.idv.lead":
+    "Por padrão, ter o link pessoal basta para assinar. Você pode exigir mais: um código de uso único ou uma verificação de identidade com documento e selfie.",
   "g.idv.auth.h": "Código de uso único",
   "g.idv.auth.p":
     "`authMethod` do destinatário: `link` (padrão), `otp_email` (exige `email`), `otp_sms` ou `otp_whatsapp` (exigem `phone`) ou `in_person` (assinatura no dispositivo de um anfitrião da sua organização, configurada com `inPerson`). Com OTP, a pessoa precisa digitar um código de 6 dígitos antes de ver o documento, e o método fica registrado no certificado de conclusão.",
@@ -447,13 +456,16 @@ export const docsPt: Record<DocsKey, string> = {
   "g.crm.providers.h": "Provedores",
   "g.crm.col.provider": "Provedor",
   "g.crm.col.does": "O que faz",
-  "g.crm.hubspot": "Enviar para assinatura a partir de um Deal (contatos associados + propriedades → modelo), manualmente ou por webhook ao mudar uma propriedade. Ao concluir, atualiza uma propriedade de estado e anexa o PDF ao deal.",
-  "g.crm.salesforce": "Enviar a partir de uma Opportunity (papéis de contato + campos). Atualiza um campo de estado e publica o PDF como ContentVersion na oportunidade.",
+  "g.crm.hubspot":
+    "Enviar para assinatura a partir de um Deal (contatos associados + propriedades → modelo), manualmente ou por webhook ao mudar uma propriedade. Ao concluir, atualiza uma propriedade de estado e anexa o PDF ao deal.",
+  "g.crm.salesforce":
+    "Enviar a partir de uma Opportunity (papéis de contato + campos). Atualiza um campo de estado e publica o PDF como ContentVersion na oportunidade.",
   "g.crm.zoho":
     "OAuth em qualquer data center do Zoho (com, eu, in, com.au, jp, ca…). Enviar para assinatura a partir de um **Deal** (contato principal e papéis de contato) ou de um **Contact**; no Bigin, de um Pipeline. Atualiza um campo de status (ex. `CalaSign_Status`) e anexa o PDF assinado ao registro, com uma nota que traz o hash e o link do envelope. O botão «Enviar para assinatura com CalaSign» nos Deals vem com a [função Deluge e o guia da extensão](/integrations/connectors/zoho-crm/calasign-zoho-crm.zip).",
   "g.crm.siigo": "Colômbia: busca o cliente pela identificação de um signatário e adiciona a referência do documento assinado.",
   "g.crm.alegra": "Busca o contato pela identificação e anexa o PDF; também é possível vincular uma fatura.",
-  "g.crm.pipedrive": "OAuth com o domínio da empresa. Enviar a partir de um Deal (pessoa principal e participantes + campos, inclusive personalizados pela key ou pelo nome) ou de uma Person. Grava o estado em um campo do registro (texto ou opção única) e, ao concluir, envia o PDF assinado ao deal ou à Person e cria uma nota com o SHA-256 e o link.",
+  "g.crm.pipedrive":
+    "OAuth com o domínio da empresa. Enviar a partir de um Deal (pessoa principal e participantes + campos, inclusive personalizados pela key ou pelo nome) ou de uma Person. Grava o estado em um campo do registro (texto ou opção única) e, ao concluir, envia o PDF assinado ao deal ou à Person e cria uma nota com o SHA-256 e o link.",
   "g.crm.pipedrive.h": "Pipedrive",
   "g.crm.pipedrive.p":
     "1. **Configurações → CRM e ERP → Pipedrive → Conectar com OAuth**: autorize a empresa do Pipedrive; o CalaSign guarda o domínio da API.\n2. No Pipedrive, crie um campo personalizado do deal (ou da pessoa, para mapeamentos de Person) para o estado (ex. «Estado CalaSign», de texto ou de opção única com as opções que serão gravadas).\n3. Crie um mapeamento: tipo `deal` (ou `contact` para uma Person), modelo, destinatários (*contato principal* = a pessoa do deal; *contato 1, 2…* = os participantes), preenchimento (`value`, `title`, `org_id.name`, ou um campo personalizado pela key de 40 caracteres ou pelo nome) e a propriedade de estado.\n4. Envie com `POST /v1/crm/mappings/{id}/send` (`objectId` = id do deal ou da Person; `companyId` é opcional: se enviado, deve ser a empresa da conexão, senão 409 `company_mismatch`) ou a partir do Pipedrive com a ação **Enviar para assinatura com CalaSign** do app do Marketplace ([zip com a ação e o guia](/integrations/connectors/pipedrive/calasign-pipedrive.zip)).",
@@ -514,15 +526,17 @@ export const docsPt: Record<DocsKey, string> = {
   "wh.payload.headers": "Cabeçalhos",
   "wh.payload.body": "Corpo",
   "wh.col.field": "Campo",
-  "wh.f.id": "Id único do evento. É o mesmo em todos os seus endpoints, nas novas tentativas e em `GET /v1/events`: use-o para não processar duas vezes.",
+  "wh.f.id":
+    "Id único do evento. É o mesmo em todos os seus endpoints, nas novas tentativas e em `GET /v1/events`: use-o para não processar duas vezes.",
   "wh.f.type": "Tipo de evento.",
   "wh.f.createdAt": "Quando o evento ocorreu (o mesmo instante que `occurredAt` em `GET /v1/events`).",
-  "wh.f.envelope": "Estado do envelope quando a entrega foi montada, segundos depois do evento: pode refletir mudanças posteriores (p. ex. um `recipient.signed` que já mostra o envelope `completed`). Para o momento do evento, use `createdAt` e `type`. `null` em `webhook.test`.",
+  "wh.f.envelope":
+    "Estado do envelope quando a entrega foi montada, segundos depois do evento: pode refletir mudanças posteriores (p. ex. um `recipient.signed` que já mostra o envelope `completed`). Para o momento do evento, use `createdAt` e `type`. `null` em `webhook.test`.",
   "wh.f.recipientId": "Destinatário que originou o evento (`viewed`, `signed`, `approved`, `declined`), quando aplicável.",
   "wh.f.reason": "Motivo da recusa ou da anulação, quando aplicável.",
   "wh.verify.h": "Verificar a assinatura",
   "wh.verify.p":
-    "O cabeçalho `CalaSign-Signature` tem a forma `t=<unix>,v1=<hex>`, em que `v1` é `HMAC-SHA256(secret, \"<t>.<corpo>\")` em hexadecimal. Enquanto você rotaciona o segredo, o cabeçalho traz um `v1` por segredo vigente (`t=<unix>,v1=<novo>,v1=<anterior>`). Para verificar:\n\n1. Separe o cabeçalho por vírgulas e leia `t` e todos os `v1`.\n2. Calcule o HMAC com o seu segredo sobre o texto `t`, um ponto e o **corpo bruto**, byte a byte como chegou (não o JSON serializado de novo).\n3. Compare-o em tempo constante com cada `v1`: aceite a entrega se algum coincidir.\n4. Rejeite entregas com `t` de mais de 5 minutos para evitar repetições.",
+    'O cabeçalho `CalaSign-Signature` tem a forma `t=<unix>,v1=<hex>`, em que `v1` é `HMAC-SHA256(secret, "<t>.<corpo>")` em hexadecimal. Enquanto você rotaciona o segredo, o cabeçalho traz um `v1` por segredo vigente (`t=<unix>,v1=<novo>,v1=<anterior>`). Para verificar:\n\n1. Separe o cabeçalho por vírgulas e leia `t` e todos os `v1`.\n2. Calcule o HMAC com o seu segredo sobre o texto `t`, um ponto e o **corpo bruto**, byte a byte como chegou (não o JSON serializado de novo).\n3. Compare-o em tempo constante com cada `v1`: aceite a entrega se algum coincidir.\n4. Rejeite entregas com `t` de mais de 5 minutos para evitar repetições.',
   "wh.verify.warn":
     "O erro mais comum é verificar o corpo já interpretado: qualquer diferença de espaços ou de ordem das chaves quebra a assinatura. Configure o seu framework para entregar o corpo bruto nesta rota (`express.raw`, `request.get_data()`, `request.body` sem parsear).",
   "wh.c.raw": "corpo BRUTO, exatamente como chegou",
@@ -543,15 +557,17 @@ export const docsPt: Record<DocsKey, string> = {
   "wh.test.p":
     "Envie um evento `webhook.test` para um endpoint para testar a conectividade e a verificação da assinatura. Em desenvolvimento, você pode expor seu servidor local com um túnel (ngrok, Cloudflare Tunnel) ou usar um serviço de inspeção de requisições. O teste também exige webhooks no plano (`402 plan_limit`).",
   "wh.test.deliveries.h": "Histórico de entregas",
-  "wh.test.deliveries.p": "As entregas recentes de cada endpoint, com seu estado (`pending`, `succeeded`, `failed`), tentativas, último código HTTP e erro.",
+  "wh.test.deliveries.p":
+    "As entregas recentes de cada endpoint, com seu estado (`pending`, `succeeded`, `failed`), tentativas, último código HTTP e erro.",
   // ───────── Erros, idempotência, paginação, limites ─────────
   "err.title": "Erros, idempotência e limites",
-  "err.lead": "Como a API responde quando algo dá errado, como tentar novamente sem duplicar, como percorrer listas longas e quantas requisições você pode fazer.",
+  "err.lead":
+    "Como a API responde quando algo dá errado, como tentar novamente sem duplicar, como percorrer listas longas e quantas requisições você pode fazer.",
   "err.format.h": "Formato dos erros",
   "err.format.p":
     "Todas as respostas de erro de `/v1` têm o mesmo formato: um `code` estável em inglês para o seu código, uma `message` legível e, às vezes, `details` com informações estruturadas. Programe com base em `code` e no status HTTP, nunca em `message`.",
   "err.format.lang":
-    "As `message` estão em espanhol e podem mudar de redação. Os endpoints OAuth (`/oauth/*`) usam o formato da RFC 6749 no lugar: `{ \"error\": \"invalid_grant\", \"error_description\": \"…\" }`.",
+    'As `message` estão em espanhol e podem mudar de redação. Os endpoints OAuth (`/oauth/*`) usam o formato da RFC 6749 no lugar: `{ "error": "invalid_grant", "error_description": "…" }`.',
   "err.codes.h": "Códigos frequentes",
   "err.col.meaning": "O que significa e o que fazer",
   "err.c.validation": "O corpo não respeita o esquema. `details[]` traz `path` e `message` de cada problema. Não tente novamente sem corrigir.",
@@ -569,8 +585,10 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.forbiddenOther":
     "`two_factor_setup_required`: a organização exige verificação em duas etapas e o usuário ainda não a ativou (ative e repita). `ai_notice_required`: um administrador precisa aceitar o aviso vigente de tratamento de dados da IA (Configurações → IA). `bad_origin`: uma requisição com cookie de sessão de uma origem que não é a web do CalaSign (com `Authorization` não se aplica).",
   "err.c.notFound": "O recurso não existe ou pertence a outra organização.",
-  "err.c.conflict": "O estado do recurso não permite a operação: por exemplo, modificar um envelope que não é mais rascunho ou anular um já encerrado.",
-  "err.c.idem": "Você reutilizou uma `Idempotency-Key` com outro corpo, ou a requisição original ainda está sendo processada (tente novamente em alguns segundos).",
+  "err.c.conflict":
+    "O estado do recurso não permite a operação: por exemplo, modificar um envelope que não é mais rascunho ou anular um já encerrado.",
+  "err.c.idem":
+    "Você reutilizou uma `Idempotency-Key` com outro corpo, ou a requisição original ainda está sendo processada (tente novamente em alguns segundos).",
   "err.c.versionChanged":
     "Controle de edição concorrente: você enviou `X-Expected-Updated-At` com o `updatedAt` que leu ao modificar um rascunho (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) ou um modelo (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), ou ao enviá-lo, anulá-lo ou mandar um lembrete (`POST …/send`, `POST …/void`, `POST …/remind`), e alguém o alterou nesse meio-tempo. `details.updatedAt` traz o valor atual: recarregue, revise e repita. Sem o cabeçalho não há controle. Em uma negociação, significa que há uma versão nova.",
   "err.c.crm":
@@ -578,11 +596,13 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.purged":
     "Os originais do envelope foram apagados pela política de retenção da organização (conta a partir do encerramento do envelope: concluído, anulado, recusado ou vencido). `410` ao baixar o original, criar um modelo a partir do envelope ou usar a IA; `409` ao cloná-lo. O PDF assinado e a evidência são mantidos. No repositório de acordos, `GET /v1/agreements/{id}/file` responde `410 purged` se o arquivo já foi apagado.",
   "err.c.tooLarge":
-    "O arquivo excede o tamanho máximo (`file_too_large`, o mesmo código em todos os envios de arquivo, também quando vários documentos juntos excedem o total por requisição ou os 100 MB do envelope ou modelo: `details.limit` é `\"file\"` ou `\"total\"`) ou o JSON do envelope em `POST /v1/envelopes`, sem o base64 dos documentos, é grande demais (`payload_too_large`).",
+    'O arquivo excede o tamanho máximo (`file_too_large`, o mesmo código em todos os envios de arquivo, também quando vários documentos juntos excedem o total por requisição ou os 100 MB do envelope ou modelo: `details.limit` é `"file"` ou `"total"`) ou o JSON do envelope em `POST /v1/envelopes`, sem o base64 dos documentos, é grande demais (`payload_too_large`).',
   "err.c.wrongCell":
     "Os dados da organização estão em outra célula (região) do CalaSign. `details.cell` é a célula e `details.baseUrl` a URL da API que a atende (também no cabeçalho `Location`, com o mesmo caminho). A requisição não foi processada: repita contra `details.baseUrl` e use essa URL daí em diante. Os SDKs fazem isso sozinhos (uma vez).",
-  "err.c.unprocessable": "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",
-  "err.c.rate": "Você excedeu o limite de requisições (código `rate_limited`; versões anteriores da API enviavam `bad_request`). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
+  "err.c.unprocessable":
+    "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",
+  "err.c.rate":
+    "Você excedeu o limite de requisições (código `rate_limited`; versões anteriores da API enviavam `bad_request`). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
   "err.c.rateBiz":
     "Limite de negócio com código próprio (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). Não traz `retry-after`: não tente novamente em loop; avise o usuário ou tente bem mais tarde.",
   "err.c.internal": "Erro nosso. É seguro tentar novamente com espera crescente; se você usa `Idempotency-Key`, nada é duplicado.",
@@ -688,27 +708,34 @@ export const docsPt: Record<DocsKey, string> = {
   "mcp.col.tool": "Ferramenta",
   "mcp.col.does": "O que faz",
   "mcp.col.confirm": "Confirmação",
-  "mcp.tool.list_envelopes": "Lista os envelopes, do mais recente ao mais antigo. Filtros: `status`, `query` (assunto ou destinatário), `limit` (até 50) e `cursor`.",
+  "mcp.tool.list_envelopes":
+    "Lista os envelopes, do mais recente ao mais antigo. Filtros: `status`, `query` (assunto ou destinatário), `limit` (até 50) e `cursor`.",
   "mcp.tool.get_envelope": "Detalhe de um envelope: documentos, destinatários e seu estado.",
   "mcp.tool.get_signing_status": "Quem assinou, quem falta, quem recusou e os últimos eventos da evidência.",
   "mcp.tool.list_templates": "Modelos disponíveis com seus papéis (para criar envelopes a partir de modelo).",
-  "mcp.tool.create_envelope_from_template": "Cria um envelope em **rascunho** a partir de um modelo, com uma pessoa por papel e valores de campos opcionais. Com `send: true` cria e envia em uma única chamada, em dois passos: primeiro retorna uma prévia com um `confirmToken` e, quando a pessoa aprova, a chamada é repetida com esse token. O mesmo `requestId` (7 dias) ou, sem ele, uma nova tentativa com os mesmos argumentos em ~10 minutos retorna o envelope já criado, com seu status atual e `replayed: true`. Aceita `locale`.",
+  "mcp.tool.create_envelope_from_template":
+    "Cria um envelope em **rascunho** a partir de um modelo, com uma pessoa por papel e valores de campos opcionais. Com `send: true` cria e envia em uma única chamada, em dois passos: primeiro retorna uma prévia com um `confirmToken` e, quando a pessoa aprova, a chamada é repetida com esse token. O mesmo `requestId` (7 dias) ou, sem ele, uma nova tentativa com os mesmos argumentos em ~10 minutos retorna o envelope já criado, com seu status atual e `replayed: true`. Aceita `locale`.",
   "mcp.tool.send_envelope": "Envia um rascunho: os signatários recebem os convites.",
   "mcp.tool.void_envelope": "Anula um envelope em andamento com um motivo; os signatários recebem o aviso.",
-  "mcp.tool.download_signed_pdf": "Retorna uma URL temporária (15 minutos, até 3 downloads e só enquanto a credencial do agente continuar válida) para baixar o PDF selado de um envelope concluído, com o seu SHA-256.",
-  "mcp.tool.create_envelope": "Cria um envelope em **rascunho** a partir de um PDF (em base64 ou de uma URL https), com seus destinatários. Com `send: true` cria e envia em uma única chamada, com a mesma prévia e `confirmToken`. O mesmo `requestId` (7 dias) ou, sem ele, uma nova tentativa com os mesmos argumentos em ~10 minutos retorna o envelope já criado, com seu status atual e `replayed: true`. Aceita `locale`.",
-  "mcp.tool.remind_recipients": "Reenvia o convite aos signatários pendentes do turno atual, em dois passos: prévia com `confirmToken` e, quando a pessoa aprova, a mesma chamada com esse token.",
-  "mcp.tool.get_account": "Dados da conta: organização, usuário ou credencial e plano; o uso do mês, só se a credencial puder ver todos os envelopes ou administrar o faturamento (senão, `usage: null`).",
+  "mcp.tool.download_signed_pdf":
+    "Retorna uma URL temporária (15 minutos, até 3 downloads e só enquanto a credencial do agente continuar válida) para baixar o PDF selado de um envelope concluído, com o seu SHA-256.",
+  "mcp.tool.create_envelope":
+    "Cria um envelope em **rascunho** a partir de um PDF (em base64 ou de uma URL https), com seus destinatários. Com `send: true` cria e envia em uma única chamada, com a mesma prévia e `confirmToken`. O mesmo `requestId` (7 dias) ou, sem ele, uma nova tentativa com os mesmos argumentos em ~10 minutos retorna o envelope já criado, com seu status atual e `replayed: true`. Aceita `locale`.",
+  "mcp.tool.remind_recipients":
+    "Reenvia o convite aos signatários pendentes do turno atual, em dois passos: prévia com `confirmToken` e, quando a pessoa aprova, a mesma chamada com esse token.",
+  "mcp.tool.get_account":
+    "Dados da conta: organização, usuário ou credencial e plano; o uso do mês, só se a credencial puder ver todos os envelopes ou administrar o faturamento (senão, `usage: null`).",
   "mcp.safety.h": "Modelo de segurança",
   "mcp.safety.p":
-    "- **Confirmação explícita em dois passos.** Sem `confirmToken`, as ferramentas com efeito para fora (enviar, anular, lembrar) não fazem nada: retornam uma prévia (assunto, destinatários) e um `confirmToken` assinado pelo servidor, válido por 5 minutos e vinculado a essa ação, a esse envelope, à versão que foi mostrada e à credencial do agente. Só com esse token elas executam; se o envelope mudou depois da prévia, é rejeitado e é preciso pedir outra. As instruções do servidor pedem ao modelo que mostre a prévia à pessoa e espere a aprovação.\n- **Rascunhos primeiro.** Criar um envelope não o envia, salvo com `send: true`, que passa pela mesma prévia e aprovação que enviar. Novas tentativas com os mesmos argumentos não criam envelopes duplicados.\n- **Permissões restritas.** O agente nunca pode mais do que a sua credencial. Com OAuth, a pessoa vê e aprova os scopes; você pode revogar o acesso a qualquer momento em **Configurações → Apps OAuth** (apps conectados).\n- **Evidência.** Cada ação fica registrada como «agente IA (<nome do cliente>) — <credencial>» na cadeia de evidência do envelope e no certificado de conclusão.\n- **Downloads temporários.** O PDF assinado é entregue com um link que expira em 15 minutos (até 3 downloads), não como conteúdo na conversa; se você revogar a credencial do agente, os links dele deixam de valer.\n- **Conteúdo não confiável.** Um assunto, o nome de um destinatário ou o motivo de uma recusa podem conter instruções maliciosas. O servidor retorna esse texto de terceiros envolvido como `{\"untrusted\": …}` e indica ao modelo que é um dado, nunca uma instrução. Mesmo assim, peça ao seu agente que não execute ações a partir do conteúdo dos documentos sem confirmar com a pessoa.",
+    '- **Confirmação explícita em dois passos.** Sem `confirmToken`, as ferramentas com efeito para fora (enviar, anular, lembrar) não fazem nada: retornam uma prévia (assunto, destinatários) e um `confirmToken` assinado pelo servidor, válido por 5 minutos e vinculado a essa ação, a esse envelope, à versão que foi mostrada e à credencial do agente. Só com esse token elas executam; se o envelope mudou depois da prévia, é rejeitado e é preciso pedir outra. As instruções do servidor pedem ao modelo que mostre a prévia à pessoa e espere a aprovação.\n- **Rascunhos primeiro.** Criar um envelope não o envia, salvo com `send: true`, que passa pela mesma prévia e aprovação que enviar. Novas tentativas com os mesmos argumentos não criam envelopes duplicados.\n- **Permissões restritas.** O agente nunca pode mais do que a sua credencial. Com OAuth, a pessoa vê e aprova os scopes; você pode revogar o acesso a qualquer momento em **Configurações → Apps OAuth** (apps conectados).\n- **Evidência.** Cada ação fica registrada como «agente IA (<nome do cliente>) — <credencial>» na cadeia de evidência do envelope e no certificado de conclusão.\n- **Downloads temporários.** O PDF assinado é entregue com um link que expira em 15 minutos (até 3 downloads), não como conteúdo na conversa; se você revogar a credencial do agente, os links dele deixam de valer.\n- **Conteúdo não confiável.** Um assunto, o nome de um destinatário ou o motivo de uma recusa podem conter instruções maliciosas. O servidor retorna esse texto de terceiros envolvido como `{"untrusted": …}` e indica ao modelo que é um dado, nunca uma instrução. Mesmo assim, peça ao seu agente que não execute ações a partir do conteúdo dos documentos sem confirmar com a pessoa.',
   "mcp.inspector.h": "Testar com o MCP Inspector",
   "mcp.inspector.p":
     "O [MCP Inspector](https://github.com/modelcontextprotocol/inspector) é a ferramenta oficial para testar um servidor MCP: lista as ferramentas, executa-as e mostra as mensagens. Requer Node.js 22 ou superior. Na interface web, escolha o transporte **Streamable HTTP**, cole a URL e adicione o cabeçalho `Authorization`, ou siga o fluxo OAuth. `--header` vai depois da URL.",
   "mcp.inspector.c.ui": "Interface web (http://localhost:6274) com a conexao pre-carregada",
   "mcp.inspector.c.cli": "Modo linha de comando: listar ferramentas",
   "mcp.sdk.h": "A partir do seu próprio agente",
-  "mcp.sdk.p": "Com o SDK oficial de MCP para TypeScript (`@modelcontextprotocol/sdk`). Há SDKs equivalentes para Python, Java, C#, Go e outras linguagens.",
+  "mcp.sdk.p":
+    "Com o SDK oficial de MCP para TypeScript (`@modelcontextprotocol/sdk`). Há SDKs equivalentes para Python, Java, C#, Go e outras linguagens.",
   "mcp.sdk.c.approve": "…mostrar o resumo para a pessoa e, se ela aprovar:",
   // ───────── Claude ─────────
   "claude.title": "Claude",
@@ -717,11 +744,13 @@ export const docsPt: Record<DocsKey, string> = {
   "claude.connector.h": "Conector no claude.ai e no Claude Desktop",
   "claude.connector.p":
     "Os conectores personalizados estão disponíveis em todos os planos do Claude (no Free, até um). Eles são adicionados uma vez e ficam disponíveis na web, no Claude Desktop e no app móvel.",
-  "claude.connector.s1": "No Claude, abra **Personalizar → Conectores** (*Customize → Connectors*) e escolha **Adicionar conector personalizado** (*Add custom connector*).",
+  "claude.connector.s1":
+    "No Claude, abra **Personalizar → Conectores** (*Customize → Connectors*) e escolha **Adicionar conector personalizado** (*Add custom connector*).",
   "claude.connector.s2": "Digite um nome (CalaSign) e cole a URL do servidor:",
   "claude.connector.s3":
     "Na autenticação, mantenha o login com OAuth. Se for pedido para escolher o cliente OAuth, escolha **Registrar automaticamente** (*Register automatically*). Clique em **Adicionar** e depois em **Conectar**.",
-  "claude.connector.s4": "A tela de consentimento da CalaSign é aberta: faça login, revise as permissões e aprove. Em cada chat, ative o conector pelo botão **+ → Conectores**.",
+  "claude.connector.s4":
+    "A tela de consentimento da CalaSign é aberta: faça login, revise as permissões e aprove. Em cada chat, ative o conector pelo botão **+ → Conectores**.",
   "claude.connector.team":
     "**Team e Enterprise:** primeiro um proprietário da organização o adiciona em **Configurações da organização → Conectores → Adicionar → Personalizado** (*Organization settings → Connectors → Add → Custom*). Depois, cada pessoa o encontra em **Personalizar → Conectores** com o rótulo *Custom*, clica em **Conectar** e faz login com a sua própria conta da CalaSign.",
   "claude.connector.key":
@@ -737,8 +766,7 @@ export const docsPt: Record<DocsKey, string> = {
     "Adicione o servidor com um comando. Com OAuth, na primeira vez execute `/mcp` dentro do Claude Code e siga o login no navegador (ou `claude mcp login calasign` pelo terminal). `--scope user` o deixa disponível em todos os seus projetos; `--scope project` o salva em `.mcp.json` para compartilhá-lo com a sua equipe.",
   "claude.code.c.login": "dentro do Claude Code, para fazer login:",
   "claude.plugin.h": "Plugin da CalaSign",
-  "claude.plugin.p":
-    "O plugin instala de uma vez o servidor MCP e a skill da CalaSign. Digite isto dentro do Claude Code:",
+  "claude.plugin.p": "O plugin instala de uma vez o servidor MCP e a skill da CalaSign. Digite isto dentro do Claude Code:",
   "claude.skill.h": "Agent Skill",
   "claude.skill.p":
     "A skill ensina ao Claude como trabalhar com a CalaSign: usar modelos, posicionar campos com âncoras, pedir confirmação antes de enviar, interpretar estados e webhooks. Combine-a com o conector ou com o servidor MCP.",
@@ -753,7 +781,8 @@ export const docsPt: Record<DocsKey, string> = {
   "gpt.connector.h": "Servidor MCP personalizado no ChatGPT",
   "gpt.connector.p":
     "Os servidores MCP personalizados são adicionados pela web do ChatGPT. Dependendo do plano, o administrador do espaço de trabalho pode precisar habilitá-los ou criá-los (no Business e no Enterprise/Edu, por exemplo). Os nomes dos menus mudam com frequência: se não os encontrar, procure «MCP» nas configurações ou na central de ajuda da OpenAI.",
-  "gpt.connector.s1": "Abra a seção de **Plugins** do ChatGPT (*chatgpt.com/plugins*), clique em **+** e escolha **Adicionar servidor MCP personalizado** (*Add custom MCP server*).",
+  "gpt.connector.s1":
+    "Abra a seção de **Plugins** do ChatGPT (*chatgpt.com/plugins*), clique em **+** e escolha **Adicionar servidor MCP personalizado** (*Add custom MCP server*).",
   "gpt.connector.s2": "Nome: CalaSign. Em **Conexão**, cole a URL do servidor:",
   "gpt.connector.s3": "Autenticação: **OAuth**. O ChatGPT se registra sozinho na CalaSign; aceite o aviso e crie-o.",
   "gpt.connector.s4": "Instale-o, faça login na CalaSign quando for solicitado e aprove as permissões.",

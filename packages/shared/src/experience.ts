@@ -52,7 +52,10 @@ export const RecipientContactPatch = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   email: z.string().trim().toLowerCase().email().max(320).optional().nullable(),
   phone: E164.optional().nullable(),
-  channels: z.array(z.enum(["email", "whatsapp", "telegram"])).min(1).optional(),
+  channels: z
+    .array(z.enum(["email", "whatsapp", "telegram"]))
+    .min(1)
+    .optional(),
   locale: z.enum(["es", "pt-BR", "en"]).optional().nullable(),
   /** Número de documento de identidad (null = quitar). Si cambia, la verificación de identidad empieza de nuevo. */
   idDocumentNumber: z.string().trim().max(50).optional().nullable(),

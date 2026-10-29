@@ -43,7 +43,8 @@ const es = {
   "bulk.step2": "2. Destinatarios (CSV)",
   "bulk.step3": "3. Revisar y enviar",
   "bulk.downloadSkeleton": "Descargar CSV de ejemplo",
-  "bulk.skeletonHint": "Una columna por dato de cada rol (Rol.name, Rol.email, Rol.phone, Rol.channels) y una por campo a prellenar (field.Etiqueta). Funciona con Excel (coma o punto y coma).",
+  "bulk.skeletonHint":
+    "Una columna por dato de cada rol (Rol.name, Rol.email, Rol.phone, Rol.channels) y una por campo a prellenar (field.Etiqueta). Funciona con Excel (coma o punto y coma).",
   "bulk.uploadCsv": "Subir CSV",
   "bulk.orPaste": "o pegalo acá",
   "bulk.validate": "Validar",
@@ -93,7 +94,8 @@ const es = {
 
   // Formularios web
   "forms.title": "Formularios web",
-  "forms.intro": "Un link público (o embebido en tu sitio) donde cualquiera completa sus datos y firma. Ideal para altas, solicitudes y consentimientos.",
+  "forms.intro":
+    "Un link público (o embebido en tu sitio) donde cualquiera completa sus datos y firma. Ideal para altas, solicitudes y consentimientos.",
   "forms.new": "Nuevo formulario",
   "forms.edit": "Editar formulario",
   "forms.empty": "Todavía no creaste formularios.",
@@ -104,7 +106,8 @@ const es = {
   "forms.fixedHint": "Por ejemplo, el representante de tu empresa que firma después.",
   "forms.prefill": "Valores prellenados",
   "forms.lockPrefill": "Valores prellenados de solo lectura",
-  "forms.lockPrefillHint": "Quien completa el formulario ve los valores prellenados de sus campos pero no los puede modificar. Sin esta opción son valores sugeridos que puede corregir.",
+  "forms.lockPrefillHint":
+    "Quien completa el formulario ve los valores prellenados de sus campos pero no los puede modificar. Sin esta opción son valores sugeridos que puede corregir.",
   "forms.options": "Opciones",
   "forms.active": "Activo",
   "forms.maxUses": "Máximo de usos",
@@ -127,7 +130,8 @@ const es = {
   "forms.deleteConfirm": "El link deja de funcionar. Los sobres ya creados no se tocan. ¿Eliminar?",
   "forms.inactive": "Inactivo",
   "forms.ownerInactive": "No disponible para el público",
-  "forms.ownerInactiveHint": "El formulario no acepta envíos mientras quien lo configuró no pueda crear sobres con esta plantilla. Para reactivarlo, devolvele el acceso o creá el formulario de nuevo con otra persona.",
+  "forms.ownerInactiveHint":
+    "El formulario no acepta envíos mientras quien lo configuró no pueda crear sobres con esta plantilla. Para reactivarlo, devolvele el acceso o creá el formulario de nuevo con otra persona.",
   "forms.why.not_member": "Quien lo configuró ya no es miembro de la organización",
   "forms.why.missing_permission": "Quien lo configuró ya no tiene permiso para crear sobres",
   "forms.why.template_access": "Quien lo configuró ya no tiene acceso a la plantilla",
@@ -202,7 +206,8 @@ const pt: Record<Key, string> = {
   "bulk.step2": "2. Destinatários (CSV)",
   "bulk.step3": "3. Revisar e enviar",
   "bulk.downloadSkeleton": "Baixar CSV de exemplo",
-  "bulk.skeletonHint": "Uma coluna por dado de cada papel (Papel.name, Papel.email, Papel.phone, Papel.channels) e uma por campo a preencher (field.Etiqueta). Funciona com Excel (vírgula ou ponto e vírgula).",
+  "bulk.skeletonHint":
+    "Uma coluna por dado de cada papel (Papel.name, Papel.email, Papel.phone, Papel.channels) e uma por campo a preencher (field.Etiqueta). Funciona com Excel (vírgula ou ponto e vírgula).",
   "bulk.uploadCsv": "Enviar CSV",
   "bulk.orPaste": "ou cole aqui",
   "bulk.validate": "Validar",
@@ -250,7 +255,8 @@ const pt: Record<Key, string> = {
   "bulk.item.cancelled": "Cancelado",
   "bulk.useFromTemplate": "Envio em massa",
   "forms.title": "Formulários web",
-  "forms.intro": "Um link público (ou incorporado no seu site) onde qualquer pessoa preenche seus dados e assina. Ideal para cadastros, solicitações e consentimentos.",
+  "forms.intro":
+    "Um link público (ou incorporado no seu site) onde qualquer pessoa preenche seus dados e assina. Ideal para cadastros, solicitações e consentimentos.",
   "forms.new": "Novo formulário",
   "forms.edit": "Editar formulário",
   "forms.empty": "Você ainda não criou formulários.",
@@ -261,7 +267,8 @@ const pt: Record<Key, string> = {
   "forms.fixedHint": "Por exemplo, o representante da sua empresa que assina depois.",
   "forms.prefill": "Valores preenchidos",
   "forms.lockPrefill": "Valores pré-preenchidos somente leitura",
-  "forms.lockPrefillHint": "Quem preenche o formulário vê os valores pré-preenchidos dos seus campos, mas não pode alterá-los. Sem esta opção, são valores sugeridos que a pessoa pode corrigir.",
+  "forms.lockPrefillHint":
+    "Quem preenche o formulário vê os valores pré-preenchidos dos seus campos, mas não pode alterá-los. Sem esta opção, são valores sugeridos que a pessoa pode corrigir.",
   "forms.options": "Opções",
   "forms.active": "Ativo",
   "forms.maxUses": "Máximo de usos",
@@ -284,7 +291,8 @@ const pt: Record<Key, string> = {
   "forms.deleteConfirm": "O link deixa de funcionar. Os envelopes já criados não são alterados. Excluir?",
   "forms.inactive": "Inativo",
   "forms.ownerInactive": "Indisponível para o público",
-  "forms.ownerInactiveHint": "O formulário não aceita envios enquanto quem o configurou não puder criar envelopes com este modelo. Para reativá-lo, devolva o acesso ou crie o formulário novamente com outra pessoa.",
+  "forms.ownerInactiveHint":
+    "O formulário não aceita envios enquanto quem o configurou não puder criar envelopes com este modelo. Para reativá-lo, devolva o acesso ou crie o formulário novamente com outra pessoa.",
   "forms.why.not_member": "Quem o configurou não é mais membro da organização",
   "forms.why.missing_permission": "Quem o configurou não tem mais permissão para criar envelopes",
   "forms.why.template_access": "Quem o configurou não tem mais acesso ao modelo",
@@ -306,7 +314,8 @@ const pt: Record<Key, string> = {
   "pub.copyNoteDownload": "Ao terminar, você baixa o documento assinado na página de assinatura.",
   "pub.err.captcha": "Não conseguimos confirmar que você não é um robô. Conclua a verificação e toque em Continuar novamente.",
   "pub.err.formTokenCaptcha": "O formulário foi renovado. Conclua a verificação novamente e toque em Continuar (seus dados continuam preenchidos).",
-  "pub.captchaLoadError": "Não foi possível carregar a verificação anti-robô. Verifique sua conexão (ou um bloqueador de conteúdo) e tente novamente.",
+  "pub.captchaLoadError":
+    "Não foi possível carregar a verificação anti-robô. Verifique sua conexão (ou um bloqueador de conteúdo) e tente novamente.",
   "pub.captchaRetry": "Tentar novamente",
   "pub.err.recent": "Já recebemos um envio igual há alguns minutos. Continue na aba onde preencheu o formulário ou tente mais tarde.",
   "pub.err.busy": "Este formulário recebeu envios demais. Tente mais tarde.",
@@ -355,7 +364,8 @@ const en: Record<Key, string> = {
   "bulk.step2": "2. Recipients (CSV)",
   "bulk.step3": "3. Review and send",
   "bulk.downloadSkeleton": "Download sample CSV",
-  "bulk.skeletonHint": "One column per role attribute (Role.name, Role.email, Role.phone, Role.channels) and one per field to prefill (field.Label). Works with Excel (comma or semicolon).",
+  "bulk.skeletonHint":
+    "One column per role attribute (Role.name, Role.email, Role.phone, Role.channels) and one per field to prefill (field.Label). Works with Excel (comma or semicolon).",
   "bulk.uploadCsv": "Upload CSV",
   "bulk.orPaste": "or paste it here",
   "bulk.validate": "Validate",
@@ -403,7 +413,8 @@ const en: Record<Key, string> = {
   "bulk.item.cancelled": "Cancelled",
   "bulk.useFromTemplate": "Bulk send",
   "forms.title": "Web forms",
-  "forms.intro": "A public link (or embedded in your site) where anyone enters their details and signs. Great for onboarding, applications and consents.",
+  "forms.intro":
+    "A public link (or embedded in your site) where anyone enters their details and signs. Great for onboarding, applications and consents.",
   "forms.new": "New web form",
   "forms.edit": "Edit web form",
   "forms.empty": "You haven't created any web forms yet.",
@@ -414,7 +425,8 @@ const en: Record<Key, string> = {
   "forms.fixedHint": "For example, your company representative who signs afterwards.",
   "forms.prefill": "Prefilled values",
   "forms.lockPrefill": "Read-only prefilled values",
-  "forms.lockPrefillHint": "Whoever fills in the form sees the prefilled values in their fields but can't change them. Without this option, they're suggested values the person can correct.",
+  "forms.lockPrefillHint":
+    "Whoever fills in the form sees the prefilled values in their fields but can't change them. Without this option, they're suggested values the person can correct.",
   "forms.options": "Options",
   "forms.active": "Active",
   "forms.maxUses": "Maximum uses",
@@ -437,7 +449,8 @@ const en: Record<Key, string> = {
   "forms.deleteConfirm": "The link stops working. Envelopes already created are not affected. Delete?",
   "forms.inactive": "Inactive",
   "forms.ownerInactive": "Not available to the public",
-  "forms.ownerInactiveHint": "The form accepts no submissions while the person who set it up cannot create envelopes with this template. To reactivate it, restore their access or create the form again with someone else.",
+  "forms.ownerInactiveHint":
+    "The form accepts no submissions while the person who set it up cannot create envelopes with this template. To reactivate it, restore their access or create the form again with someone else.",
   "forms.why.not_member": "The person who set it up is no longer a member of the organization",
   "forms.why.missing_permission": "The person who set it up can no longer create envelopes",
   "forms.why.template_access": "The person who set it up no longer has access to the template",
@@ -461,7 +474,8 @@ const en: Record<Key, string> = {
   "pub.err.formTokenCaptcha": "The form was refreshed. Complete the check again and tap Continue (your details are kept).",
   "pub.captchaLoadError": "The anti-robot check couldn't load. Check your connection (or a content blocker) and try again.",
   "pub.captchaRetry": "Try again",
-  "pub.err.recent": "We already received an identical submission a few minutes ago. Continue in the tab where you filled in the form or try again later.",
+  "pub.err.recent":
+    "We already received an identical submission a few minutes ago. Continue in the tab where you filled in the form or try again later.",
   "pub.err.busy": "This form has received too many submissions. Try again later.",
   "pub.unavailable": "This form is not available",
   "pub.unavailable.inactive": "The organization turned it off.",

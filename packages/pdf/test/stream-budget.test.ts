@@ -83,7 +83,7 @@ describe("tope de descompresión al cargar un PDF", () => {
 
   // Antes, por cada "stream" se buscaba hacia atrás sin límite y se armaba un string con todo el tramo: 1 MB de
   // "stream" repetido tardaba ~30 s (sincrónico, alcanzable sin autenticación por /v1/validate).
-  it("es lineal con miles de \"stream\" seguidos", () => {
+  it('es lineal con miles de "stream" seguidos', () => {
     const n = Math.floor((4 * 1024 * 1024) / 10);
     const variants = [
       "%PDF-1.4\n" + "stream".repeat(n),
@@ -130,7 +130,19 @@ describe("tope de descompresión al cargar un PDF", () => {
     expect(structureWithinBudget(padded(4 * 1024 * 1024), 1024 * 1024)).toBe(false);
     expect(structureWithinBudget(padded(512 * 1024), 1024 * 1024)).toBe(true);
     // Con el nombre escapado (#53 = S) también.
-    expect(structureWithinBudget(new Uint8Array(Buffer.from(Buffer.from(padded(4 * 1024 * 1024)).toString("latin1").replace("/ObjStm", "/Obj#53tm"), "latin1")), 1024 * 1024)).toBe(false);
+    expect(
+      structureWithinBudget(
+        new Uint8Array(
+          Buffer.from(
+            Buffer.from(padded(4 * 1024 * 1024))
+              .toString("latin1")
+              .replace("/ObjStm", "/Obj#53tm"),
+            "latin1",
+          ),
+        ),
+        1024 * 1024,
+      ),
+    ).toBe(false);
     // Sin ningún "obj" antes: no se puede medir, se rechaza.
     expect(structureWithinBudget(padded(1024, ""), 1024 * 1024)).toBe(false);
   });

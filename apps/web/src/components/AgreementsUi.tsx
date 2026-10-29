@@ -150,7 +150,7 @@ export function DocPreview({
       {blocks.length === 0 && <p className="muted small">—</p>}
       {blocks.map((b, i) => {
         if (b.type === "heading") {
-          const H = (`h${b.level + 1}` as "h2" | "h3" | "h4");
+          const H = `h${b.level + 1}` as "h2" | "h3" | "h4";
           return <H key={i}>{runs(b.runs, ta)}</H>;
         }
         if (b.type === "paragraph") return <p key={i}>{runs(b.runs, ta)}</p>;
@@ -207,13 +207,7 @@ export function DiffView({ parts }: { parts: DiffPart[] }) {
   return (
     <div className="agr-diff" aria-live="polite">
       {parts.map((p, i) =>
-        p.op === "eq" ? (
-          <span key={i}>{p.text}</span>
-        ) : p.op === "ins" ? (
-          <ins key={i}>{p.text}</ins>
-        ) : (
-          <del key={i}>{p.text}</del>
-        ),
+        p.op === "eq" ? <span key={i}>{p.text}</span> : p.op === "ins" ? <ins key={i}>{p.text}</ins> : <del key={i}>{p.text}</del>,
       )}
     </div>
   );

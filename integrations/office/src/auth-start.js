@@ -12,7 +12,12 @@ const challenge = q.get("code_challenge");
 const state = q.get("state");
 const scope = q.get("scope") || "";
 
-if (ok(clientId, /^[A-Za-z0-9._~-]{1,100}$/) && ok(challenge, /^[A-Za-z0-9_-]{43,128}$/) && ok(state, /^[A-Za-z0-9_-]{8,200}$/) && /^[a-z_: ]{0,500}$/.test(scope)) {
+if (
+  ok(clientId, /^[A-Za-z0-9._~-]{1,100}$/) &&
+  ok(challenge, /^[A-Za-z0-9_-]{43,128}$/) &&
+  ok(state, /^[A-Za-z0-9_-]{8,200}$/) &&
+  /^[a-z_: ]{0,500}$/.test(scope)
+) {
   const p = new URLSearchParams({
     response_type: "code",
     client_id: clientId,

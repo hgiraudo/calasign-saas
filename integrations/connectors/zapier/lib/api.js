@@ -6,15 +6,17 @@ const BASE_URL = process.env.CALASIGN_BASE_URL || "{{BASE_URL}}";
 const url = (path) => `${BASE_URL}${path}`;
 
 /** Adaptador para lib/quicksend.js: request(method, path, { json, body, headers }) → JSON. */
-const requester = (z) => async (method, path, opts = {}) => {
-  const res = await z.request({
-    url: url(path),
-    method,
-    headers: opts.headers || {},
-    ...(opts.json !== undefined ? { body: opts.json } : opts.body !== undefined ? { body: opts.body } : {}),
-  });
-  return res.data;
-};
+const requester =
+  (z) =>
+  async (method, path, opts = {}) => {
+    const res = await z.request({
+      url: url(path),
+      method,
+      headers: opts.headers || {},
+      ...(opts.json !== undefined ? { body: opts.json } : opts.body !== undefined ? { body: opts.body } : {}),
+    });
+    return res.data;
+  };
 
 /**
  * Lanza el error de Zapier que corresponde a una respuesta >= 400 de la API de CalaSign: 401 → "Reconnect your account",
@@ -37,7 +39,8 @@ function throwApiError(response, z) {
   if (response.status === 429) {
     // Solo el límite de tasa genérico (con Retry-After, código bad_request/rate_limited) es reintentable. Los 429 de
     // negocio (reminded_recently, etc.) traen su propio código y no Retry-After: reintentarlos no sirve.
-    const getHeader = (n) => (response.headers && typeof response.headers.get === "function" ? response.headers.get(n) : response.headers && response.headers[n]);
+    const getHeader = (n) =>
+      response.headers && typeof response.headers.get === "function" ? response.headers.get(n) : response.headers && response.headers[n];
     const retryAfter = Number(getHeader("retry-after"));
     if (Number.isFinite(retryAfter) && retryAfter > 0) throw new z.errors.ThrottledError(message, Math.ceil(retryAfter));
     if (code === "429" || code === "bad_request" || code === "rate_limited") throw new z.errors.ThrottledError(message, 60);
@@ -62,7 +65,15 @@ function flattenEnvelope(detail) {
     signed_sha256: e.signedSha256 || null,
     metadata: e.metadata || {},
     documents: (detail && detail.documents) || [],
-    recipients: ((detail && detail.recipients) || []).map((r) => ({ id: r.id, name: r.name, email: r.email, phone: r.phone, role: r.role, status: r.status, signed_at: r.signedAt || null })),
+    recipients: ((detail && detail.recipients) || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      phone: r.phone,
+      role: r.role,
+      status: r.status,
+      signed_at: r.signedAt || null,
+    })),
     app_url: e.id ? `${BASE_URL}/app/envelopes/${e.id}` : null,
   };
 }
@@ -78,7 +89,10 @@ function idempotencyKey(bundle, action) {
   if (i.idempotency_key) return `zap-${String(i.idempotency_key).slice(0, 150)}`;
   const zap = (bundle && bundle.meta && bundle.meta.zap && bundle.meta.zap.id) || "x";
   const day = new Date().toISOString().slice(0, 10);
-  const hash = createHash("sha256").update(`${action}\n${JSON.stringify(i)}`).digest("hex").slice(0, 32);
+  const hash = createHash("sha256")
+    .update(`${action}\n${JSON.stringify(i)}`)
+    .digest("hex")
+    .slice(0, 32);
   return `zap-${zap}-${action}-${hash}-${day}`;
 }
 
@@ -86,7 +100,8 @@ const IDEMPOTENCY_FIELD = {
   key: "idempotency_key",
   label: "Idempotency key",
   required: false,
-  helpText: "Optional. Retries with the same key never create a second envelope (e.g. map the ID of the source record). By default it is derived from the Zap, the action data and the day.",
+  helpText:
+    "Optional. Retries with the same key never create a second envelope (e.g. map the ID of the source record). By default it is derived from the Zap, the action data and the day.",
 };
 
 module.exports = { BASE_URL, url, requester, flattenEnvelope, idempotencyKey, IDEMPOTENCY_FIELD, throwApiError };

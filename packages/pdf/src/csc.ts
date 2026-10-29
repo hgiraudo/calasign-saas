@@ -44,9 +44,13 @@ export function cscSignAlgoFor(certDer: Uint8Array): { signAlgo: string; ecdsa: 
   try {
     alg = signingAlgorithmFor(certDer);
   } catch (e) {
-    throw new CscError(`El certificado de la credencial usa una clave que no se puede usar para firmar (${(e as Error).message}): se admiten RSA y ECDSA P-256/P-384`);
+    throw new CscError(
+      `El certificado de la credencial usa una clave que no se puede usar para firmar (${(e as Error).message}): se admiten RSA y ECDSA P-256/P-384`,
+    );
   }
-  return alg.algorithm === "ECDSA" ? { signAlgo: SHA256_ECDSA_OID, ecdsa: true, namedCurve: alg.namedCurve } : { signAlgo: SHA256_RSA_OID, ecdsa: false, namedCurve: null };
+  return alg.algorithm === "ECDSA"
+    ? { signAlgo: SHA256_ECDSA_OID, ecdsa: true, namedCurve: alg.namedCurve }
+    : { signAlgo: SHA256_RSA_OID, ecdsa: false, namedCurve: null };
 }
 
 export class CscClient {
@@ -75,7 +79,12 @@ export class CscClient {
     const res = await this.f(a.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "client_credentials", client_id: a.clientId, client_secret: a.clientSecret, ...(a.scope ? { scope: a.scope } : {}) }),
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: a.clientId,
+        client_secret: a.clientSecret,
+        ...(a.scope ? { scope: a.scope } : {}),
+      }),
       signal: AbortSignal.timeout(15_000),
     });
     const body: any = await res.json().catch(() => ({}));
@@ -105,10 +114,11 @@ export class CscClient {
   }
 
   async credentialInfo(credentialID: string) {
-    return this.call<{ cert: { certificates?: string[]; status?: string; subjectDN?: string }; key?: { algo?: string[]; status?: string }; authMode?: string }>(
-      "credentials/info",
-      { credentialID, certificates: "chain", certInfo: true },
-    );
+    return this.call<{
+      cert: { certificates?: string[]; status?: string; subjectDN?: string };
+      key?: { algo?: string[]; status?: string };
+      authMode?: string;
+    }>("credentials/info", { credentialID, certificates: "chain", certInfo: true });
   }
 
   async authorize(credentialID: string, hashesB64: string[]): Promise<string> {

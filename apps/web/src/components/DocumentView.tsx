@@ -20,7 +20,17 @@ interface Props {
   onStatus?: (status: "loading" | "ready" | "error") => void;
 }
 
-export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPageDrop, overlayClassName, showTitle = true, headingLevel = 3, onStatus }: Props) {
+export function DocumentView({
+  doc,
+  url,
+  renderOverlay,
+  onPagePointerDown,
+  onPageDrop,
+  overlayClassName,
+  showTitle = true,
+  headingLevel = 3,
+  onStatus,
+}: Props) {
   const Heading = headingLevel === 2 ? "h2" : "h3";
   const { t } = useI18n();
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -61,7 +71,10 @@ export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPag
     <section className="doc-view" data-document={doc.id}>
       {showTitle && (
         <Heading className="doc-title">
-          {doc.name} <span className="muted small">· {doc.pageCount} {t("edit.pages")}</span>
+          {doc.name}{" "}
+          <span className="muted small">
+            · {doc.pageCount} {t("edit.pages")}
+          </span>
         </Heading>
       )}
       {error && (

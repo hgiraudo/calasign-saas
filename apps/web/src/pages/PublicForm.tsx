@@ -10,7 +10,10 @@ import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { BrandFooter } from "../components/BrandFooter";
 
 type TurnstileApi = {
-  render: (el: HTMLElement, o: { sitekey: string; callback: (t: string) => void; "expired-callback": () => void; "error-callback": () => void; language?: string }) => string;
+  render: (
+    el: HTMLElement,
+    o: { sitekey: string; callback: (t: string) => void; "expired-callback": () => void; "error-callback": () => void; language?: string },
+  ) => string;
   reset: (id: string) => void;
   remove: (id: string) => void;
 };
@@ -21,7 +24,10 @@ function loadTurnstile(): Promise<TurnstileApi> {
   const w = window as unknown as { turnstile?: TurnstileApi };
   if (w.turnstile) return Promise.resolve(w.turnstile);
   turnstileScript ??= new Promise((resolve, reject) => {
-    const el = Object.assign(document.createElement("script"), { src: "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit", async: true });
+    const el = Object.assign(document.createElement("script"), {
+      src: "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",
+      async: true,
+    });
     el.onload = () => (w.turnstile ? resolve(w.turnstile) : reject(new Error("turnstile")));
     el.onerror = () => {
       turnstileScript = null;
@@ -33,7 +39,17 @@ function loadTurnstile(): Promise<TurnstileApi> {
 }
 
 /** Desafío anti-bots (solo si la plataforma lo configuró: el formulario trae captchaSiteKey). */
-export function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: string; locale: string; onToken: (t: string | null) => void; resetSignal: number }) {
+export function Captcha({
+  siteKey,
+  locale,
+  onToken,
+  resetSignal,
+}: {
+  siteKey: string;
+  locale: string;
+  onToken: (t: string | null) => void;
+  resetSignal: number;
+}) {
   const st = useScaleText();
   const box = useRef<HTMLDivElement>(null);
   const widget = useRef<{ api: TurnstileApi; id: string } | null>(null);
@@ -47,7 +63,13 @@ export function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: st
     loadTurnstile()
       .then((api) => {
         if (gone || !box.current) return;
-        const id = api.render(box.current, { sitekey: siteKey, callback: (t) => onToken(t), "expired-callback": () => onToken(null), "error-callback": () => onToken(null), language: locale });
+        const id = api.render(box.current, {
+          sitekey: siteKey,
+          callback: (t) => onToken(t),
+          "expired-callback": () => onToken(null),
+          "error-callback": () => onToken(null),
+          language: locale,
+        });
         widget.current = { api, id };
       })
       .catch(() => {
@@ -129,7 +151,13 @@ export function PublicFormPage() {
    */
   const markUnavailable = (err: unknown): boolean => {
     if (!(err instanceof HttpError)) return false;
-    const reasons: Record<string, PublicWebForm["unavailableReason"]> = { form_inactive: "inactive", form_expired: "expired", form_exhausted: "exhausted", form_unavailable: null, form_misconfigured: null };
+    const reasons: Record<string, PublicWebForm["unavailableReason"]> = {
+      form_inactive: "inactive",
+      form_expired: "expired",
+      form_exhausted: "exhausted",
+      form_unavailable: null,
+      form_misconfigured: null,
+    };
     if (!(err.code in reasons) || (err.status !== 410 && err.code !== "form_misconfigured")) return false;
     setForm((f) => (f ? { ...f, available: false, unavailableReason: reasons[err.code] } : f));
     setError(null);
@@ -196,7 +224,11 @@ export function PublicFormPage() {
   return (
     <div className={`pubform ${embed ? "embed" : ""}`}>
       <header className="pubform-bar" style={bar}>
-        {form?.branding?.logoUrl ? <img src={form.branding.logoUrl} alt={form.organizationName} /> : <strong>{form?.organizationName ?? <Logo light />}</strong>}
+        {form?.branding?.logoUrl ? (
+          <img src={form.branding.logoUrl} alt={form.organizationName} />
+        ) : (
+          <strong>{form?.organizationName ?? <Logo light />}</strong>
+        )}
         <LocaleSwitcher compact />
       </header>
       <main className="pubform-main">
@@ -204,7 +236,11 @@ export function PublicFormPage() {
           {notFound ? (
             <p>{st("pub.notFound")}</p>
           ) : !form ? (
-            error ? <ErrorBox error={error} /> : <Spinner />
+            error ? (
+              <ErrorBox error={error} />
+            ) : (
+              <Spinner />
+            )
           ) : !form.available ? (
             <>
               <h1>{st("pub.unavailable")}</h1>
@@ -231,10 +267,21 @@ export function PublicFormPage() {
                   <div className="field">
                     <label className="field">
                       <span>{st("pub.phone")}</span>
-                      <input required type="tel" pattern="\+[1-9][0-9]{6,14}" autoComplete="tel" placeholder="+57…" aria-describedby="pub-phone-hint" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[\s()-]/g, ""))} />
+                      <input
+                        required
+                        type="tel"
+                        pattern="\+[1-9][0-9]{6,14}"
+                        autoComplete="tel"
+                        placeholder="+57…"
+                        aria-describedby="pub-phone-hint"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/[\s()-]/g, ""))}
+                      />
                     </label>
                     {/* Fuera del label: si no, el formato se leía dos veces (en el nombre y en la descripción). */}
-                    <small id="pub-phone-hint" className="muted small">{st("pub.phoneHint")}</small>
+                    <small id="pub-phone-hint" className="muted small">
+                      {st("pub.phoneHint")}
+                    </small>
                   </div>
                 )}
                 {/* Trampa para bots: invisible para las personas. */}

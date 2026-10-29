@@ -8,7 +8,8 @@ const es = {
   "int.title": "Integraciones",
   "int.intro": "Avisos automáticos a tus sistemas (webhooks) y firma dentro de tu propia aplicación.",
   "wh.title": "Webhooks",
-  "wh.intro": "Enviamos un POST firmado (HMAC-SHA256) a tu URL cada vez que pasa algo en un sobre. Si tu servidor no responde 2xx, reintentamos con espera creciente durante unas horas.",
+  "wh.intro":
+    "Enviamos un POST firmado (HMAC-SHA256) a tu URL cada vez que pasa algo en un sobre. Si tu servidor no responde 2xx, reintentamos con espera creciente durante unas horas.",
   "wh.url": "URL (https)",
   "wh.description": "Descripción",
   "wh.events": "Eventos",
@@ -54,15 +55,18 @@ const es = {
   "dev.intro": "API REST v1 de CalaSign: sobres, firmantes, campos, firma embebida y webhooks. La misma API que usa esta web.",
   "dev.spec": "Especificación OpenAPI",
   "dev.auth": "Autenticación",
-  "dev.authText": "Creá una API key en la consola y mandala en cada pedido como Authorization: Bearer <key>. Los errores vuelven como { error: { code, message, details } }. Los POST de creación y envío aceptan Idempotency-Key.",
+  "dev.authText":
+    "Creá una API key en la consola y mandala en cada pedido como Authorization: Bearer <key>. Los errores vuelven como { error: { code, message, details } }. Los POST de creación y envío aceptan Idempotency-Key.",
   "dev.quickstart": "Flujo básico",
   "dev.embedded": "Firma embebida (iframe)",
   "dev.embeddedText":
     "Marcá al destinatario con embedded: true (no recibe invitaciones), enviá el sobre y pedí una URL de firma de un solo uso (vence en 5 minutos). Abrila en un iframe desde un origen autorizado en Integraciones. La página avisa por postMessage.",
   "dev.anchors": "Campos por texto ancla",
-  "dev.anchorsText": "En lugar de coordenadas, ubicá campos buscando un texto del PDF. Se crea un campo por cada aparición; offsets y tamaño en puntos.",
+  "dev.anchorsText":
+    "En lugar de coordenadas, ubicá campos buscando un texto del PDF. Se crea un campo por cada aparición; offsets y tamaño en puntos.",
   "dev.webhooks": "Verificar webhooks",
-  "dev.webhooksText": "Cada entrega trae CalaSign-Signature: t=<unix>,v1=<hex>. Calculá HMAC-SHA256(secreto, \"<t>.<cuerpo>\") y compará en tiempo constante; rechazá timestamps viejos.",
+  "dev.webhooksText":
+    'Cada entrega trae CalaSign-Signature: t=<unix>,v1=<hex>. Calculá HMAC-SHA256(secreto, "<t>.<cuerpo>") y compará en tiempo constante; rechazá timestamps viejos.',
   "dev.endpoints": "Endpoints",
   "dev.loading": "Cargando especificación…",
   "dev.events": "Eventos",
@@ -76,7 +80,8 @@ const pt: Record<Key, string> = {
   "nav.developers": "Desenvolvedores",
   "int.title": "Integrações",
   "int.intro": "Avisos automáticos para os seus sistemas (webhooks) e assinatura dentro da sua própria aplicação.",
-  "wh.intro": "Enviamos um POST assinado (HMAC-SHA256) para a sua URL sempre que algo acontece em um envelope. Se o seu servidor não responder 2xx, tentamos de novo com espera crescente por algumas horas.",
+  "wh.intro":
+    "Enviamos um POST assinado (HMAC-SHA256) para a sua URL sempre que algo acontece em um envelope. Se o seu servidor não responder 2xx, tentamos de novo com espera crescente por algumas horas.",
   "wh.description": "Descrição",
   "wh.allEvents": "Todos os eventos",
   "wh.create": "Adicionar webhook",
@@ -117,15 +122,18 @@ const pt: Record<Key, string> = {
   "dev.intro": "API REST v1 da CalaSign: envelopes, signatários, campos, assinatura incorporada e webhooks. A mesma API que esta web usa.",
   "dev.spec": "Especificação OpenAPI",
   "dev.auth": "Autenticação",
-  "dev.authText": "Crie uma API key no console e envie em cada requisição como Authorization: Bearer <key>. Os erros voltam como { error: { code, message, details } }. Os POST de criação e envio aceitam Idempotency-Key.",
+  "dev.authText":
+    "Crie uma API key no console e envie em cada requisição como Authorization: Bearer <key>. Os erros voltam como { error: { code, message, details } }. Os POST de criação e envio aceitam Idempotency-Key.",
   "dev.quickstart": "Fluxo básico",
   "dev.embedded": "Assinatura incorporada (iframe)",
   "dev.embeddedText":
     "Marque o destinatário com embedded: true (não recebe convites), envie o envelope e peça uma URL de assinatura de uso único (vence em 5 minutos). Abra em um iframe a partir de uma origem autorizada em Integrações. A página avisa por postMessage.",
   "dev.anchors": "Campos por texto âncora",
-  "dev.anchorsText": "Em vez de coordenadas, posicione campos buscando um texto do PDF. É criado um campo para cada ocorrência; deslocamentos e tamanho em pontos.",
+  "dev.anchorsText":
+    "Em vez de coordenadas, posicione campos buscando um texto do PDF. É criado um campo para cada ocorrência; deslocamentos e tamanho em pontos.",
   "dev.webhooks": "Verificar webhooks",
-  "dev.webhooksText": "Cada entrega traz CalaSign-Signature: t=<unix>,v1=<hex>. Calcule HMAC-SHA256(segredo, \"<t>.<corpo>\") e compare em tempo constante; rejeite timestamps antigos.",
+  "dev.webhooksText":
+    'Cada entrega traz CalaSign-Signature: t=<unix>,v1=<hex>. Calcule HMAC-SHA256(segredo, "<t>.<corpo>") e compare em tempo constante; rejeite timestamps antigos.',
   "dev.loading": "Carregando especificação…",
 };
 
@@ -135,7 +143,8 @@ const en: Record<Key, string> = {
   "nav.developers": "Developers",
   "int.title": "Integrations",
   "int.intro": "Automatic notifications to your systems (webhooks) and signing inside your own application.",
-  "wh.intro": "We send a signed POST (HMAC-SHA256) to your URL whenever something happens to an envelope. If your server doesn't answer 2xx, we retry with growing delays for a few hours.",
+  "wh.intro":
+    "We send a signed POST (HMAC-SHA256) to your URL whenever something happens to an envelope. If your server doesn't answer 2xx, we retry with growing delays for a few hours.",
   "wh.url": "URL (https)",
   "wh.description": "Description",
   "wh.events": "Events",
@@ -181,15 +190,18 @@ const en: Record<Key, string> = {
   "dev.intro": "CalaSign REST API v1: envelopes, signers, fields, embedded signing and webhooks. The same API this web app uses.",
   "dev.spec": "OpenAPI specification",
   "dev.auth": "Authentication",
-  "dev.authText": "Create an API key in the console and send it on every request as Authorization: Bearer <key>. Errors come back as { error: { code, message, details } }. Create and send POSTs accept Idempotency-Key.",
+  "dev.authText":
+    "Create an API key in the console and send it on every request as Authorization: Bearer <key>. Errors come back as { error: { code, message, details } }. Create and send POSTs accept Idempotency-Key.",
   "dev.quickstart": "Basic flow",
   "dev.embedded": "Embedded signing (iframe)",
   "dev.embeddedText":
     "Mark the recipient with embedded: true (no invitations), send the envelope and request a single-use signing URL (expires in 5 minutes). Open it in an iframe from an origin authorized under Integrations. The page reports back via postMessage.",
   "dev.anchors": "Fields by anchor text",
-  "dev.anchorsText": "Instead of coordinates, place fields by searching for a text in the PDF. One field is created per occurrence; offsets and size in points.",
+  "dev.anchorsText":
+    "Instead of coordinates, place fields by searching for a text in the PDF. One field is created per occurrence; offsets and size in points.",
   "dev.webhooks": "Verifying webhooks",
-  "dev.webhooksText": "Each delivery carries CalaSign-Signature: t=<unix>,v1=<hex>. Compute HMAC-SHA256(secret, \"<t>.<body>\") and compare in constant time; reject old timestamps.",
+  "dev.webhooksText":
+    'Each delivery carries CalaSign-Signature: t=<unix>,v1=<hex>. Compute HMAC-SHA256(secret, "<t>.<body>") and compare in constant time; reject old timestamps.',
   "dev.endpoints": "Endpoints",
   "dev.loading": "Loading specification…",
   "dev.events": "Events",

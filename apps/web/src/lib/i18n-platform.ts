@@ -73,7 +73,8 @@ const es = {
   "consent.deny": "Cancelar",
   "consent.invalid": "Pedido de autorización inválido",
   "consent.redirecting": "Volviendo a la aplicación…",
-  "consent.unverified": "Aplicación no verificada: se registró sola (por ejemplo, un conector de Claude o ChatGPT) y CalaSign no confirmó quién la publica. Autorizala solo si la acabás de agregar vos.",
+  "consent.unverified":
+    "Aplicación no verificada: se registró sola (por ejemplo, un conector de Claude o ChatGPT) y CalaSign no confirmó quién la publica. Autorizala solo si la acabás de agregar vos.",
   "consent.unverifiedTag": "aplicación no verificada",
 
   "scope.envelopes:read": "Ver tus sobres y documentos",
@@ -96,9 +97,12 @@ const es = {
   "ntf.how.teams":
     "Teams: en el canal, ⋯ → Workflows → “Publicar en un canal cuando se recibe una solicitud de webhook” → elegir equipo y canal → copiar la URL. (Los conectores de Office 365 y su “Webhook entrante” fueron retirados por Microsoft: usá Workflows.)",
   "ntf.how.discord": "Discord: Ajustes del servidor → Integraciones → Webhooks → Nuevo webhook → elegir canal → Copiar URL del webhook.",
-  "ntf.how.google_chat": "Google Chat (Google Workspace): en el espacio, nombre del espacio → Apps e integraciones → Webhooks → Agregar webhook → copiar la URL.",
-  "ntf.how.mattermost": "Mattermost: Menú → Integraciones → Webhooks entrantes → Agregar webhook entrante → elegir canal → copiar la URL. Un administrador tiene que habilitar los webhooks entrantes.",
-  "ntf.how.rocketchat": "Rocket.Chat: Administración → Integraciones → Nueva → Webhook entrante → activarlo, elegir canal y usuario que publica → guardar → copiar la URL del webhook.",
+  "ntf.how.google_chat":
+    "Google Chat (Google Workspace): en el espacio, nombre del espacio → Apps e integraciones → Webhooks → Agregar webhook → copiar la URL.",
+  "ntf.how.mattermost":
+    "Mattermost: Menú → Integraciones → Webhooks entrantes → Agregar webhook entrante → elegir canal → copiar la URL. Un administrador tiene que habilitar los webhooks entrantes.",
+  "ntf.how.rocketchat":
+    "Rocket.Chat: Administración → Integraciones → Nueva → Webhook entrante → activarlo, elegir canal y usuario que publica → guardar → copiar la URL del webhook.",
   "ntf.how.webex": "Webex: en el App Hub, app “Incoming Webhooks” → Conectar → nombre y espacio → copiar la URL.",
   "ntf.kind": "Destino",
   "ntf.name": "Nombre",
@@ -123,7 +127,8 @@ const es = {
   "auto.step1": "Creá una API key en Ajustes → API keys (o una app OAuth con client credentials).",
   "auto.step2": "En Zapier usá “Webhooks by Zapier → Catch Hook” (o en Make, el módulo “Webhooks → Custom webhook”) y copiá la URL que te da.",
   "auto.step3": "En Ajustes → Integraciones creá un webhook con esa URL y elegí los eventos (por ejemplo envelope.completed).",
-  "auto.step4": "Para crear sobres desde Zapier o Make usá “Webhooks → POST” / “HTTP → Make a request” contra la API con el header Authorization: Bearer <API key>.",
+  "auto.step4":
+    "Para crear sobres desde Zapier o Make usá “Webhooks → POST” / “HTTP → Make a request” contra la API con el header Authorization: Bearer <API key>.",
   "auto.recipes": "Ideas",
   "auto.r1": "Cuando un sobre se completa → guardar el PDF en una carpeta y avisar en Slack.",
   "auto.r2": "Cuando entra un lead en el CRM → crear un sobre desde una plantilla y enviarlo.",
@@ -156,7 +161,8 @@ const es = {
   "sto.lastOk": "Última copia: {when}",
   "sto.createdBy": "Conectada por {who}",
   "sto.createdByGone": "{who} (ya no está en la organización)",
-  "sto.creatorRemoved": "Desactivada: quien la conectó dejó la organización. Para seguir exportando, conectá el almacenamiento de nuevo con una cuenta de la organización.",
+  "sto.creatorRemoved":
+    "Desactivada: quien la conectó dejó la organización. Para seguir exportando, conectá el almacenamiento de nuevo con una cuenta de la organización.",
   "sto.exports": "Copias recientes",
   "sto.exports.empty": "Todavía no se copió ningún documento.",
   "sto.exports.accessError": "No se pudieron cargar tus permisos, así que no se muestra el historial.",
@@ -184,7 +190,8 @@ const es = {
   "dom.value": "Valor",
   "dom.lastCheck": "Última verificación: {when}",
   "dom.verifiedAt": "Verificado el {when}. Los links nuevos usan https://{domain}.",
-  "dom.notServing": "Los dominios propios no están habilitados en este entorno: podés verificar el dominio, pero los links siguen usando el dominio de la plataforma.",
+  "dom.notServing":
+    "Los dominios propios no están habilitados en este entorno: podés verificar el dominio, pero los links siguen usando el dominio de la plataforma.",
   "dom.verifiedAtPlatform": "Verificado el {when}.",
 
   // Developers
@@ -265,7 +272,8 @@ const pt: Record<Key, string> = {
   "consent.deny": "Cancelar",
   "consent.invalid": "Pedido de autorização inválido",
   "consent.redirecting": "Voltando para a aplicação…",
-  "consent.unverified": "Aplicação não verificada: ela se registrou sozinha (por exemplo, um conector do Claude ou do ChatGPT) e a CalaSign não confirmou quem a publica. Autorize somente se você acabou de adicioná-la.",
+  "consent.unverified":
+    "Aplicação não verificada: ela se registrou sozinha (por exemplo, um conector do Claude ou do ChatGPT) e a CalaSign não confirmou quem a publica. Autorize somente se você acabou de adicioná-la.",
   "consent.unverifiedTag": "aplicação não verificada",
 
   "scope.envelopes:read": "Ver seus envelopes e documentos",
@@ -287,9 +295,12 @@ const pt: Record<Key, string> = {
   "ntf.how.teams":
     "Teams: no canal, ⋯ → Workflows → “Postar em um canal quando uma solicitação de webhook for recebida” → escolher equipe e canal → copiar a URL. (Os conectores do Office 365 e o “Webhook de entrada” foram descontinuados pela Microsoft: use Workflows.)",
   "ntf.how.discord": "Discord: Configurações do servidor → Integrações → Webhooks → Novo webhook → escolher canal → Copiar URL do webhook.",
-  "ntf.how.google_chat": "Google Chat (Google Workspace): no espaço, nome do espaço → Apps e integrações → Webhooks → Adicionar webhook → copiar a URL.",
-  "ntf.how.mattermost": "Mattermost: Menu → Integrações → Webhooks de entrada → Adicionar → escolher canal → copiar a URL. Um administrador precisa habilitar os webhooks de entrada.",
-  "ntf.how.rocketchat": "Rocket.Chat: Administração → Integrações → Nova → Webhook de entrada → ativar, escolher canal e usuário que publica → salvar → copiar a URL do webhook.",
+  "ntf.how.google_chat":
+    "Google Chat (Google Workspace): no espaço, nome do espaço → Apps e integrações → Webhooks → Adicionar webhook → copiar a URL.",
+  "ntf.how.mattermost":
+    "Mattermost: Menu → Integrações → Webhooks de entrada → Adicionar → escolher canal → copiar a URL. Um administrador precisa habilitar os webhooks de entrada.",
+  "ntf.how.rocketchat":
+    "Rocket.Chat: Administração → Integrações → Nova → Webhook de entrada → ativar, escolher canal e usuário que publica → salvar → copiar a URL do webhook.",
   "ntf.how.webex": "Webex: no App Hub, app “Incoming Webhooks” → Conectar → nome e espaço → copiar a URL.",
   "ntf.kind": "Destino",
   "ntf.name": "Nome",
@@ -313,7 +324,8 @@ const pt: Record<Key, string> = {
   "auto.step1": "Crie uma API key em Configurações → API keys (ou um app OAuth com client credentials).",
   "auto.step2": "No Zapier use “Webhooks by Zapier → Catch Hook” (ou no Make, o módulo “Webhooks → Custom webhook”) e copie a URL.",
   "auto.step3": "Em Configurações → Integrações crie um webhook com essa URL e escolha os eventos (por exemplo envelope.completed).",
-  "auto.step4": "Para criar envelopes pelo Zapier ou Make use “Webhooks → POST” / “HTTP → Make a request” na API com o header Authorization: Bearer <API key>.",
+  "auto.step4":
+    "Para criar envelopes pelo Zapier ou Make use “Webhooks → POST” / “HTTP → Make a request” na API com o header Authorization: Bearer <API key>.",
   "auto.recipes": "Ideias",
   "auto.r1": "Quando um envelope é concluído → salvar o PDF numa pasta e avisar no Slack.",
   "auto.r2": "Quando entra um lead no CRM → criar um envelope a partir de um modelo e enviá-lo.",
@@ -345,7 +357,8 @@ const pt: Record<Key, string> = {
   "sto.lastOk": "Última cópia: {when}",
   "sto.createdBy": "Conectada por {who}",
   "sto.createdByGone": "{who} (não faz mais parte da organização)",
-  "sto.creatorRemoved": "Desativada: quem a conectou saiu da organização. Para continuar exportando, conecte o armazenamento novamente com uma conta da organização.",
+  "sto.creatorRemoved":
+    "Desativada: quem a conectou saiu da organização. Para continuar exportando, conecte o armazenamento novamente com uma conta da organização.",
   "sto.exports": "Cópias recentes",
   "sto.exports.empty": "Nenhum documento copiado ainda.",
   "sto.exports.accessError": "Não foi possível carregar suas permissões, então o histórico não é exibido.",
@@ -372,7 +385,8 @@ const pt: Record<Key, string> = {
   "dom.value": "Valor",
   "dom.lastCheck": "Última verificação: {when}",
   "dom.verifiedAt": "Verificado em {when}. Os novos links usam https://{domain}.",
-  "dom.notServing": "Os domínios próprios não estão habilitados neste ambiente: você pode verificar o domínio, mas os links continuam usando o domínio da plataforma.",
+  "dom.notServing":
+    "Os domínios próprios não estão habilitados neste ambiente: você pode verificar o domínio, mas os links continuam usando o domínio da plataforma.",
   "dom.verifiedAtPlatform": "Verificado em {when}.",
 
   "dev.oauth": "OAuth 2.0",
@@ -450,7 +464,8 @@ const en: Record<Key, string> = {
   "consent.deny": "Cancel",
   "consent.invalid": "Invalid authorization request",
   "consent.redirecting": "Returning to the application…",
-  "consent.unverified": "Unverified application: it registered itself (for example, a Claude or ChatGPT connector) and CalaSign hasn't confirmed who publishes it. Only authorize it if you just added it yourself.",
+  "consent.unverified":
+    "Unverified application: it registered itself (for example, a Claude or ChatGPT connector) and CalaSign hasn't confirmed who publishes it. Only authorize it if you just added it yourself.",
   "consent.unverifiedTag": "unverified application",
 
   "scope.envelopes:read": "View your envelopes and documents",
@@ -473,8 +488,10 @@ const en: Record<Key, string> = {
     "Teams: in the channel, ⋯ → Workflows → “Post to a channel when a webhook request is received” → pick team and channel → copy the URL. (Microsoft retired Office 365 connectors and their “Incoming Webhook”: use Workflows.)",
   "ntf.how.discord": "Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL.",
   "ntf.how.google_chat": "Google Chat (Google Workspace): in the space, space name → Apps & integrations → Webhooks → Add webhook → copy the URL.",
-  "ntf.how.mattermost": "Mattermost: Menu → Integrations → Incoming Webhooks → Add Incoming Webhook → pick a channel → copy the URL. An admin must enable incoming webhooks.",
-  "ntf.how.rocketchat": "Rocket.Chat: Administration → Integrations → New → Incoming webhook → enable it, pick channel and posting user → save → copy the webhook URL.",
+  "ntf.how.mattermost":
+    "Mattermost: Menu → Integrations → Incoming Webhooks → Add Incoming Webhook → pick a channel → copy the URL. An admin must enable incoming webhooks.",
+  "ntf.how.rocketchat":
+    "Rocket.Chat: Administration → Integrations → New → Incoming webhook → enable it, pick channel and posting user → save → copy the webhook URL.",
   "ntf.how.webex": "Webex: in the App Hub, “Incoming Webhooks” app → Connect → name and space → copy the URL.",
   "ntf.kind": "Destination",
   "ntf.name": "Name",
@@ -498,7 +515,8 @@ const en: Record<Key, string> = {
   "auto.step1": "Create an API key in Settings → API keys (or an OAuth app with client credentials).",
   "auto.step2": "In Zapier use “Webhooks by Zapier → Catch Hook” (or in Make, “Webhooks → Custom webhook”) and copy the URL.",
   "auto.step3": "In Settings → Integrations create a webhook with that URL and pick the events (e.g. envelope.completed).",
-  "auto.step4": "To create envelopes from Zapier or Make use “Webhooks → POST” / “HTTP → Make a request” against the API with Authorization: Bearer <API key>.",
+  "auto.step4":
+    "To create envelopes from Zapier or Make use “Webhooks → POST” / “HTTP → Make a request” against the API with Authorization: Bearer <API key>.",
   "auto.recipes": "Ideas",
   "auto.r1": "When an envelope completes → save the PDF to a folder and post to Slack.",
   "auto.r2": "When a CRM lead comes in → create an envelope from a template and send it.",
@@ -530,7 +548,8 @@ const en: Record<Key, string> = {
   "sto.lastOk": "Last copy: {when}",
   "sto.createdBy": "Connected by {who}",
   "sto.createdByGone": "{who} (no longer in the organization)",
-  "sto.creatorRemoved": "Deactivated: the person who connected it left the organization. To keep exporting, connect the storage again with an organization account.",
+  "sto.creatorRemoved":
+    "Deactivated: the person who connected it left the organization. To keep exporting, connect the storage again with an organization account.",
   "sto.exports": "Recent copies",
   "sto.exports.empty": "No document copied yet.",
   "sto.exports.accessError": "Your permissions could not be loaded, so the history is not shown.",

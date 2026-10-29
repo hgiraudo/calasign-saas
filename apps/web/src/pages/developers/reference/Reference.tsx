@@ -39,9 +39,20 @@ function Constraints({ s }: { s: JsonSchema }) {
         ))}
       </span>,
     );
-  if (s.default !== undefined) parts.push(<span key="d">{t("ref.default")} <code>{JSON.stringify(s.default)}</code></span>);
+  if (s.default !== undefined)
+    parts.push(
+      <span key="d">
+        {t("ref.default")} <code>{JSON.stringify(s.default)}</code>
+      </span>,
+    );
   const range = (lo?: number | boolean, hi?: number | boolean, unit = "") =>
-    typeof lo === "number" && typeof hi === "number" ? `${lo}–${hi}${unit}` : typeof lo === "number" ? `≥ ${lo}${unit}` : typeof hi === "number" ? `≤ ${hi}${unit}` : null;
+    typeof lo === "number" && typeof hi === "number"
+      ? `${lo}–${hi}${unit}`
+      : typeof lo === "number"
+        ? `≥ ${lo}${unit}`
+        : typeof hi === "number"
+          ? `≤ ${hi}${unit}`
+          : null;
   // Cotas exclusivas se muestran con > / <, no como si fueran inclusivas. Dos formas: número (OpenAPI 3.1) o booleano
   // junto a minimum/maximum (estilo 3.0, el que emite zod-to-json-schema para .positive(): minimum 0 + exclusiveMinimum true).
   const exMin = typeof s.exclusiveMinimum === "number" ? s.exclusiveMinimum : s.exclusiveMinimum === true ? s.minimum : undefined;
@@ -60,9 +71,23 @@ function Constraints({ s }: { s: JsonSchema }) {
   if (len) parts.push(<span key="l">{len}</span>);
   const items = range(s.minItems, s.maxItems, ` ${t("ref.items")}`);
   if (items) parts.push(<span key="i">{items}</span>);
-  if (s.pattern && s.pattern.length < 60) parts.push(<span key="p"><code>{s.pattern}</code></span>);
+  if (s.pattern && s.pattern.length < 60)
+    parts.push(
+      <span key="p">
+        <code>{s.pattern}</code>
+      </span>,
+    );
   if (!parts.length) return null;
-  return <div className="ref-constraints">{parts.map((p, i) => <span key={i}>{i > 0 && " · "}{p}</span>)}</div>;
+  return (
+    <div className="ref-constraints">
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && " · "}
+          {p}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function objectProps(spec: Spec, s: JsonSchema): { props: [string, JsonSchema][]; required: Set<string> } {
@@ -159,7 +184,13 @@ export function SchemaView({ spec, schema, depth = 0 }: { spec: Spec; schema: Js
   const type = Array.isArray(s.type) ? s.type.find((x) => x !== "null") : s.type;
   if (type === "array" && s.items) {
     const child = childSchema(spec, s.items);
-    return child ? <SchemaProps spec={spec} schema={child} depth={depth} /> : <p className="small"><code>{typeLabel(spec, s)}</code></p>;
+    return child ? (
+      <SchemaProps spec={spec} schema={child} depth={depth} />
+    ) : (
+      <p className="small">
+        <code>{typeLabel(spec, s)}</code>
+      </p>
+    );
   }
   if (s.properties || s.allOf || s.anyOf || s.oneOf || s.additionalProperties) return <SchemaProps spec={spec} schema={s} depth={depth} />;
   return (
@@ -177,7 +208,12 @@ function params(spec: Spec, e: OpEntry): Parameter[] {
 
 function authBadges(spec: Spec, e: OpEntry, t: DocsT) {
   const sec = e.op.security;
-  if (sec && sec.length === 0) return [<Badge key="p" tone="ok">{t("ref.public")}</Badge>];
+  if (sec && sec.length === 0)
+    return [
+      <Badge key="p" tone="ok">
+        {t("ref.public")}
+      </Badge>,
+    ];
   const out: ReactNode[] = [];
   for (const req of sec ?? []) {
     for (const [name, scopes] of Object.entries(req)) {
@@ -221,7 +257,9 @@ function ResponseView({ spec, code, resp }: { spec: Spec; code: string; resp: Re
   const t = useDocsText();
   const r = deref(spec, resp)!;
   const [ctype, mt] = Object.entries(r.content ?? {})[0] ?? [];
-  const example = mt ? (mt.example ?? Object.values(mt.examples ?? {})[0]?.value ?? (ctype?.includes("json") ? exampleFor(spec, mt.schema) : undefined)) : undefined;
+  const example = mt
+    ? (mt.example ?? Object.values(mt.examples ?? {})[0]?.value ?? (ctype?.includes("json") ? exampleFor(spec, mt.schema) : undefined))
+    : undefined;
   const ok = code.startsWith("2");
   return (
     <details className={`ref-resp ${ok ? "ok" : "err"}`} open={ok}>
@@ -280,7 +318,9 @@ function OperationView({ spec, e }: { spec: Spec; e: OpEntry }) {
                   {p.required && <Badge tone="warn">{t("ui.required")}</Badge>}
                 </span>,
                 p.in,
-                <span key="t" className="ref-prop-type">{typeLabel(spec, p.schema)}</span>,
+                <span key="t" className="ref-prop-type">
+                  {typeLabel(spec, p.schema)}
+                </span>,
                 <span key="d">
                   {p.description && <Inline text={p.description} />}
                   {p.schema && <Constraints s={deref(spec, p.schema)!} />}

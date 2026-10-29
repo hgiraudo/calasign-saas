@@ -96,14 +96,20 @@ const hookBase = `http://127.0.0.1:${server.address().port}`;
 
 try {
   const stamp = Date.now();
-  await api("POST", "/v1/auth/signup", { name: "Integradora", email: `int+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Fintech ${stamp}` });
+  await api("POST", "/v1/auth/signup", {
+    name: "Integradora",
+    email: `int+${stamp}@example.com`,
+    password: "una-clave-segura-123",
+    organization: `Fintech ${stamp}`,
+  });
   const key = await api("POST", "/v1/api-keys", { name: "e2e" });
   bearer = key.secret;
   ok("cuenta + API key (el resto va con Bearer)");
 
   // OpenAPI
   const spec = await api("GET", "/v1/openapi.json");
-  if (spec.openapi !== "3.1.0" || !spec.paths["/v1/webhooks"] || !spec.paths["/v1/envelopes/{id}/recipients/{recipientId}/signing-url"]) fail("OpenAPI incompleto");
+  if (spec.openapi !== "3.1.0" || !spec.paths["/v1/webhooks"] || !spec.paths["/v1/envelopes/{id}/recipients/{recipientId}/signing-url"])
+    fail("OpenAPI incompleto");
   ok(`OpenAPI ${spec.openapi}: ${Object.keys(spec.paths).length} rutas`);
 
   // Webhooks
@@ -155,13 +161,21 @@ try {
       { recipientId: signer, type: "signature", anchor: { text: "[[s1]]", offsetX: 0, offsetY: -45, width: 150, height: 40 } },
       { recipientId: signer, type: "date_signed", anchor: { text: "[[s1]]", offsetX: 60, offsetY: 0, width: 90, height: 14 } },
       // Un desplegable por ancla conserva sus opciones (antes se perdían y el pedido daba 400).
-      { recipientId: signer, type: "dropdown", required: false, options: ["Contado", "Cuotas"], label: "Pago", anchor: { text: "[[s1]]", offsetX: 0, offsetY: 20, width: 90, height: 14 } },
+      {
+        recipientId: signer,
+        type: "dropdown",
+        required: false,
+        options: ["Contado", "Cuotas"],
+        label: "Pago",
+        anchor: { text: "[[s1]]", offsetX: 0, offsetY: 20, width: 90, height: 14 },
+      },
       { documentId: doc.id, recipientId: signer, type: "name", page: 0, x: 0.1, y: 0.1, width: 0.3, height: 0.03 },
     ],
   });
   const sigField = withFields.fields.find((f) => f.type === "signature");
   const dd = withFields.fields.find((f) => f.type === "dropdown");
-  if (!dd || JSON.stringify(dd.options) !== JSON.stringify(["Contado", "Cuotas"])) fail(`desplegable por ancla sin sus opciones: ${JSON.stringify(dd)}`);
+  if (!dd || JSON.stringify(dd.options) !== JSON.stringify(["Contado", "Cuotas"]))
+    fail(`desplegable por ancla sin sus opciones: ${JSON.stringify(dd)}`);
   // "Firma: " en Helvetica 12 ≈ 37pt → el ancla empieza en x ≈ 337 de 595 (0.566); y del texto ≈ 842-200-12.
   if (!(sigField.x > 0.52 && sigField.x < 0.61)) fail(`x del ancla inesperada: ${sigField.x}`);
   if (!(sigField.y > (842 - 200 - 12 - 45 - 8) / 842 && sigField.y < (842 - 200 - 45 + 4) / 842)) fail(`y del ancla inesperada: ${sigField.y}`);
@@ -186,7 +200,8 @@ try {
     const ro = fs2.find((f) => f.type === "text");
     if (!ro || !ro.readOnly || ro.value !== "ACME S.A.") fail(`el campo de solo lectura por ancla perdió su valor: ${JSON.stringify(ro)}`);
     const dd = fs2.find((f) => f.type === "dropdown");
-    if (!dd || JSON.stringify(dd.options) !== JSON.stringify(["Contado", "Cuotas"])) fail(`el desplegable por ancla perdió sus opciones: ${JSON.stringify(dd)}`);
+    if (!dd || JSON.stringify(dd.options) !== JSON.stringify(["Contado", "Cuotas"]))
+      fail(`el desplegable por ancla perdió sus opciones: ${JSON.stringify(dd)}`);
     const nm = fs2.find((f) => f.type === "number");
     if (!nm || nm.min !== 1 || nm.max !== 12) fail(`el número por ancla perdió su rango: ${JSON.stringify(nm)}`);
     await api("DELETE", `/v1/envelopes/${e2.id}`, undefined, { raw: true }); // borrador de prueba (si falla, no importa)
@@ -213,10 +228,14 @@ try {
     const d = r.items[0];
     return d && d.attempts >= 1 ? d : null;
   }, "primer intento fallido");
-  if (flakyList.status !== "pending" || flakyList.lastStatusCode !== 500 || !flakyList.nextRetryAt) fail(`estado tras fallo: ${JSON.stringify(flakyList)}`);
+  if (flakyList.status !== "pending" || flakyList.lastStatusCode !== 500 || !flakyList.nextRetryAt)
+    fail(`estado tras fallo: ${JSON.stringify(flakyList)}`);
   failMode = false;
   await api("POST", `/v1/webhook-deliveries/${flakyList.id}/retry`);
-  await waitFor(async () => (await api("GET", `/v1/webhooks/${flaky.webhook.id}/deliveries`)).items[0].status === "succeeded", "reintento manual exitoso");
+  await waitFor(
+    async () => (await api("GET", `/v1/webhooks/${flaky.webhook.id}/deliveries`)).items[0].status === "succeeded",
+    "reintento manual exitoso",
+  );
   ok("entrega fallida (500) quedó pendiente con backoff; reintento manual → succeeded");
 
   // URL de firma embebida
@@ -244,7 +263,8 @@ try {
   // Sin embed=1 (vuelta de un proveedor de pago o identidad dentro del iframe): con una sesión embebida usada, solo el
   // origen autorizado de esa sesión puede enmarcarla.
   const plainCsp = plain.headers.get("content-security-policy") ?? "";
-  if (!plainCsp.includes("frame-ancestors 'self' http://localhost:5199") || plainCsp.includes("evil.example")) fail(`sin embed=1, tras la sesión embebida: ${plainCsp}`);
+  if (!plainCsp.includes("frame-ancestors 'self' http://localhost:5199") || plainCsp.includes("evil.example"))
+    fail(`sin embed=1, tras la sesión embebida: ${plainCsp}`);
   ok("URL embebida: 302 a la firma, un solo uso, frame-ancestors solo para el origen autorizado");
 
   const token = loc.split("/s/")[1].split("?")[0];
@@ -264,20 +284,28 @@ try {
   await api("POST", `/v1/signing/${tokenA}/consent`, null, { useKey: false });
   await api("POST", `/v1/signing/${tokenA}/complete`, { fields: [] }, { useKey: false });
   const approvedHook = await waitFor(() => received.find((r) => r.path === "/hook" && r.type === "recipient.approved"), "recipient.approved");
-  if (!approvedHook.valid || approvedHook.evt.data.recipientId !== approver) fail(`payload de recipient.approved: ${JSON.stringify(approvedHook.evt?.data)}`);
+  if (!approvedHook.valid || approvedHook.evt.data.recipientId !== approver)
+    fail(`payload de recipient.approved: ${JSON.stringify(approvedHook.evt?.data)}`);
   ok("aprobador aprobó → webhook recipient.approved con firma válida");
 
   const completed = await waitFor(() => received.find((r) => r.path === "/hook" && r.type === "envelope.completed"), "envelope.completed", 60_000);
   const types = new Set(received.filter((r) => r.path === "/hook").map((r) => r.type));
-  for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "recipient.approved", "envelope.completed"]) if (!types.has(t)) fail(`falta webhook ${t}`);
+  for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "recipient.approved", "envelope.completed"])
+    if (!types.has(t)) fail(`falta webhook ${t}`);
   if (received.filter((r) => r.path === "/hook").some((r) => !r.valid)) fail("alguna firma de webhook inválida");
   if (completed.evt.data.envelope.status !== "completed" || !completed.evt.data.envelope.signedSha256) fail("payload de envelope.completed");
   ok(`webhooks del ciclo completo: ${[...types].join(", ")} — todas con firma válida`);
 
   const ev = await api("GET", `/v1/envelopes/${envelope.id}/events`);
-  if (!ev.items.some((e) => e.type === "recipient.embedded_session_started" && e.data.authentication === "embedded")) fail("evidencia de sesión embebida");
+  if (!ev.items.some((e) => e.type === "recipient.embedded_session_started" && e.data.authentication === "embedded"))
+    fail("evidencia de sesión embebida");
   const box = await api("GET", "/dev/mailbox", null, { useKey: false }).catch(() => ({ items: [] }));
-  if (box.items.some((m) => m.subject?.includes(`Embebido ${stamp}`) && m.text.includes(`Cliente ${stamp}`) && m.link?.includes("/s/") && !m.text.includes("Backoffice")))
+  if (
+    box.items.some(
+      (m) =>
+        m.subject?.includes(`Embebido ${stamp}`) && m.text.includes(`Cliente ${stamp}`) && m.link?.includes("/s/") && !m.text.includes("Backoffice"),
+    )
+  )
     fail("el firmante embebido no debería recibir invitaciones");
   ok("evidencia registra la sesión embebida; sin invitaciones al firmante embebido");
 

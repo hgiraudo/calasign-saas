@@ -9,7 +9,16 @@ import {
   type FieldCondition,
   type LogicField,
 } from "@calasign/shared";
-export { computeFormulas, computeHidden, conditionHolds, evaluateFormula, formatComputed, formulaRefs, parseFormula, tokenizeFormula } from "@calasign/shared";
+export {
+  computeFormulas,
+  computeHidden,
+  conditionHolds,
+  evaluateFormula,
+  formatComputed,
+  formulaRefs,
+  parseFormula,
+  tokenizeFormula,
+} from "@calasign/shared";
 import type { Db } from "../infra/db";
 import { badRequest } from "../lib/errors";
 import { uuidv7 } from "../lib/util";
@@ -100,10 +109,11 @@ export async function saveFieldLogic(db: Db, table: "fields" | "template_fields"
   for (const f of norm) {
     if (!f.conditions && !f.formula) continue;
     // Un campo calculado nunca lo escribe el firmante ni es obligatorio para él.
-    await db.query(
-      `UPDATE ${table} SET conditions = $2, formula = $3${f.formula ? ", required = false, read_only = false" : ""} WHERE id = $1`,
-      [f.id, f.conditions ? JSON.stringify(f.conditions) : null, f.formula],
-    );
+    await db.query(`UPDATE ${table} SET conditions = $2, formula = $3${f.formula ? ", required = false, read_only = false" : ""} WHERE id = $1`, [
+      f.id,
+      f.conditions ? JSON.stringify(f.conditions) : null,
+      f.formula,
+    ]);
   }
 }
 
@@ -211,7 +221,9 @@ export async function finalizeFieldLogic(db: Db, envelopeId: string) {
 
 /** Campos de otros destinatarios citados por la lógica de este firmante (para evaluarla en vivo en la web). */
 export async function signerLogicFields(db: Db, envelopeId: string, recipientId: string) {
-  const rows = await db.query<any>(`SELECT id, recipient_id, type, label, value, conditions, formula FROM fields WHERE envelope_id = $1`, [envelopeId]);
+  const rows = await db.query<any>(`SELECT id, recipient_id, type, label, value, conditions, formula FROM fields WHERE envelope_id = $1`, [
+    envelopeId,
+  ]);
   const own = rows.filter((r) => r.recipient_id === recipientId);
   if (!own.some((r) => r.formula || (Array.isArray(r.conditions) && r.conditions.length))) return [];
   const ids = new Set<string>();

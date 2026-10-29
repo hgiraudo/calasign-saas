@@ -149,7 +149,8 @@ const es = {
 
   // Cláusulas
   "cl.title": "Biblioteca de cláusulas",
-  "cl.intro": "Textos reutilizables que se insertan en las plantillas con {{clausula:codigo}}. Si cambiás una cláusula, cambia en todos los documentos nuevos.",
+  "cl.intro":
+    "Textos reutilizables que se insertan en las plantillas con {{clausula:codigo}}. Si cambiás una cláusula, cambia en todos los documentos nuevos.",
   "cl.new": "Nueva cláusula",
   "cl.empty": "Todavía no hay cláusulas.",
   "cl.slug": "Código",
@@ -162,8 +163,10 @@ const es = {
   "mark.date": "Fecha de firma",
   "mark.name": "Nombre del firmante",
   "docs.locale": "Idioma del documento",
-  "docs.versionChanged": "La plantilla cambió en otra pestaña o la editó otra persona: recargá para ver la versión actual (se descartan los cambios sin guardar).",
-  "docs.unsignedRoles": "Estos roles tienen iniciales, fecha o nombre pero ningún espacio de firma ({{firma:Rol}}), y no se podrá generar el sobre: {roles}",
+  "docs.versionChanged":
+    "La plantilla cambió en otra pestaña o la editó otra persona: recargá para ver la versión actual (se descartan los cambios sin guardar).",
+  "docs.unsignedRoles":
+    "Estos roles tienen iniciales, fecha o nombre pero ningún espacio de firma ({{firma:Rol}}), y no se podrá generar el sobre: {roles}",
   "docs.roleTooLong": "Hay un rol de firma de más de 80 caracteres: acortalo para poder guardar.",
   "docs.reloadClauses": "Actualizar cláusulas",
   "gen.contact": "Correo o teléfono (+54 9 11 …)",
@@ -259,8 +262,10 @@ const es = {
   "run.collectLink": "Link para completar los datos",
   "run.data": "Datos",
   "run.purged": "Los datos de esta ejecución se borraron por la política de retención: no se puede reintentar (iniciá una nueva).",
-  "neg.purged": "Los datos de esta negociación (texto, variables y comentarios) se borraron por la política de retención: ya no hay PDF ni diferencias entre versiones.",
-  "run.redacted": "Los datos de esta ejecución (lo cargado, las respuestas de los pasos y sus sobres) los ven quien la inició, quien aprueba un paso y quien ve todos los sobres.",
+  "neg.purged":
+    "Los datos de esta negociación (texto, variables y comentarios) se borraron por la política de retención: ya no hay PDF ni diferencias entre versiones.",
+  "run.redacted":
+    "Los datos de esta ejecución (lo cargado, las respuestas de los pasos y sus sobres) los ven quien la inició, quien aprueba un paso y quien ve todos los sobres.",
   "run.attempts": "{n} intento|{n} intentos",
   "run.startedBy": "Iniciado por",
 
@@ -290,7 +295,8 @@ const es = {
   "neg.commentPlaceholder": "Escribí un comentario…",
   "neg.commentOnSelection": "Comentar la selección",
   "neg.selectHint": "Seleccioná un texto del documento para comentarlo.",
-  "neg.newVersionPending": "Hay una versión nueva del documento (v{n}). Tu comentario sigue en borrador: al ver la versión nueva, la cita seleccionada se descarta.",
+  "neg.newVersionPending":
+    "Hay una versión nueva del documento (v{n}). Tu comentario sigue en borrador: al ver la versión nueva, la cita seleccionada se descarta.",
   "neg.showNewVersion": "Ver versión nueva",
   "neg.send": "Enviar",
   "neg.resolve": "Resolver",
@@ -485,7 +491,8 @@ const pt: Record<Key, string> = {
   "docs.noRoles": "Para gerar, o modelo precisa de pelo menos um espaço de assinatura ({{firma:Papel}}).",
   "gen.done": "Envelope criado",
   "cl.title": "Biblioteca de cláusulas",
-  "cl.intro": "Textos reutilizáveis inseridos nos modelos com {{clausula:codigo}}. Se você mudar uma cláusula, ela muda em todos os documentos novos.",
+  "cl.intro":
+    "Textos reutilizáveis inseridos nos modelos com {{clausula:codigo}}. Se você mudar uma cláusula, ela muda em todos os documentos novos.",
   "cl.new": "Nova cláusula",
   "cl.empty": "Ainda não há cláusulas.",
   "cl.slug": "Código",
@@ -498,8 +505,10 @@ const pt: Record<Key, string> = {
   "mark.date": "Data da assinatura",
   "mark.name": "Nome do signatário",
   "docs.locale": "Idioma do documento",
-  "docs.versionChanged": "O modelo mudou em outra aba ou foi editado por outra pessoa: recarregue para ver a versão atual (as alterações não salvas são descartadas).",
-  "docs.unsignedRoles": "Estas funções têm rubrica, data ou nome, mas nenhum espaço de assinatura ({{firma:Função}}), e não será possível gerar o envelope: {roles}",
+  "docs.versionChanged":
+    "O modelo mudou em outra aba ou foi editado por outra pessoa: recarregue para ver a versão atual (as alterações não salvas são descartadas).",
+  "docs.unsignedRoles":
+    "Estas funções têm rubrica, data ou nome, mas nenhum espaço de assinatura ({{firma:Função}}), e não será possível gerar o envelope: {roles}",
   "docs.roleTooLong": "Há uma função de assinatura com mais de 80 caracteres: encurte-a para poder salvar.",
   "docs.reloadClauses": "Atualizar cláusulas",
   "gen.contact": "E-mail ou telefone (+55 11 …)",
@@ -593,12 +602,15 @@ const pt: Record<Key, string> = {
   "run.collectLink": "Link para preencher os dados",
   "run.data": "Dados",
   "run.purged": "Os dados desta execução foram excluídos pela política de retenção: não é possível tentar novamente (inicie uma nova).",
-  "neg.purged": "Os dados desta negociação (texto, variáveis e comentários) foram excluídos pela política de retenção: não há mais PDF nem diferenças entre versões.",
-  "run.redacted": "Os dados desta execução (o que foi preenchido, as respostas das etapas e seus envelopes) são vistos por quem a iniciou, por quem aprova uma etapa e por quem vê todos os envelopes.",
+  "neg.purged":
+    "Os dados desta negociação (texto, variáveis e comentários) foram excluídos pela política de retenção: não há mais PDF nem diferenças entre versões.",
+  "run.redacted":
+    "Os dados desta execução (o que foi preenchido, as respostas das etapas e seus envelopes) são vistos por quem a iniciou, por quem aprova uma etapa e por quem vê todos os envelopes.",
   "run.attempts": "{n} tentativa|{n} tentativas",
   "run.startedBy": "Iniciado por",
   "neg.title": "Negociações",
-  "neg.intro": "Compartilhe um rascunho com a outra parte: ela comenta, propõe mudanças e, quando estiverem de acordo, ele é enviado para assinatura.",
+  "neg.intro":
+    "Compartilhe um rascunho com a outra parte: ela comenta, propõe mudanças e, quando estiverem de acordo, ele é enviado para assinatura.",
   "neg.new": "Nova negociação",
   "neg.uploadPdf": "Negociar um PDF",
   "neg.empty": "Ainda não há negociações.",
@@ -622,7 +634,8 @@ const pt: Record<Key, string> = {
   "neg.commentPlaceholder": "Escreva um comentário…",
   "neg.commentOnSelection": "Comentar a seleção",
   "neg.selectHint": "Selecione um texto do documento para comentar.",
-  "neg.newVersionPending": "Há uma nova versão do documento (v{n}). Seu comentário continua em rascunho: ao ver a nova versão, a citação selecionada é descartada.",
+  "neg.newVersionPending":
+    "Há uma nova versão do documento (v{n}). Seu comentário continua em rascunho: ao ver a nova versão, a citação selecionada é descartada.",
   "neg.showNewVersion": "Ver nova versão",
   "neg.send": "Enviar",
   "neg.resolve": "Resolver",
@@ -826,8 +839,10 @@ const en: Record<Key, string> = {
   "mark.date": "Date signed",
   "mark.name": "Signer name",
   "docs.locale": "Document language",
-  "docs.versionChanged": "The template was changed in another tab or by someone else: reload to see the current version (unsaved changes are discarded).",
-  "docs.unsignedRoles": "These roles have initials, a date or a name but no signature space ({{firma:Role}}), so the envelope can't be generated: {roles}",
+  "docs.versionChanged":
+    "The template was changed in another tab or by someone else: reload to see the current version (unsaved changes are discarded).",
+  "docs.unsignedRoles":
+    "These roles have initials, a date or a name but no signature space ({{firma:Role}}), so the envelope can't be generated: {roles}",
   "docs.roleTooLong": "A signature role is longer than 80 characters: shorten it to save.",
   "docs.reloadClauses": "Refresh clauses",
   "gen.contact": "Email or phone (+1 …)",
@@ -921,8 +936,10 @@ const en: Record<Key, string> = {
   "run.collectLink": "Link to fill in the data",
   "run.data": "Data",
   "run.purged": "This run's data was deleted by the retention policy: it can't be retried (start a new one).",
-  "neg.purged": "This negotiation's data (text, variables and comments) was deleted by the retention policy: there's no PDF or version comparison anymore.",
-  "run.redacted": "This run's data (what was entered, step responses and its envelopes) is visible to whoever started it, step approvers and anyone who can view all envelopes.",
+  "neg.purged":
+    "This negotiation's data (text, variables and comments) was deleted by the retention policy: there's no PDF or version comparison anymore.",
+  "run.redacted":
+    "This run's data (what was entered, step responses and its envelopes) is visible to whoever started it, step approvers and anyone who can view all envelopes.",
   "run.attempts": "{n} attempt|{n} attempts",
   "run.startedBy": "Started by",
   "neg.title": "Negotiations",
@@ -950,7 +967,8 @@ const en: Record<Key, string> = {
   "neg.commentPlaceholder": "Write a comment…",
   "neg.commentOnSelection": "Comment on selection",
   "neg.selectHint": "Select text in the document to comment on it.",
-  "neg.newVersionPending": "There is a new version of the document (v{n}). Your comment is still a draft: viewing the new version discards the selected quote.",
+  "neg.newVersionPending":
+    "There is a new version of the document (v{n}). Your comment is still a draft: viewing the new version discards the selected quote.",
   "neg.showNewVersion": "View new version",
   "neg.send": "Send",
   "neg.resolve": "Resolve",

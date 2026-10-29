@@ -39,14 +39,24 @@ const METHOD_CHANNEL = { otp_email: "email", otp_sms: "sms", otp_whatsapp: "what
  */
 const OTP_OPEN_STATUSES = ["sent", "awaiting_certificates", "finalizing", "completed"];
 /** Un sobre en curso que ya pasó su vencimiento (el barrido todavía no lo marcó) tampoco manda ni canjea códigos. */
-const otpOpen = (e: { status: string; expires_at?: string | Date | null }) => OTP_OPEN_STATUSES.includes(e.status) && !(e.status === "sent" && pastExpiry(e));
+const otpOpen = (e: { status: string; expires_at?: string | Date | null }) =>
+  OTP_OPEN_STATUSES.includes(e.status) && !(e.status === "sent" && pastExpiry(e));
 const envelopeClosed = () => new AppError(410, "envelope_closed", "El sobre ya no está disponible");
 type OtpMethod = keyof typeof METHOD_CHANNEL;
 
 const MSG = {
-  es: { subject: "Tu código de verificación de CalaSign", text: (c: string, s: string) => `Tu código para firmar "${s}" es ${c}. Vence en ${CODE_TTL_MIN} minutos. No lo compartas.` },
-  "pt-BR": { subject: "Seu código de verificação da CalaSign", text: (c: string, s: string) => `Seu código para assinar "${s}" é ${c}. Expira em ${CODE_TTL_MIN} minutos. Não compartilhe.` },
-  en: { subject: "Your CalaSign verification code", text: (c: string, s: string) => `Your code to sign "${s}" is ${c}. It expires in ${CODE_TTL_MIN} minutes. Don't share it.` },
+  es: {
+    subject: "Tu código de verificación de CalaSign",
+    text: (c: string, s: string) => `Tu código para firmar "${s}" es ${c}. Vence en ${CODE_TTL_MIN} minutos. No lo compartas.`,
+  },
+  "pt-BR": {
+    subject: "Seu código de verificação da CalaSign",
+    text: (c: string, s: string) => `Seu código para assinar "${s}" é ${c}. Expira em ${CODE_TTL_MIN} minutos. Não compartilhe.`,
+  },
+  en: {
+    subject: "Your CalaSign verification code",
+    text: (c: string, s: string) => `Your code to sign "${s}" is ${c}. It expires in ${CODE_TTL_MIN} minutes. Don't share it.`,
+  },
 };
 
 function destinationOf(r: any): string | null {
@@ -181,7 +191,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     // permanente no frena el código: lo pide la persona en este momento (con los topes de abajo) y, si lo valida, la
     // dirección recibe correo y el rebote se borra (verify). El mensaje lo ve solo quien tiene el link.
     if (channel === "email" && (await isSuppressed(s.db, destination, e.tenant_id, { ignoreBounce: true }))) {
-      throw conflict("otp_destination_suppressed", "No podemos enviar correos a esa dirección: marcó como no deseado un correo de esta organización. Pedile al remitente que la vuelva a habilitar o que cambie el contacto.");
+      throw conflict(
+        "otp_destination_suppressed",
+        "No podemos enviar correos a esa dirección: marcó como no deseado un correo de esta organización. Pedile al remitente que la vuelva a habilitar o que cambie el contacto.",
+      );
     }
     const challengeId = uuidv7();
     // Se reserva el código con el sobre bloqueado ANTES de enviarlo: pedidos simultáneos no esquivan la espera
@@ -296,9 +309,14 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         });
       });
       const remaining = Math.max(0, upd.max_attempts - upd.attempts);
-      throw new AppError(400, "invalid_code", remaining ? `Código incorrecto. Te quedan ${remaining} intentos.` : "Código incorrecto. Pedí uno nuevo.", {
-        remaining,
-      });
+      throw new AppError(
+        400,
+        "invalid_code",
+        remaining ? `Código incorrecto. Te quedan ${remaining} intentos.` : "Código incorrecto. Pedí uno nuevo.",
+        {
+          remaining,
+        },
+      );
     }
 
     const session = randomToken();
@@ -328,7 +346,12 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       });
       // Autoregistrado en un formulario web: con el correo ya verificado sale la invitación de respaldo (una sola vez).
       if (r.self_registered && r.auth_method === "otp_email" && cur.status === "sent") {
-        await enqueue(t, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `invite-verified:${r.id}` });
+        await enqueue(
+          t,
+          "notify",
+          { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id },
+          { dedupeKey: `invite-verified:${r.id}` },
+        );
       }
       if (r.status === "sent" && cur.status === "sent") {
         const v = await t.query(`UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' RETURNING id`, [r.id]);
@@ -337,7 +360,9 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     });
     // El código llegó por correo y se validó: la dirección recibe correo, se borra su rebote (si había uno).
     if (ch.method === "otp_email") {
-      await clearBounceSuppression(s.db, ch.destination).catch((err) => req.log.warn({ err: String(err) }, "no se pudo borrar el rebote de la dirección"));
+      await clearBounceSuppression(s.db, ch.destination).catch((err) =>
+        req.log.warn({ err: String(err) }, "no se pudo borrar el rebote de la dirección"),
+      );
     }
     reply.setCookie(SIGNER_COOKIE, session, {
       path: `/v1/signing/${req.params.token}`,

@@ -11,7 +11,8 @@ export const UPGRADE_URL = "/app/settings/billing";
 export function planById(id: string | null | undefined): PlanDefinition {
   const plan = PLANS[(PLAN_IDS as readonly string[]).includes(id ?? "") ? (id as PlanId) : config.billing.defaultPlan];
   // Enterprise: el tope de IA se puede ajustar por entorno (contratos a medida).
-  if (plan.id === "enterprise" && config.billing.enterpriseAiTokens !== undefined) return { ...plan, aiTokensPerMonth: config.billing.enterpriseAiTokens };
+  if (plan.id === "enterprise" && config.billing.enterpriseAiTokens !== undefined)
+    return { ...plan, aiTokensPerMonth: config.billing.enterpriseAiTokens };
   return plan;
 }
 
@@ -86,10 +87,10 @@ export function monthStart(d = new Date()): Date {
 }
 
 export async function envelopesSentThisMonth(db: Db, tenantId: string): Promise<number> {
-  const r = await db.one<{ n: number }>(
-    `SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND sent_at >= $2`,
-    [tenantId, monthStart().toISOString()],
-  );
+  const r = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND sent_at >= $2`, [
+    tenantId,
+    monthStart().toISOString(),
+  ]);
   return Number(r?.n ?? 0);
 }
 
@@ -166,7 +167,10 @@ async function addsBranding(db: Db, tenantId: string, body: unknown): Promise<bo
   const footer = typeof b.emailFooter === "string" ? b.emailFooter.trim() : b.emailFooter;
   const set = (v: unknown) => v !== undefined && v !== null && v !== "";
   if (!set(color) && !set(footer)) return false;
-  const t = await db.one<{ branding: { primaryColor?: string | null; emailFooter?: string | null } | null }>(`SELECT branding FROM tenants WHERE id = $1`, [tenantId]);
+  const t = await db.one<{ branding: { primaryColor?: string | null; emailFooter?: string | null } | null }>(
+    `SELECT branding FROM tenants WHERE id = $1`,
+    [tenantId],
+  );
   const cur = t?.branding ?? {};
   return (set(color) && color !== (cur.primaryColor ?? null)) || (set(footer) && footer !== (cur.emailFooter ?? null));
 }
@@ -187,12 +191,17 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   if (url === "/v1/bulk-sends" || url === "/v1/bulk-sends/validate") return { feature: "bulk_send", label: "El envío masivo" };
   if (url === "/v1/web-forms") return { feature: "web_forms", label: "Los formularios web" };
   // Probar un endpoint o reenviar una entrega también envía: como los eventos (webhook-outbox.ts), solo con el plan.
-  if (url === "/v1/webhooks" || url === "/v1/webhooks/:id/test" || url === "/v1/webhook-deliveries/:id/retry") return { feature: "webhooks", label: "Los webhooks" };
+  if (url === "/v1/webhooks" || url === "/v1/webhooks/:id/test" || url === "/v1/webhook-deliveries/:id/retry")
+    return { feature: "webhooks", label: "Los webhooks" };
   // Activar uno pausado (o cambiar su URL o eventos) también: sin el plan "Activar" respondía bien y nunca entregaba
   // nada. Pausarlo sí se permite.
   // Solo la descripción, o pausar: se permite.
   const wb = (body ?? {}) as { active?: unknown; url?: unknown; events?: unknown };
-  if (url === "/v1/webhooks/:id" && method === "PATCH" && (wb.active === true || ((wb.url !== undefined || wb.events !== undefined) && wb.active !== false))) {
+  if (
+    url === "/v1/webhooks/:id" &&
+    method === "PATCH" &&
+    (wb.active === true || ((wb.url !== undefined || wb.events !== undefined) && wb.active !== false))
+  ) {
     return { feature: "webhooks", label: "Los webhooks" };
   }
   if (url.startsWith("/v1/settings/branding")) return { feature: "branding", label: "La marca propia" };
@@ -282,5 +291,12 @@ export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingU
       aiTokens = null;
     }
   }
-  return { period, envelopesSent, users, messages: { whatsapp: by("whatsapp"), sms: by("sms"), email: by("email"), telegram: by("telegram") }, kycChecks, aiTokens };
+  return {
+    period,
+    envelopesSent,
+    users,
+    messages: { whatsapp: by("whatsapp"), sms: by("sms"), email: by("email"), telegram: by("telegram") },
+    kycChecks,
+    aiTokens,
+  };
 }

@@ -90,7 +90,12 @@ export async function markKeyFailing(db: Db, tenantId: string, keyArn: string, e
     name = again[0].name;
   }
   const prev = { name };
-  await recordAudit(db, { tenantId, action: "byok.key_failing", actor: { type: "system", label: "CalaSign" }, data: { keyArn, error: error.slice(0, 300) } });
+  await recordAudit(db, {
+    tenantId,
+    action: "byok.key_failing",
+    actor: { type: "system", label: "CalaSign" },
+    data: { keyArn, error: error.slice(0, 300) },
+  });
   const admins = await db.query<any>(
     `SELECT u.email, u.name, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role IN ('owner','admin')`,
     [tenantId],
@@ -178,9 +183,19 @@ export async function isTenantByokKey(db: Db, tenantId: string, keyArn: string):
  * organización (un PUT y un DELETE concurrentes se serializan y no dejan dos claves abiertas, o ninguna, en el
  * historial) y devuelve la clave y el estado anteriores leídos bajo ese bloqueo (para el aviso y la auditoría).
  */
-async function recordKeyChange(db: Db, tenantId: string, newArn: string | null): Promise<{ byok_key_arn: string | null; byok_status: string } | null> {
-  const before = await db.one<{ byok_key_arn: string | null; byok_status: string }>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
-  await db.query(`UPDATE tenant_byok_keys SET deactivated_at = now() WHERE tenant_id = $1 AND deactivated_at IS NULL AND key_arn IS DISTINCT FROM $2`, [tenantId, newArn]);
+async function recordKeyChange(
+  db: Db,
+  tenantId: string,
+  newArn: string | null,
+): Promise<{ byok_key_arn: string | null; byok_status: string } | null> {
+  const before = await db.one<{ byok_key_arn: string | null; byok_status: string }>(
+    `SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1 FOR UPDATE`,
+    [tenantId],
+  );
+  await db.query(
+    `UPDATE tenant_byok_keys SET deactivated_at = now() WHERE tenant_id = $1 AND deactivated_at IS NULL AND key_arn IS DISTINCT FROM $2`,
+    [tenantId, newArn],
+  );
   if (newArn) {
     await db.query(
       `INSERT INTO tenant_byok_keys (tenant_id, key_arn) SELECT $1, $2
@@ -205,7 +220,11 @@ export function createTenantStorageResolver(db: Db): TenantStorageResolver {
 
 // ───────────── Prueba de la clave ─────────────
 
-export async function testKey(keyArn: string, tenantId: string, cellId: string): Promise<{ ok: boolean; checks: ByokTestResult["checks"]; error: string | null }> {
+export async function testKey(
+  keyArn: string,
+  tenantId: string,
+  cellId: string,
+): Promise<{ ok: boolean; checks: ByokTestResult["checks"]; error: string | null }> {
   const checks: ByokTestResult["checks"] = [];
   const kms = kmsForKey(keyArn);
   const cell = cellById(cellId);
@@ -217,13 +236,15 @@ export async function testKey(keyArn: string, tenantId: string, cellId: string):
   if (cell.storage.driver === "s3") {
     const keyRegion = regionOfArn(keyArn);
     const dataRegion = cell.storage.region ?? cell.region;
-    if (dataRegion && keyRegion !== dataRegion) return fail("region", `La clave está en ${keyRegion} y los datos de la organización en ${dataRegion}: tienen que estar en la misma región`);
+    if (dataRegion && keyRegion !== dataRegion)
+      return fail("region", `La clave está en ${keyRegion} y los datos de la organización en ${dataRegion}: tienen que estar en la misma región`);
     checks.push({ name: "region", ok: true });
   }
   try {
     const d = await kms.describeKey({ KeyId: keyArn });
     const m = d.KeyMetadata ?? {};
-    if (m.Enabled === false || (m.KeyState && m.KeyState !== "Enabled")) return fail("describe", `La clave no está habilitada (${m.KeyState ?? "deshabilitada"})`);
+    if (m.Enabled === false || (m.KeyState && m.KeyState !== "Enabled"))
+      return fail("describe", `La clave no está habilitada (${m.KeyState ?? "deshabilitada"})`);
     if (m.KeyUsage && m.KeyUsage !== "ENCRYPT_DECRYPT") return fail("describe", "La clave no es de cifrado (KeyUsage ENCRYPT_DECRYPT)");
     if (m.KeySpec && m.KeySpec !== "SYMMETRIC_DEFAULT") return fail("describe", "La clave tiene que ser simétrica (SYMMETRIC_DEFAULT)");
     checks.push({ name: "describe", ok: true });
@@ -262,7 +283,9 @@ export function keyPolicyFor(tenantId: string, cellId: string): Record<string, u
       Principal: principal,
       Action: ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"],
       Resource: "*",
-      Condition: { StringEquals: { "kms:EncryptionContext:tenant": tenantId, "kms:EncryptionContext:purpose": [CUSTODY_PURPOSE, TEST_PURPOSE, BLOB_PURPOSE] } },
+      Condition: {
+        StringEquals: { "kms:EncryptionContext:tenant": tenantId, "kms:EncryptionContext:purpose": [CUSTODY_PURPOSE, TEST_PURPOSE, BLOB_PURPOSE] },
+      },
     },
   ];
   if (cell.storage.driver === "s3" && cell.storage.bucket) {
@@ -353,34 +376,39 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     return { ...(await settingsFor(s.db, a.tenantId)), notice: prev ? PREVIOUS_KEY_NOTICE(prev) : null };
   });
 
-  app.post("/v1/settings/byok/test", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req): Promise<ByokTestResult> => {
-    const a = req.auth!;
-    const t = await s.db.one<any>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
-    if (!t?.byok_key_arn) throw new AppError(409, "byok_not_configured", "No hay una clave configurada");
-    const ts = await tenantStorage(s.db, a.tenantId);
-    const res = await testKey(t.byok_key_arn, a.tenantId, ts.cell);
-    if (res.ok) {
-      // Probar no reactiva una clave desactivada: para eso está PUT /v1/settings/byok.
-      // De 'failing' a 'active' con un UPDATE condicional: la recuperación queda en la auditoría (como markKeyHealthy),
-      // una sola vez aunque haya pruebas concurrentes, y con quién la probó.
-      // Solo si la clave sigue siendo la probada: si entretanto se cambió (PUT) o desactivó y volvió a activar otra, el OK de
-      // esta prueba no puede marcar sana a la nueva (ni borrar su error).
-      const recovered = await s.db.query(
-        `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing' AND byok_key_arn = $2 RETURNING id`,
-        [a.tenantId, t.byok_key_arn],
-      );
-      await s.db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status <> 'none' AND byok_key_arn = $2`, [
-        a.tenantId,
-        t.byok_key_arn,
-      ]);
-      invalidateTenantStorage(a.tenantId);
-      if (recovered.length) await auditFromRequest(s.db, req, a, "byok.key_recovered", { targetType: "kms_key", targetId: t.byok_key_arn, data: { via: "test" } });
-    } else {
-      await markKeyFailing(s.db, a.tenantId, t.byok_key_arn, res.error ?? "error");
-    }
-    const now = await s.db.one<any>(`SELECT byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
-    return { ok: res.ok, status: now.byok_status, checks: res.checks, error: res.error };
-  });
+  app.post(
+    "/v1/settings/byok/test",
+    { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" }, rateLimitByCredential: true } },
+    async (req): Promise<ByokTestResult> => {
+      const a = req.auth!;
+      const t = await s.db.one<any>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
+      if (!t?.byok_key_arn) throw new AppError(409, "byok_not_configured", "No hay una clave configurada");
+      const ts = await tenantStorage(s.db, a.tenantId);
+      const res = await testKey(t.byok_key_arn, a.tenantId, ts.cell);
+      if (res.ok) {
+        // Probar no reactiva una clave desactivada: para eso está PUT /v1/settings/byok.
+        // De 'failing' a 'active' con un UPDATE condicional: la recuperación queda en la auditoría (como markKeyHealthy),
+        // una sola vez aunque haya pruebas concurrentes, y con quién la probó.
+        // Solo si la clave sigue siendo la probada: si entretanto se cambió (PUT) o desactivó y volvió a activar otra, el OK de
+        // esta prueba no puede marcar sana a la nueva (ni borrar su error).
+        const recovered = await s.db.query(
+          `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing' AND byok_key_arn = $2 RETURNING id`,
+          [a.tenantId, t.byok_key_arn],
+        );
+        await s.db.query(
+          `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status <> 'none' AND byok_key_arn = $2`,
+          [a.tenantId, t.byok_key_arn],
+        );
+        invalidateTenantStorage(a.tenantId);
+        if (recovered.length)
+          await auditFromRequest(s.db, req, a, "byok.key_recovered", { targetType: "kms_key", targetId: t.byok_key_arn, data: { via: "test" } });
+      } else {
+        await markKeyFailing(s.db, a.tenantId, t.byok_key_arn, res.error ?? "error");
+      }
+      const now = await s.db.one<any>(`SELECT byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
+      return { ok: res.ok, status: now.byok_status, checks: res.checks, error: res.error };
+    },
+  );
 
   // Desactivar: lo nuevo vuelve a la clave de la plataforma. Lo ya cifrado con la clave del cliente la sigue necesitando
   // (no se re-cifra): la respuesta lo avisa. Antes respondía 204 sin cuerpo.

@@ -7,7 +7,11 @@ import {
   UpdateEnvelopeInput,
   VoidEnvelopeInput,
   type EnvelopeEvent,
-  type EnvelopeSummary, RESERVED_METADATA_KEYS, TELEGRAM_ONLY_MESSAGE, telegramOnlyWithoutChat } from "@calasign/shared";
+  type EnvelopeSummary,
+  RESERVED_METADATA_KEYS,
+  TELEGRAM_ONLY_MESSAGE,
+  telegramOnlyWithoutChat,
+} from "@calasign/shared";
 import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
@@ -88,11 +92,7 @@ export function receivesSignerNotices(r: { embedded?: boolean; auth_method?: str
 export async function activateRecipient(db: Db, tenantId: string, envelopeId: string, r: any, kind: "invite" | "completed" = "invite") {
   if (!r.access_token_hash) {
     const token = randomToken();
-    await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3 WHERE id = $1`, [
-      r.id,
-      sha256Hex(token),
-      encrypt(token),
-    ]);
+    await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3 WHERE id = $1`, [r.id, sha256Hex(token), encrypt(token)]);
   }
   if (kind === "invite") {
     await db.query(`UPDATE recipients SET status = 'sent', sent_at = now() WHERE id = $1 AND status = 'created'`, [r.id]);
@@ -163,7 +163,8 @@ export async function idempotent<T>(
   if (!reserved.length) {
     const prev = await s.db.one<any>(`SELECT * FROM idempotency_keys WHERE tenant_id = $1 AND key = $2`, [tenantId, key]);
     if (prev && prev.request_hash !== reqHash) throw conflict("idempotency_mismatch", "Idempotency-Key reutilizada con otro pedido");
-    if (!prev || prev.status_code === 0) throw conflict("idempotency_in_progress", "Ya hay un pedido en curso con esta Idempotency-Key; reintentá en unos segundos");
+    if (!prev || prev.status_code === 0)
+      throw conflict("idempotency_in_progress", "Ya hay un pedido en curso con esta Idempotency-Key; reintentá en unos segundos");
     reply.code(prev.status_code);
     reply.header("idempotent-replay", "true");
     return opts?.rehydrate ? await opts.rehydrate(prev.response) : prev.response;
@@ -193,70 +194,65 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { id: string; documentId?: string } };
   const A = (req: FastifyRequest) => req.auth as AuthContext;
 
-  app.get<{ Querystring: { status?: string; q?: string; cursor?: string; limit?: string } }>(
-    "/v1/envelopes",
-    { preHandler: auth },
-    async (req) => {
-      const { tenantId } = A(req);
-      const rawLimit = Number(req.query.limit ?? 25);
-      const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, Math.trunc(rawLimit))) : 25;
-      const params: unknown[] = [tenantId];
-      let where = `e.tenant_id = $1`;
-      where += envelopeVisibilitySql(A(req), params);
-      const statuses = queryList(req.query.status);
-      if (statuses.length) {
-        params.push(statuses);
-        where += ` AND e.status = ANY($${params.length})`;
-      }
-      if (req.query.q) {
-        // Sin escapar, "%" o "_" eran comodines: buscar "50%" o "a_b" traía cualquier sobre.
-        params.push(likeContains(String(req.query.q)));
-        const q = `$${params.length} ESCAPE '\\'`;
-        where += ` AND (e.subject ILIKE ${q} OR EXISTS (SELECT 1 FROM recipients r WHERE r.envelope_id = e.id AND (r.name ILIKE ${q} OR r.email ILIKE ${q})))`;
-      }
-      // Filtros avanzados (fechas, metadata, destinatario, plantilla, origen): devapi/search.ts.
-      where += envelopeSearchSql(req.query as Record<string, unknown>, params);
-      if (req.query.cursor) {
-        // created_at va en microsegundos (Postgres guarda µs; un Date de JS solo ms): con ms, los sobres creados en el
-        // mismo milisegundo que el último de la página (p. ej. varios en una misma transacción) se saltaban.
-        // Se aceptan también los cursores viejos con fecha ISO.
-        const [ts, id] = Buffer.from(req.query.cursor, "base64url").toString().split("|");
-        const us = /^\d{1,17}$/.test(ts ?? "") ? ts : ts && !Number.isNaN(Date.parse(ts)) ? String(Date.parse(ts) * 1000) : null;
-        if (!us || !/^[0-9a-f-]{36}$/i.test(id ?? "")) throw badRequest("invalid_cursor", "Cursor inválido");
-        params.push(us, id);
-        where += ` AND (e.created_at, e.id) < ('epoch'::timestamptz + $${params.length - 1}::bigint * interval '1 microsecond', $${params.length}::uuid)`;
-      }
-      params.push(limit + 1);
-      const rows = await s.db.query<any>(
-        `SELECT e.*, ((extract(epoch FROM e.created_at) * 1000000)::bigint)::text AS cursor_us FROM envelopes e WHERE ${where} ORDER BY e.created_at DESC, e.id DESC LIMIT $${params.length}`,
-        params,
-      );
-      const page = rows.slice(0, limit);
-      const ids = page.map((r) => r.id);
-      const recips = ids.length
-        ? await s.db.query<any>(
-            `SELECT envelope_id, name, status, role FROM recipients WHERE envelope_id = ANY($1) ORDER BY routing_order, created_at`,
-            [ids],
-          )
-        : [];
-      const items: EnvelopeSummary[] = page.map((e) => ({
-        id: e.id,
-        subject: e.subject,
-        status: e.status,
-        createdAt: iso(e.created_at)!,
-        sentAt: iso(e.sent_at),
-        completedAt: iso(e.completed_at),
-        expiresAt: iso(e.expires_at),
-        updatedAt: iso(e.updated_at)!,
-        metadata: e.metadata ?? {},
-        recipients: recips.filter((r) => r.envelope_id === e.id).map((r) => ({ name: r.name, status: r.status, role: r.role })),
-      }));
-      const last = page[page.length - 1];
-      const nextCursor =
-        rows.length > limit && last ? Buffer.from(`${last.cursor_us}|${last.id}`).toString("base64url") : null;
-      return { items, nextCursor };
-    },
-  );
+  app.get<{ Querystring: { status?: string; q?: string; cursor?: string; limit?: string } }>("/v1/envelopes", { preHandler: auth }, async (req) => {
+    const { tenantId } = A(req);
+    const rawLimit = Number(req.query.limit ?? 25);
+    const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, Math.trunc(rawLimit))) : 25;
+    const params: unknown[] = [tenantId];
+    let where = `e.tenant_id = $1`;
+    where += envelopeVisibilitySql(A(req), params);
+    const statuses = queryList(req.query.status);
+    if (statuses.length) {
+      params.push(statuses);
+      where += ` AND e.status = ANY($${params.length})`;
+    }
+    if (req.query.q) {
+      // Sin escapar, "%" o "_" eran comodines: buscar "50%" o "a_b" traía cualquier sobre.
+      params.push(likeContains(String(req.query.q)));
+      const q = `$${params.length} ESCAPE '\\'`;
+      where += ` AND (e.subject ILIKE ${q} OR EXISTS (SELECT 1 FROM recipients r WHERE r.envelope_id = e.id AND (r.name ILIKE ${q} OR r.email ILIKE ${q})))`;
+    }
+    // Filtros avanzados (fechas, metadata, destinatario, plantilla, origen): devapi/search.ts.
+    where += envelopeSearchSql(req.query as Record<string, unknown>, params);
+    if (req.query.cursor) {
+      // created_at va en microsegundos (Postgres guarda µs; un Date de JS solo ms): con ms, los sobres creados en el
+      // mismo milisegundo que el último de la página (p. ej. varios en una misma transacción) se saltaban.
+      // Se aceptan también los cursores viejos con fecha ISO.
+      const [ts, id] = Buffer.from(req.query.cursor, "base64url").toString().split("|");
+      const us = /^\d{1,17}$/.test(ts ?? "") ? ts : ts && !Number.isNaN(Date.parse(ts)) ? String(Date.parse(ts) * 1000) : null;
+      if (!us || !/^[0-9a-f-]{36}$/i.test(id ?? "")) throw badRequest("invalid_cursor", "Cursor inválido");
+      params.push(us, id);
+      where += ` AND (e.created_at, e.id) < ('epoch'::timestamptz + $${params.length - 1}::bigint * interval '1 microsecond', $${params.length}::uuid)`;
+    }
+    params.push(limit + 1);
+    const rows = await s.db.query<any>(
+      `SELECT e.*, ((extract(epoch FROM e.created_at) * 1000000)::bigint)::text AS cursor_us FROM envelopes e WHERE ${where} ORDER BY e.created_at DESC, e.id DESC LIMIT $${params.length}`,
+      params,
+    );
+    const page = rows.slice(0, limit);
+    const ids = page.map((r) => r.id);
+    const recips = ids.length
+      ? await s.db.query<any>(
+          `SELECT envelope_id, name, status, role FROM recipients WHERE envelope_id = ANY($1) ORDER BY routing_order, created_at`,
+          [ids],
+        )
+      : [];
+    const items: EnvelopeSummary[] = page.map((e) => ({
+      id: e.id,
+      subject: e.subject,
+      status: e.status,
+      createdAt: iso(e.created_at)!,
+      sentAt: iso(e.sent_at),
+      completedAt: iso(e.completed_at),
+      expiresAt: iso(e.expires_at),
+      updatedAt: iso(e.updated_at)!,
+      metadata: e.metadata ?? {},
+      recipients: recips.filter((r) => r.envelope_id === e.id).map((r) => ({ name: r.name, status: r.status, role: r.role })),
+    }));
+    const last = page[page.length - 1];
+    const nextCursor = rows.length > limit && last ? Buffer.from(`${last.cursor_us}|${last.id}`).toString("base64url") : null;
+    return { items, nextCursor };
+  });
 
   // Alta de un sobre. Además del borrador vacío de siempre, acepta el sobre completo en una sola llamada (documentos,
   // destinatarios, campos y el envío), en JSON o multipart/form-data: ver envelope-oneshot.ts.
@@ -350,15 +346,17 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     const doc = await preparePdfDocument(a.tenantId, req.params.id, uploaded, file.filename || "documento.pdf");
     await s.blobs.put(doc.key, doc.bytes, "application/pdf");
     // Si el sobre dejó de ser borrador (o se borró) entre el chequeo y acá, el PDF subido no lo referencia nada.
-    await discardBlobsOnFailure(s.blobs, [doc.key], () => s.db.tx(async (t) => {
-      const e = await lockEnvelope(t, a.tenantId, req.params.id);
-      requireDraft(e);
-      await insertPreparedDocument(t, a.tenantId, a.actor, e.id, doc);
-      await assertDocumentLimits(t, "envelope", e.id);
-      await touch(t, e.id);
-      // La revisión con IA contra el playbook era de los documentos anteriores: no queda a la vista como vigente.
-      await t.query(`UPDATE envelopes SET ai_review = NULL WHERE id = $1`, [e.id]);
-    }));
+    await discardBlobsOnFailure(s.blobs, [doc.key], () =>
+      s.db.tx(async (t) => {
+        const e = await lockEnvelope(t, a.tenantId, req.params.id);
+        requireDraft(e);
+        await insertPreparedDocument(t, a.tenantId, a.actor, e.id, doc);
+        await assertDocumentLimits(t, "envelope", e.id);
+        await touch(t, e.id);
+        // La revisión con IA contra el playbook era de los documentos anteriores: no queda a la vista como vigente.
+        await t.query(`UPDATE envelopes SET ai_review = NULL WHERE id = $1`, [e.id]);
+      }),
+    );
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === doc.docId);
     reply.code(201);
     // hadSignatures y formAppearanceMismatch: solo en la respuesta de la subida (avisos del saneamiento del PDF).
@@ -371,11 +369,20 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
-      const d = await t.one<any>(`DELETE FROM documents WHERE id = $1 AND envelope_id = $2 RETURNING id, name, file_id`, [req.params.documentId, e.id]);
+      const d = await t.one<any>(`DELETE FROM documents WHERE id = $1 AND envelope_id = $2 RETURNING id, name, file_id`, [
+        req.params.documentId,
+        e.id,
+      ]);
       if (!d) throw notFound("Documento");
       fileId = d.file_id;
       await pruneDanglingConditions(t, "fields", e.id);
-      await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.removed", actor: a.actor, data: { documentId: d.id, name: d.name } });
+      await appendEvent(t, {
+        tenantId: a.tenantId,
+        envelopeId: e.id,
+        type: "document.removed",
+        actor: a.actor,
+        data: { documentId: d.id, name: d.name },
+      });
       await touch(t, e.id);
       // La revisión con IA contra el playbook era de los documentos anteriores: no queda a la vista como vigente.
       await t.query(`UPDATE envelopes SET ai_review = NULL WHERE id = $1`, [e.id]);
@@ -448,13 +455,14 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     const input = VoidEnvelopeInput.parse(req.body);
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
-      if (e.status !== "sent" && e.status !== "awaiting_certificates") throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
+      if (e.status !== "sent" && e.status !== "awaiting_certificates")
+        throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
       // X-Expected-Updated-At opcional (el MCP lo manda con la versión que el usuario aprobó en la vista previa).
       assertNotStale(req.headers, e.updated_at, STALE_GENERIC_MESSAGE);
-      await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [
-        e.id,
-        input.reason,
-      ]);
+      await t.query(
+        `UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`,
+        [e.id, input.reason],
+      );
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.voided", actor: a.actor, data: { reason: input.reason } });
       await noteSettledPaymentOnClose(t, e.id, "voided", a.actor);
       // También quienes ya firmaron electrónicamente pero tenían pendiente la firma con certificado.
@@ -470,7 +478,9 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     });
     // Firma con certificado a medias: el PDF de trabajo y los preparados ya no se usan (si un borrado falla, la
     // retención lo reintenta al purgar el sobre).
-    await discardCertsignFiles(s.db, s.blobs, req.params.id).catch((err) => req.log.warn({ err: String(err), envelopeId: req.params.id }, "no se pudieron borrar los PDF de la firma con certificado"));
+    await discardCertsignFiles(s.db, s.blobs, req.params.id).catch((err) =>
+      req.log.warn({ err: String(err), envelopeId: req.params.id }, "no se pudieron borrar los PDF de la firma con certificado"),
+    );
     return loadDetail(s.db, a.tenantId, req.params.id);
   });
 
@@ -513,7 +523,11 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         [e.id],
       );
       if ((today?.n ?? 0) >= config.reminders.manualMaxPerDay) {
-        throw new AppError(429, "reminder_daily_limit", `Ya se mandaron ${config.reminders.manualMaxPerDay} recordatorios en las últimas 24 horas: probá mañana`);
+        throw new AppError(
+          429,
+          "reminder_daily_limit",
+          `Ya se mandaron ${config.reminders.manualMaxPerDay} recordatorios en las últimas 24 horas: probá mañana`,
+        );
       }
       if (e.status === "awaiting_certificates") {
         // Firma con certificado pendiente: se le vuelve a avisar al firmante al que le toca (sin dedupe: es un recordatorio).
@@ -527,7 +541,13 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         if (pending && !(pending.self_registered && !(pending.auth_method === "otp_email" && pending.authenticated_at))) {
           await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: pending.recipient_id, tenantId: a.tenantId });
           notified = 1;
-          await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.reminded", actor: a.actor, data: { recipients: 1, stage: "certificates" } });
+          await appendEvent(t, {
+            tenantId: a.tenantId,
+            envelopeId: e.id,
+            type: "envelope.reminded",
+            actor: a.actor,
+            data: { recipients: 1, stage: "certificates" },
+          });
         }
         return;
       }
@@ -539,7 +559,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         await t.query(`UPDATE recipients SET auto_reminders_sent = 0 WHERE id = $1`, [r.id]);
         notified++;
       }
-      if (notified) await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.reminded", actor: a.actor, data: { recipients: notified } });
+      if (notified)
+        await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.reminded", actor: a.actor, data: { recipients: notified } });
     });
     return { notified };
   });
@@ -575,10 +596,17 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
 }
 
 export function sendPdf(reply: FastifyReply, bytes: Uint8Array, name: string) {
-  const safe = name.replace(/[^\p{L}\p{N} ._-]+/gu, "").trim().slice(0, 80) || "documento";
+  const safe =
+    name
+      .replace(/[^\p{L}\p{N} ._-]+/gu, "")
+      .trim()
+      .slice(0, 80) || "documento";
   reply
     .header("content-type", "application/pdf")
-    .header("content-disposition", `attachment; filename="${safe.replace(/[^\x20-\x7e]/g, "_")}.pdf"; filename*=UTF-8''${encodeURIComponent(safe)}.pdf`)
+    .header(
+      "content-disposition",
+      `attachment; filename="${safe.replace(/[^\x20-\x7e]/g, "_")}.pdf"; filename*=UTF-8''${encodeURIComponent(safe)}.pdf`,
+    )
     .header("cache-control", "private, no-store");
   return reply.send(Buffer.from(bytes));
 }
@@ -649,22 +677,32 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   if (unlinked.length) {
     // Con el mismo correo y teléfono: si cambiaron, el upsert descarta el chat vinculado (es de la persona anterior).
     const linked = new Map(
-      (await t.query<any>(`SELECT id, email, phone FROM recipients WHERE envelope_id = $1 AND id = ANY($2) AND telegram_chat_id IS NOT NULL`, [envelopeId, unlinked.map((x) => x.r.id)])).map((x) => [x.id, x]),
+      (
+        await t.query<any>(`SELECT id, email, phone FROM recipients WHERE envelope_id = $1 AND id = ANY($2) AND telegram_chat_id IS NOT NULL`, [
+          envelopeId,
+          unlinked.map((x) => x.r.id),
+        ])
+      ).map((x) => [x.id, x]),
     );
     const bad = unlinked.filter((x) => {
       const row = linked.get(x.r.id);
       return !row || row.email !== (x.r.email ?? null) || row.phone !== (x.r.phone ?? null);
     });
     if (bad.length) {
-      throw new AppError(400, "validation_error", bad.map((x) => `recipients.${x.i}: ${TELEGRAM_ONLY_MESSAGE}`).join("; "), bad.map((x) => ({ path: `recipients.${x.i}`, message: TELEGRAM_ONLY_MESSAGE })));
+      throw new AppError(
+        400,
+        "validation_error",
+        bad.map((x) => `recipients.${x.i}: ${TELEGRAM_ONLY_MESSAGE}`).join("; "),
+        bad.map((x) => ({ path: `recipients.${x.i}`, message: TELEGRAM_ONLY_MESSAGE })),
+      );
     }
   }
   // Borrar al pagador elimina en cascada el cobro configurado y el sobre salía sin cobrar, sin aviso (sendEnvelope solo
   // ve un cobro que ya no existe). Como en las correcciones: primero se quita o se reasigna el cobro.
-  const payer = await t.one<any>(`SELECT r.name FROM envelope_payments p JOIN recipients r ON r.id = p.recipient_id WHERE p.envelope_id = $1 AND NOT (p.recipient_id = ANY($2))`, [
-    envelopeId,
-    ids,
-  ]);
+  const payer = await t.one<any>(
+    `SELECT r.name FROM envelope_payments p JOIN recipients r ON r.id = p.recipient_id WHERE p.envelope_id = $1 AND NOT (p.recipient_id = ANY($2))`,
+    [envelopeId, ids],
+  );
   if (payer) throw conflict("recipient_is_payer", `${payer.name} tiene el cobro del sobre a su cargo: quitá o cambiá el cobro antes de quitarlo`);
   await t.query(`DELETE FROM recipients WHERE envelope_id = $1 AND NOT (id = ANY($2))`, [envelopeId, ids]);
   for (const r of list) {
@@ -707,7 +745,9 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   await applyIdentityFlags(t, envelopeId, list);
   await applyCertificateFlags(t, envelopeId, list);
   // Los campos de un destinatario que pasó a 'cc' ya no aplican.
-  await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [envelopeId]);
+  await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [
+    envelopeId,
+  ]);
   // Campos borrados (con su destinatario o por el cambio de rol): las condiciones que los citaban se quitan.
   await pruneDanglingConditions(t, "fields", envelopeId);
 }
@@ -805,23 +845,33 @@ export async function preparePdfDocument(tenantId: string, envelopeId: string, u
 /** Registra un PDF ya subido al almacenamiento como el último documento del borrador (bloqueado por el llamador). */
 export async function insertPreparedDocument(t: Db, tenantId: string, actor: Actor, envelopeId: string, d: PreparedPdfDocument) {
   const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM documents WHERE envelope_id = $1`, [envelopeId]);
-  await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
-    d.fileId,
-    tenantId,
-    d.key,
-    d.bytes.length,
-    d.sha256,
-  ]);
   await t.query(
-    `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [d.docId, tenantId, envelopeId, pos.p, d.name, d.fileId, d.pageCount, JSON.stringify(d.pages)],
+    `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`,
+    [d.fileId, tenantId, d.key, d.bytes.length, d.sha256],
   );
+  await t.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [
+    d.docId,
+    tenantId,
+    envelopeId,
+    pos.p,
+    d.name,
+    d.fileId,
+    d.pageCount,
+    JSON.stringify(d.pages),
+  ]);
   await appendEvent(t, {
     tenantId,
     envelopeId,
     type: "document.added",
     actor,
-    data: { documentId: d.docId, name: d.name, sha256: d.sha256, uploadedSha256: d.uploadedSha256, pages: d.pageCount, ...(d.hadSignatures ? { hadSignatures: true } : {}) },
+    data: {
+      documentId: d.docId,
+      name: d.name,
+      sha256: d.sha256,
+      uploadedSha256: d.uploadedSha256,
+      pages: d.pageCount,
+      ...(d.hadSignatures ? { hadSignatures: true } : {}),
+    },
   });
 }
 
@@ -847,7 +897,10 @@ export async function assertDocumentLimits(t: Db, kind: "envelope" | "template",
   // 413 file_too_large, como un archivo que supera el máximo de subida o el total de POST /v1/envelopes.
   // details.limit "total": la suma de los documentos (un archivo solo que supera el máximo de subida lleva "file").
   if (Number(r?.bytes ?? 0) > L.bytes)
-    throw new AppError(413, "file_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`, { limit: "total", maxBytes: L.bytes });
+    throw new AppError(413, "file_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`, {
+      limit: "total",
+      maxBytes: L.bytes,
+    });
 }
 
 /**
@@ -974,7 +1027,10 @@ const envelopeLogicRows = async (t: Db, envelopeId: string) =>
 
 const templateLogicRows = async (t: Db, templateId: string) =>
   [
-    await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only, type, formula FROM template_fields WHERE template_id = $1`, [templateId]),
+    await t.query<any>(
+      `SELECT id, role_id AS recipient_id, label, conditions, read_only, type, formula FROM template_fields WHERE template_id = $1`,
+      [templateId],
+    ),
     await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [templateId]),
   ] as const;
 
@@ -1040,8 +1096,15 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
         WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL}`,
       [e.id],
     );
-  for (const m of await t.query<{ name: string }>(`SELECT name FROM recipients WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL} ORDER BY routing_order, name`, [e.id]))
-    problems.push({ code: "missing_id_document", params: { name: m.name }, message: `${m.name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento` });
+  for (const m of await t.query<{ name: string }>(
+    `SELECT name FROM recipients WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL} ORDER BY routing_order, name`,
+    [e.id],
+  ))
+    problems.push({
+      code: "missing_id_document",
+      params: { name: m.name },
+      message: `${m.name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento`,
+    });
   // Solo Telegram y sin chat vinculado (p. ej. un clon: el chat no se copia, o se desvinculó): no le llegaría el link.
   for (const r of recips)
     if (!r.embedded && !r.in_person_host_user_id && r.channels?.length && r.channels.every((c: string) => c === "telegram") && !r.telegram_chat_id)
@@ -1082,7 +1145,9 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     problems.push({ code: "payer_not_signer", params: {}, message: "Quien paga el cobro tiene que ser un firmante" });
   if (problems.length) throw problemsError("envelope_incomplete", problems);
 
-  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
+  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [
+    e.id,
+  ]);
   await appendEvent(t, {
     tenantId: tenantId,
     envelopeId: e.id,

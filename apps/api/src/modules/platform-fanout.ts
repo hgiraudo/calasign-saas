@@ -11,15 +11,27 @@ import { exportEnvelopeJob, notifyStorageMemberRemoved, queueStorageExports } fr
 import { handleCrmJob, queueCrmEvents } from "./crm";
 import { handleConnectorJob, queueConnectorEvents } from "./connectors";
 
-export async function queuePlatformFanout(db: Db, tenantId: string, envelopeId: string, evidenceType: string, seq: number, recipientId: string | null) {
+export async function queuePlatformFanout(
+  db: Db,
+  tenantId: string,
+  envelopeId: string,
+  evidenceType: string,
+  seq: number,
+  recipientId: string | null,
+) {
   const event = EVIDENCE_TO_NOTIFICATION[evidenceType];
   if (event) {
-    const its = await db.query<{ id: string }>(
-      `SELECT id FROM notification_integrations WHERE tenant_id = $1 AND active AND $2 = ANY(events)`,
-      [tenantId, event],
-    );
+    const its = await db.query<{ id: string }>(`SELECT id FROM notification_integrations WHERE tenant_id = $1 AND active AND $2 = ANY(events)`, [
+      tenantId,
+      event,
+    ]);
     for (const it of its) {
-      await enqueue(db, "platform", { kind: "notify", integrationId: it.id, envelopeId, event, recipientId }, { dedupeKey: `ntf:${it.id}:${envelopeId}:${seq}` });
+      await enqueue(
+        db,
+        "platform",
+        { kind: "notify", integrationId: it.id, envelopeId, event, recipientId },
+        { dedupeKey: `ntf:${it.id}:${envelopeId}:${seq}` },
+      );
     }
   }
   if (evidenceType === "envelope.completed") await queueStorageExports(db, tenantId, envelopeId);
@@ -35,7 +47,11 @@ type PlatformJob =
   /** Aviso: conexiones de almacenamiento desactivadas porque quien las conectó dejó la organización (member-access.ts). */
   | { kind: "storage_member_removed"; tenantId: string; userId: string; connectionIds: string[] };
 
-export async function handlePlatformJob(d: { db: Db; blobs: BlobStore; log?: { error(o: object, m?: string): void } }, p: PlatformJob, job?: JobContext) {
+export async function handlePlatformJob(
+  d: { db: Db; blobs: BlobStore; log?: { error(o: object, m?: string): void } },
+  p: PlatformJob,
+  job?: JobContext,
+) {
   if (p.kind === "notify") return deliverNotificationJob(d.db, p);
   if (p.kind === "export") return exportEnvelopeJob(d.db, d.blobs, p);
   if (p.kind === "crm") return handleCrmJob(d, p, job);

@@ -187,7 +187,12 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
     currentStep: r.current_step,
     context: redacted
       ? { data: {}, documents: {}, envelopes: {}, http: {} }
-      : { data: r.context.data ?? {}, documents: summarizeDocs(r.context.documents ?? {}), envelopes: r.context.envelopes ?? {}, http: r.context.http ?? {} },
+      : {
+          data: r.context.data ?? {},
+          documents: summarizeDocs(r.context.documents ?? {}),
+          envelopes: r.context.envelopes ?? {},
+          http: r.context.http ?? {},
+        },
     steps: steps.map((st) => {
       const def = defs[st.idx];
       return {
@@ -212,7 +217,15 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
     ...(r.started_by_ip && !redacted && seesStartIp(a) ? { startedByIp: r.started_by_ip } : {}),
     // El enlace público lleva al formulario y, después, al link de firma de quien lo completa: solo para quien puede
     // administrar el run (como cancelar o reintentar), no para el aprobador ni quien solo puede ver.
-    collectUrl: a && !redacted && (startedByMe(a, r) || hasPerm(a, "templates:manage")) && hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
+    collectUrl:
+      a &&
+      !redacted &&
+      (startedByMe(a, r) || hasPerm(a, "templates:manage")) &&
+      hasCollect &&
+      r.public_token_enc &&
+      ["running", "waiting"].includes(r.status)
+        ? `${base}/w/${decrypt(r.public_token_enc)}`
+        : null,
     // Cancelar y reintentar: quien lo inició o quien administra plantillas (lo mismo que exige la API).
     canManage: Boolean(a && (startedByMe(a, r) || hasPerm(a, "templates:manage"))),
     ...(redacted ? { redacted: true } : {}),
@@ -291,7 +304,10 @@ export function restoreMaskedHeaders(steps: WorkflowStep[], prev: WorkflowStep[]
     if (config.headers) {
       const oldHeaders = oldCfg?.headers ?? {};
       config.headers = Object.fromEntries(
-        Object.entries(config.headers).map(([k, v]) => [k, v === MASKED_HEADER && Object.prototype.hasOwnProperty.call(oldHeaders, k) ? oldHeaders[k] : v]),
+        Object.entries(config.headers).map(([k, v]) => [
+          k,
+          v === MASKED_HEADER && Object.prototype.hasOwnProperty.call(oldHeaders, k) ? oldHeaders[k] : v,
+        ]),
       );
     }
     if (oldCfg) {
@@ -312,7 +328,9 @@ function sameUrl(a: string, b: string): boolean {
 }
 
 function summarizeDocs(docs: Record<string, any>) {
-  return Object.fromEntries(Object.entries(docs).map(([k, v]) => [k, { fileId: v.fileId, sha256: v.sha256, pages: v.info?.pageCount ?? null, name: v.name }]));
+  return Object.fromEntries(
+    Object.entries(docs).map(([k, v]) => [k, { fileId: v.fileId, sha256: v.sha256, pages: v.info?.pageCount ?? null, name: v.name }]),
+  );
 }
 
 function canDecide(a: AuthContext, def: Extract<WorkflowStep, { type: "approval" }>) {
@@ -339,7 +357,14 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
         [runId, run.current_step],
       );
       await t.query(`UPDATE workflow_runs SET version = version + 1, updated_at = now() WHERE id = $1`, [runId]);
-      return { done: false as const, completed: false, run, step: steps[run.current_step], index: run.current_step as number, attempts: upd.attempts as number };
+      return {
+        done: false as const,
+        completed: false,
+        run,
+        step: steps[run.current_step],
+        index: run.current_step as number,
+        attempts: upd.attempts as number,
+      };
     });
     if (!claim) return;
     if (claim.done) {
@@ -357,10 +382,18 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
         const run = await t.one<any>(`SELECT status, current_step FROM workflow_runs WHERE id = $1 FOR UPDATE`, [runId]);
         if (run?.status !== "running" || run.current_step !== claim.index) return;
         if (final) {
-          await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [runId, claim.index, message.slice(0, 2000)]);
+          await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
+            runId,
+            claim.index,
+            message.slice(0, 2000),
+          ]);
           await t.query(`UPDATE workflow_runs SET status = 'failed', updated_at = now() WHERE id = $1`, [runId]);
         } else {
-          await t.query(`UPDATE workflow_run_steps SET status = 'pending', error = $3 WHERE run_id = $1 AND idx = $2`, [runId, claim.index, message.slice(0, 2000)]);
+          await t.query(`UPDATE workflow_run_steps SET status = 'pending', error = $3 WHERE run_id = $1 AND idx = $2`, [
+            runId,
+            claim.index,
+            message.slice(0, 2000),
+          ]);
         }
       });
       d.log.warn({ runId, step: claim.index, attempts: claim.attempts, final, err: message }, "paso de workflow con error");
@@ -385,7 +418,11 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
         committed = true;
         const ctx: RunContext = run.context;
         if (result.kind === "fail") {
-          await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [runId, claim.index, result.error]);
+          await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
+            runId,
+            claim.index,
+            result.error,
+          ]);
           await t.query(`UPDATE workflow_runs SET status = $2, updated_at = now() WHERE id = $1`, [runId, result.runStatus]);
           ended = true;
           return;
@@ -399,12 +436,19 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
             claim.index,
             JSON.stringify(output),
           ]);
-          await t.query(`UPDATE workflow_runs SET context = $2, current_step = current_step + 1, updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
+          await t.query(`UPDATE workflow_runs SET context = $2, current_step = current_step + 1, updated_at = now() WHERE id = $1`, [
+            runId,
+            JSON.stringify(ctx),
+          ]);
           continueLoop = true;
           return;
         }
         // Espera
-        await t.query(`UPDATE workflow_run_steps SET status = 'waiting', output = $3 WHERE run_id = $1 AND idx = $2`, [runId, claim.index, JSON.stringify(output)]);
+        await t.query(`UPDATE workflow_run_steps SET status = 'waiting', output = $3 WHERE run_id = $1 AND idx = $2`, [
+          runId,
+          claim.index,
+          JSON.stringify(output),
+        ]);
         await t.query(`UPDATE workflow_runs SET context = $2, status = 'waiting', updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
         // Aviso a quien aprueba: por la cola, en esta misma transacción (outbox), con marca, idioma, supresiones y
         // reintentos (notices.ts). Antes salía con deliver() directo después de confirmar y un error se perdía.
@@ -467,11 +511,15 @@ async function resolveEnvelopeWait(t: Db, runId: string, envelopeId: string, sta
  */
 async function voidRunEnvelopes(t: Db, run: any, actor: Actor, reason: string) {
   const envIds = new Set(Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId));
-  for (const x of await t.query<any>(`SELECT id FROM envelopes WHERE tenant_id = $1 AND metadata->>'workflowRunId' = $2`, [run.tenant_id, run.id])) envIds.add(x.id);
+  for (const x of await t.query<any>(`SELECT id FROM envelopes WHERE tenant_id = $1 AND metadata->>'workflowRunId' = $2`, [run.tenant_id, run.id]))
+    envIds.add(x.id);
   for (const envelopeId of envIds) {
     const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [envelopeId]);
     if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
-    await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [env.id, reason]);
+    await t.query(
+      `UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`,
+      [env.id, reason],
+    );
     await appendEvent(t, { tenantId: env.tenant_id, envelopeId: env.id, type: "envelope.voided", actor, data: { reason, workflowRunId: run.id } });
     await noteSettledPaymentOnClose(t, env.id, "voided", actor);
     const notified = await t.query<any>(
@@ -505,7 +553,10 @@ export async function cleanupRunDocuments(d: Deps, runId: string) {
     // La marca va antes (un reintento del run la ve y no usa documentos que se están borrando). Un borrado que falla en
     // el almacenamiento no se pierde: deleteFileIfUnused conserva la fila y lo anota en pending_file_deletions, que el
     // barrido reintenta.
-    await d.db.query(`UPDATE workflow_runs SET context = context || '{"documentsCleaned": true}'::jsonb WHERE id = $1 AND status NOT IN ('running','waiting')`, [runId]);
+    await d.db.query(
+      `UPDATE workflow_runs SET context = context || '{"documentsCleaned": true}'::jsonb WHERE id = $1 AND status NOT IN ('running','waiting')`,
+      [runId],
+    );
     await deleteFilesIfUnused(d.db, d.blobs, ids);
   } catch (err) {
     d.log.warn({ runId, err: String(err) }, "no se pudieron borrar los documentos generados del run");
@@ -522,12 +573,14 @@ async function cancelRunsTx(t: Db, runIds: string[], actor: Actor, reason: strin
     const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [id]);
     if (!run || !["running", "waiting"].includes(run.status)) continue;
     await t.query(`UPDATE workflow_runs SET status = 'cancelled', updated_at = now() WHERE id = $1`, [id]);
-    await t.query(`UPDATE workflow_run_steps SET status = 'cancelled', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2 AND status IN ('pending','running','waiting')`, [
-      id,
-      run.current_step,
-      reason,
-    ]);
-    await t.query(`UPDATE workflow_run_steps SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','waiting')`, [id]);
+    await t.query(
+      `UPDATE workflow_run_steps SET status = 'cancelled', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2 AND status IN ('pending','running','waiting')`,
+      [id, run.current_step, reason],
+    );
+    await t.query(
+      `UPDATE workflow_run_steps SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','waiting')`,
+      [id],
+    );
     await voidRunEnvelopes(t, run, actor, reason);
     done.push(id);
   }
@@ -554,10 +607,10 @@ export async function workflowRunsSweep(d: Deps) {
   for (const r of idle) {
     try {
       const cancelled = await d.db.tx(async (t) => {
-        const cur = await t.one<any>(`SELECT r.id FROM workflow_runs r WHERE r.id = $1 AND ${WAITING_COLLECT_SQL} AND ${PUBLIC_RUN_SQL} AND r.updated_at < now() - make_interval(days => $2) FOR UPDATE`, [
-          r.id,
-          COLLECT_IDLE_DAYS,
-        ]);
+        const cur = await t.one<any>(
+          `SELECT r.id FROM workflow_runs r WHERE r.id = $1 AND ${WAITING_COLLECT_SQL} AND ${PUBLIC_RUN_SQL} AND r.updated_at < now() - make_interval(days => $2) FOR UPDATE`,
+          [r.id, COLLECT_IDLE_DAYS],
+        );
         if (!cur) return [];
         return cancelRunsTx(t, [r.id], actor, `Venció: ${COLLECT_IDLE_DAYS} días sin completar el formulario`);
       });
@@ -585,7 +638,10 @@ export async function workflowRunsSweep(d: Deps) {
 export async function onEnvelopeEventForWorkflows(d: Deps, envelopeId: string) {
   const env = await d.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
   if (!env || !["completed", "declined", "voided", "expired"].includes(env.status)) return;
-  const runs = await d.db.query<any>(`SELECT id, tenant_id FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text)`, [envelopeId]);
+  const runs = await d.db.query<any>(
+    `SELECT id, tenant_id FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text)`,
+    [envelopeId],
+  );
   for (const r of runs) {
     const failed = await d.db.tx(async (t) => {
       await t.query(`SELECT id FROM workflow_runs WHERE id = $1 FOR UPDATE`, [r.id]);
@@ -628,13 +684,16 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         run.tenant_id,
       ]);
       if (!tpl) throw new StepFailure("La plantilla de documento no existe o fue archivada");
-      const doc = await renderDocument(d.db, run.tenant_id, { source: tpl.source, data, locale: tpl.locale, title: interpolate(tpl.agreement_mapping?.title, data, tpl.locale) || tpl.name }).catch(
-        (e) => {
-          // Solo los errores de la plantilla o los datos son definitivos; uno de la base (cláusulas, marca) se reintenta.
-          if (e instanceof AppError) throw new StepFailure(e.message);
-          throw e;
-        },
-      );
+      const doc = await renderDocument(d.db, run.tenant_id, {
+        source: tpl.source,
+        data,
+        locale: tpl.locale,
+        title: interpolate(tpl.agreement_mapping?.title, data, tpl.locale) || tpl.name,
+      }).catch((e) => {
+        // Solo los errores de la plantilla o los datos son definitivos; uno de la base (cláusulas, marca) se reintenta.
+        if (e instanceof AppError) throw new StepFailure(e.message);
+        throw e;
+      });
       if (doc.missingClauses.length) throw new StepFailure(`Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`);
       if (doc.missing.length && !step.config.allowMissing) throw new StepFailure(`Faltan datos: ${doc.missing.join(", ")}`);
       const file = await storeGeneratedPdf(d.blobs, run.tenant_id, doc.pdf);
@@ -743,7 +802,8 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
               },
               send: true,
               // Firma condicional ({{#if garante}}{{firma:Garante}}{{/if}}) que no salió: ese firmante no se agrega.
-              onSkippedRoles: (roles) => d.log.warn({ runId: run.id, roles }, "workflow: firmantes sin marcas en el documento generado, no se agregaron al sobre"),
+              onSkippedRoles: (roles) =>
+                d.log.warn({ runId: run.id, roles }, "workflow: firmantes sin marcas en el documento generado, no se agregaron al sobre"),
             },
           ).catch((e) => {
             if (e instanceof AppError) throw new StepFailure(e.message);
@@ -793,7 +853,8 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       if (!envId) throw new StepFailure(`No hay un sobre con la clave "${step.config.envelopeKey}"`);
       const env = await d.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envId]);
       if (env?.status === "completed") return { kind: "complete", output: { envelopeId: envId, status: "completed" } };
-      if (!env || ["declined", "voided", "expired"].includes(env.status)) return { kind: "fail", error: `El sobre terminó como "${env?.status ?? "inexistente"}"`, runStatus: "failed" };
+      if (!env || ["declined", "voided", "expired"].includes(env.status))
+        return { kind: "fail", error: `El sobre terminó como "${env?.status ?? "inexistente"}"`, runStatus: "failed" };
       return { kind: "wait", output: { envelopeId: envId }, patch: (c) => (c.waitingEnvelope = envId) };
     }
 
@@ -979,7 +1040,8 @@ function validateSteps(steps: WorkflowStep[]) {
     }
     if (st.type === "generate_document") outputs.add(st.config.output);
     if (st.type === "send_for_signature") {
-      if (!outputs.has(st.config.document)) throw badRequest("invalid_step", `Paso ${i + 1}: no hay un documento "${st.config.document}" generado antes`);
+      if (!outputs.has(st.config.document))
+        throw badRequest("invalid_step", `Paso ${i + 1}: no hay un documento "${st.config.document}" generado antes`);
       envKeys.add(st.config.envelopeKey);
     }
     if ((st.type === "wait_for_completion" || st.type === "update_repository") && !envKeys.has(st.config.envelopeKey)) {
@@ -991,7 +1053,14 @@ function validateSteps(steps: WorkflowStep[]) {
 async function createRun(
   db: Db,
   wf: any,
-  p: { data: Record<string, unknown>; startedBy: string | null; startedByApiKey?: string | null; startedByLabel: string; startedByIp?: string | null; actor: Actor },
+  p: {
+    data: Record<string, unknown>;
+    startedBy: string | null;
+    startedByApiKey?: string | null;
+    startedByLabel: string;
+    startedByIp?: string | null;
+    actor: Actor;
+  },
 ): Promise<{ runId: string; token: string | null }> {
   const steps: WorkflowStep[] = wf.steps;
   const runId = uuidv7();
@@ -1008,14 +1077,17 @@ async function createRun(
         `SELECT count(*)::int AS n FROM workflow_runs WHERE workflow_id = $1 AND started_by IS NULL AND started_by_api_key IS NULL AND created_at > now() - interval '1 hour'`,
         [wf.id],
       );
-      if ((recent?.n ?? 0) >= MAX_PUBLIC_RUNS_PER_HOUR) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+      if ((recent?.n ?? 0) >= MAX_PUBLIC_RUNS_PER_HOUR)
+        throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
       // Por organización (con su lock; último lock: workflow → organización, como los formularios): inicios por hora,
       // completen o no el formulario (tope alto), y el cupo compartido con los formularios web, que cuenta solo los
       // runs que hacen trabajo. Un run que empieza con un formulario lo gasta al completarlo (envío del paso); si el
       // primer paso es otro (genera documentos, manda sobres, llama a una URL), arranca solo y lo gasta ahora, aunque
       // tenga un formulario más adelante.
-      if (await publicStartsCapReached(t, wf.tenant_id)) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
-      if (chargesAtStart && (await publicTenantCapReached(t, wf.tenant_id))) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+      if (await publicStartsCapReached(t, wf.tenant_id))
+        throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+      if (chargesAtStart && (await publicTenantCapReached(t, wf.tenant_id)))
+        throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
     }
     await t.query(
       `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key, public_collected_at, started_by_ip)
@@ -1036,7 +1108,13 @@ async function createRun(
       ],
     );
     for (const [idx, st] of steps.entries()) {
-      await t.query(`INSERT INTO workflow_run_steps (run_id, idx, step_id, type, name) VALUES ($1,$2,$3,$4,$5)`, [runId, idx, st.id, st.type, st.name]);
+      await t.query(`INSERT INTO workflow_run_steps (run_id, idx, step_id, type, name) VALUES ($1,$2,$3,$4,$5)`, [
+        runId,
+        idx,
+        st.id,
+        st.type,
+        st.name,
+      ]);
     }
   });
   return { runId, token };
@@ -1074,9 +1152,11 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 AND tenant_id = $2`, [id, a.tenantId]);
     if (!r) throw notFound("Ejecución");
     const mine =
-      startedByMe(a, r) || (a.userId != null && (r.steps as WorkflowStep[]).some((st) => st.type === "approval" && st.config.approverUserId === a.userId));
+      startedByMe(a, r) ||
+      (a.userId != null && (r.steps as WorkflowStep[]).some((st) => st.type === "approval" && st.config.approverUserId === a.userId));
     // envelopes:manage_all también: canDecide le permite decidir cualquier aprobación, y sin verla no podía.
-    if (!mine && !hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all") && !hasPerm(a, "envelopes:manage_all")) throw notFound("Ejecución");
+    if (!mine && !hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all") && !hasPerm(a, "envelopes:manage_all"))
+      throw notFound("Ejecución");
     return r;
   }
 
@@ -1088,7 +1168,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     }
     for (const st of steps) {
       if (st.type !== "generate_document") continue;
-      const t = await s.db.one(`SELECT 1 FROM document_templates WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL`, [st.config.documentTemplateId, tenantId]);
+      const t = await s.db.one(`SELECT 1 FROM document_templates WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL`, [
+        st.config.documentTemplateId,
+        tenantId,
+      ]);
       if (!t) throw badRequest("invalid_template", `Paso "${st.name}": la plantilla de documento no existe`);
     }
   }
@@ -1108,7 +1191,11 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     );
     const baseUrl = rows.some((r) => r.public_start) ? await tenantBaseUrl(s.db, a.tenantId) : undefined;
     const manage = hasPerm(a, "templates:manage");
-    return { items: await Promise.all(rows.map((r) => toWorkflow(s.db, r, false, { manage, counts: counts.get(r.id) ?? { total: 0, running: 0 }, baseUrl }))) };
+    return {
+      items: await Promise.all(
+        rows.map((r) => toWorkflow(s.db, r, false, { manage, counts: counts.get(r.id) ?? { total: 0, running: 0 }, baseUrl })),
+      ),
+    };
   });
 
   app.post("/v1/workflows", { preHandler: auth }, async (req, reply) => {
@@ -1169,7 +1256,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       // Publicar o activar un link público exige el plan (como los formularios web). Solo al pasar de false a true: tras
       // una baja de plan, editar el nombre o los pasos de un workflow que ya estaba publicado no se bloquea (el link
       // igual no se ofrece sin el plan), y despublicarlo o desactivarlo tampoco.
-      if (publicStart && active && (!cur.public_start || !cur.active)) requireFeature(planAllowsPublic, "web_forms", "El inicio público de workflows");
+      if (publicStart && active && (!cur.public_start || !cur.active))
+        requireFeature(planAllowsPublic, "web_forms", "El inicio público de workflows");
       const row = await t.one<any>(
         `UPDATE workflows SET name = $2, description = $3, active = $4, public_start = $5, public_slug = $6, steps = $7,
            updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1 RETURNING *`,
@@ -1179,7 +1267,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
           input.description !== undefined ? input.description : cur.description,
           active,
           publicStart,
-          publicStart ? cur.public_slug ?? randomBytes(9).toString("base64url") : cur.public_slug,
+          publicStart ? (cur.public_slug ?? randomBytes(9).toString("base64url")) : cur.public_slug,
           JSON.stringify(steps),
         ],
       );
@@ -1191,7 +1279,12 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
           `SELECT r.id FROM workflow_runs r WHERE r.workflow_id = $1 AND ${PUBLIC_RUN_SQL} AND ${WAITING_COLLECT_SQL}`,
           [cur.id],
         );
-        cancelled = await cancelRunsTx(t, waiting.map((x) => x.id), actor, !active ? "Workflow desactivado" : "Workflow despublicado");
+        cancelled = await cancelRunsTx(
+          t,
+          waiting.map((x) => x.id),
+          actor,
+          !active ? "Workflow desactivado" : "Workflow despublicado",
+        );
       }
       return { row, cancelled };
     });
@@ -1215,7 +1308,11 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const active = await t.one(`SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND status IN ('running','waiting') LIMIT 1`, [cur.id]);
       // Desactivar el workflow solo cancela las del link público que esperan su formulario; las iniciadas por una persona
       // o una API key siguen hasta terminar o cancelarlas.
-      if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas (desactivar el workflow solo cancela las del link público que esperan su formulario)");
+      if (active)
+        throw conflict(
+          "runs_in_progress",
+          "Hay ejecuciones en curso: cancelalas (desactivar el workflow solo cancela las del link público que esperan su formulario)",
+        );
       // Una ejecución fallida puede haber dejado sobres en firma: cancelarla es la forma de anularlos. Borrado el
       // workflow (y sus ejecuciones en cascada), esos sobres quedaban en firma sin forma de anularlos desde el workflow.
       const open = await t.one<{ n: number }>(
@@ -1236,7 +1333,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       return runs.flatMap((r) => runDocumentFileIds(r.context));
     });
     // Después de confirmar y fuera de transacción: los que salieron en un sobre se conservan (clave foránea).
-    if (fileIds.length) await deleteFilesIfUnused(s.db, s.blobs, fileIds).catch((err) => req.log.warn({ workflowId: cur.id, err: String(err) }, "no se pudieron borrar los documentos de los runs"));
+    if (fileIds.length)
+      await deleteFilesIfUnused(s.db, s.blobs, fileIds).catch((err) =>
+        req.log.warn({ workflowId: cur.id, err: String(err) }, "no se pudieron borrar los documentos de los runs"),
+      );
     await auditFromRequest(s.db, req, a, "workflow.deleted", { targetType: "workflow", targetId: cur.id, data: { name: cur.name } });
     return reply.code(204).send();
   });
@@ -1248,26 +1348,33 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const wf = await loadWorkflow(a, req.params.id);
     if (!wf.active) throw conflict("inactive", "El workflow está desactivado");
     const input = StartWorkflowInput.parse(req.body ?? {});
-    return idempotent(s, req, reply, async () => {
-      const { runId } = await createRun(s.db, wf, {
-        data: input.data,
-        startedBy: a.userId,
-        startedByApiKey: a.userId ? null : a.apiKeyId,
-        startedByLabel: a.actor.label ?? "API",
-        actor: a.actor,
-      });
-      await advanceNow(deps, runId);
-      return { status: 201, body: await toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [runId]), a) };
-    }, undefined, {
-      // collectUrl lleva el token público en claro: no se guarda en idempotency_keys; al repetir se rearma (descifrando
-      // public_token_enc), con el estado actual del run (sin link si ya no está en curso).
-      redactStored: (body) => ({ ...body, collectUrl: null }),
-      rehydrate: async (stored) => {
-        if (!stored?.id) return stored;
-        const r = await s.db.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 AND tenant_id = $2`, [stored.id, a.tenantId]);
-        return r ? { ...stored, collectUrl: (await toRun(s.db, r, a)).collectUrl } : stored;
+    return idempotent(
+      s,
+      req,
+      reply,
+      async () => {
+        const { runId } = await createRun(s.db, wf, {
+          data: input.data,
+          startedBy: a.userId,
+          startedByApiKey: a.userId ? null : a.apiKeyId,
+          startedByLabel: a.actor.label ?? "API",
+          actor: a.actor,
+        });
+        await advanceNow(deps, runId);
+        return { status: 201, body: await toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [runId]), a) };
       },
-    });
+      undefined,
+      {
+        // collectUrl lleva el token público en claro: no se guarda en idempotency_keys; al repetir se rearma (descifrando
+        // public_token_enc), con el estado actual del run (sin link si ya no está en curso).
+        redactStored: (body) => ({ ...body, collectUrl: null }),
+        rehydrate: async (stored) => {
+          if (!stored?.id) return stored;
+          const r = await s.db.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 AND tenant_id = $2`, [stored.id, a.tenantId]);
+          return r ? { ...stored, collectUrl: (await toRun(s.db, r, a)).collectUrl } : stored;
+        },
+      },
+    );
   });
 
   app.get<{ Querystring: { workflowId?: string; status?: string } }>("/v1/workflow-runs", { preHandler: auth }, async (req) => {
@@ -1318,22 +1425,32 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       const st = await t.one<any>(`SELECT status FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, index]);
-      if (run.status !== "waiting" || run.current_step !== index || st.status !== "waiting") throw conflict("not_waiting", "Este paso no está esperando una decisión");
-      const output = { decision: input.approve ? "approved" : "rejected", by: a.actor.label, comment: input.comment ?? null, at: new Date().toISOString() };
+      if (run.status !== "waiting" || run.current_step !== index || st.status !== "waiting")
+        throw conflict("not_waiting", "Este paso no está esperando una decisión");
+      const output = {
+        decision: input.approve ? "approved" : "rejected",
+        by: a.actor.label,
+        comment: input.comment ?? null,
+        at: new Date().toISOString(),
+      };
       await t.query(`UPDATE workflow_run_steps SET status = $3, output = $4, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
         run.id,
         index,
         input.approve ? "completed" : "failed",
         JSON.stringify(output),
       ]);
-      if (input.approve) await t.query(`UPDATE workflow_runs SET status = 'running', current_step = current_step + 1, updated_at = now() WHERE id = $1`, [run.id]);
+      if (input.approve)
+        await t.query(`UPDATE workflow_runs SET status = 'running', current_step = current_step + 1, updated_at = now() WHERE id = $1`, [run.id]);
       else {
         await t.query(`UPDATE workflow_runs SET status = 'rejected', updated_at = now() WHERE id = $1`, [run.id]);
         // Rechazado: los sobres que el run ya había enviado no siguen en firma.
         await voidRunEnvelopes(t, run, a.actor, "Workflow rechazado");
       }
     });
-    await auditFromRequest(s.db, req, a, input.approve ? "workflow.step_approved" : "workflow.step_rejected", { targetType: "workflow_run", targetId: run0.id });
+    await auditFromRequest(s.db, req, a, input.approve ? "workflow.step_approved" : "workflow.step_rejected", {
+      targetType: "workflow_run",
+      targetId: run0.id,
+    });
     if (input.approve) await advanceNow(deps, run0.id);
     else await cleanupRunDocuments(deps, run0.id);
     return toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [run0.id]), a);
@@ -1348,7 +1465,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       // Un run fallado también se puede cancelar: es la forma de anular los sobres que dejó en firma.
       if (!["running", "waiting", "failed"].includes(run.status)) throw conflict("not_active", "La ejecución ya terminó");
       await t.query(`UPDATE workflow_runs SET status = 'cancelled', updated_at = now() WHERE id = $1`, [run.id]);
-      await t.query(`UPDATE workflow_run_steps SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','waiting')`, [run.id]);
+      await t.query(
+        `UPDATE workflow_run_steps SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','waiting')`,
+        [run.id],
+      );
       await voidRunEnvelopes(t, run, a.actor, "Workflow cancelado");
     });
     await auditFromRequest(s.db, req, a, "workflow.run_cancelled", { targetType: "workflow_run", targetId: run0.id });
@@ -1364,8 +1484,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       const st = await t.one<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);
       if (run.status !== "failed" || st?.status !== "failed") throw conflict("not_failed", "Solo se reintenta una ejecución con un paso fallido");
-      if (run.data_purged_at) throw conflict("run_purged", "Los datos de esta ejecución se borraron por la política de retención: iniciá una nueva ejecución");
-      if (st.type === "approval" || st.type === "wait_for_completion") throw conflict("not_retryable", "Este paso no se puede reintentar: iniciá una nueva ejecución");
+      if (run.data_purged_at)
+        throw conflict("run_purged", "Los datos de esta ejecución se borraron por la política de retención: iniciá una nueva ejecución");
+      if (st.type === "approval" || st.type === "wait_for_completion")
+        throw conflict("not_retryable", "Este paso no se puede reintentar: iniciá una nueva ejecución");
       if (run.context?.documentsCleaned) {
         // Solo si algún paso pendiente envía un PDF generado antes (ya borrado). Si no, el reintento sigue: los
         // documentos borrados salen del contexto (los que usó un sobre siguen en el sobre).
@@ -1374,7 +1496,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         }
         await t.query(`UPDATE workflow_runs SET context = (context - 'documentsCleaned') || '{"documents": {}}'::jsonb WHERE id = $1`, [run.id]);
       }
-      await t.query(`UPDATE workflow_run_steps SET status = 'pending', attempts = 0, error = NULL, finished_at = NULL WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);
+      await t.query(
+        `UPDATE workflow_run_steps SET status = 'pending', attempts = 0, error = NULL, finished_at = NULL WHERE run_id = $1 AND idx = $2`,
+        [run.id, run.current_step],
+      );
       await t.query(`UPDATE workflow_runs SET status = 'running', updated_at = now() WHERE id = $1`, [run.id]);
     });
     await advanceNow(deps, run0.id);
@@ -1386,7 +1511,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
   const rl = { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } };
 
   app.get<{ Params: { slug: string } }>("/v1/public/workflows/:slug", rl, async (req): Promise<PublicWorkflowStart> => {
-    const wf = await s.db.one<any>(`SELECT w.*, t.name AS org FROM workflows w JOIN tenants t ON t.id = w.tenant_id WHERE w.public_slug = $1 AND w.public_start`, [req.params.slug]);
+    const wf = await s.db.one<any>(
+      `SELECT w.*, t.name AS org FROM workflows w JOIN tenants t ON t.id = w.tenant_id WHERE w.public_slug = $1 AND w.public_start`,
+      [req.params.slug],
+    );
     // Sin el plan vigente (formularios web), el link no se ofrece.
     if (!wf || !wf.active || !(await publicPlanAllows(s.db, wf.tenant_id)) || (await publicOwnerProblem(s.db, wf))) throw notFound("Workflow");
     return { workflowName: wf.name, organizationName: wf.org, description: wf.description, captchaSiteKey: captchaSiteKey() };
@@ -1394,29 +1522,41 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
 
   // Por IP, y en IPv6 por /64 (como los formularios web).
   const ipKey = (req: FastifyRequest) => rateLimitIpKey(req.ip);
-  app.post<{ Params: { slug: string } }>("/v1/public/workflows/:slug/start", { config: { rateLimit: { max: 10, timeWindow: "1 minute", keyGenerator: ipKey } } }, async (req, reply) => {
-    const body = (req.body ?? {}) as { website?: string; captchaToken?: unknown };
-    if (body.website) throw badRequest("rejected", "No se pudo iniciar");
-    const wf = await s.db.one<any>(`SELECT * FROM workflows WHERE public_slug = $1 AND public_start`, [req.params.slug]);
-    if (!wf || !wf.active || !(await publicPlanAllows(s.db, wf.tenant_id)) || (await publicOwnerProblem(s.db, wf))) throw notFound("Workflow");
-    // Desafío anti-bots (como los formularios web): cada inicio crea una ejecución que puede mandar sobres.
-    if (captchaSiteKey()) {
-      const hostOk = turnstileHostOk(s.db, wf.tenant_id);
-      const cap = await verifyTurnstile(typeof body.captchaToken === "string" ? body.captchaToken.slice(0, 4096) : null, req.ip, hostOk);
-      if (!cap.ok) {
-        if (cap.reason === "network") req.log.error({ workflowId: wf.id, detail: cap.detail }, "workflow público: no se pudo consultar a Turnstile");
-        else if (cap.reason !== "missing") req.log.warn({ workflowId: wf.id, reason: cap.reason, detail: cap.detail }, "workflow público: desafío Turnstile rechazado");
-        throw new AppError(400, "captcha_failed", "No se pudo verificar que no sos un robot: completá la verificación y volvé a intentar");
+  app.post<{ Params: { slug: string } }>(
+    "/v1/public/workflows/:slug/start",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute", keyGenerator: ipKey } } },
+    async (req, reply) => {
+      const body = (req.body ?? {}) as { website?: string; captchaToken?: unknown };
+      if (body.website) throw badRequest("rejected", "No se pudo iniciar");
+      const wf = await s.db.one<any>(`SELECT * FROM workflows WHERE public_slug = $1 AND public_start`, [req.params.slug]);
+      if (!wf || !wf.active || !(await publicPlanAllows(s.db, wf.tenant_id)) || (await publicOwnerProblem(s.db, wf))) throw notFound("Workflow");
+      // Desafío anti-bots (como los formularios web): cada inicio crea una ejecución que puede mandar sobres.
+      if (captchaSiteKey()) {
+        const hostOk = turnstileHostOk(s.db, wf.tenant_id);
+        const cap = await verifyTurnstile(typeof body.captchaToken === "string" ? body.captchaToken.slice(0, 4096) : null, req.ip, hostOk);
+        if (!cap.ok) {
+          if (cap.reason === "network")
+            req.log.error({ workflowId: wf.id, detail: cap.detail }, "workflow público: no se pudo consultar a Turnstile");
+          else if (cap.reason !== "missing")
+            req.log.warn({ workflowId: wf.id, reason: cap.reason, detail: cap.detail }, "workflow público: desafío Turnstile rechazado");
+          throw new AppError(400, "captcha_failed", "No se pudo verificar que no sos un robot: completá la verificación y volvé a intentar");
+        }
       }
-    }
-    const { ip } = clientInfo(req);
-    // La IP no va en la etiqueta (la ve cualquiera que vea la ejecución): queda aparte, para quien ve la auditoría.
-    const { runId, token } = await createRun(s.db, wf, { data: {}, startedBy: null, startedByLabel: "Link público", startedByIp: ip ?? null, actor: { type: "system", label: "Link público" } });
-    await advanceNow(deps, runId);
-    reply.code(201);
-    const fresh = await s.db.one<any>(`SELECT public_token_enc FROM workflow_runs WHERE id = $1`, [runId]);
-    return { token: token ?? (fresh?.public_token_enc ? decrypt(fresh.public_token_enc) : null), runId };
-  });
+      const { ip } = clientInfo(req);
+      // La IP no va en la etiqueta (la ve cualquiera que vea la ejecución): queda aparte, para quien ve la auditoría.
+      const { runId, token } = await createRun(s.db, wf, {
+        data: {},
+        startedBy: null,
+        startedByLabel: "Link público",
+        startedByIp: ip ?? null,
+        actor: { type: "system", label: "Link público" },
+      });
+      await advanceNow(deps, runId);
+      reply.code(201);
+      const fresh = await s.db.one<any>(`SELECT public_token_enc FROM workflow_runs WHERE id = $1`, [runId]);
+      return { token: token ?? (fresh?.public_token_enc ? decrypt(fresh.public_token_enc) : null), runId };
+    },
+  );
 
   async function loadPublicRun(token: string) {
     if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw notFound("Ejecución");
@@ -1431,7 +1571,13 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const def = (run.steps as WorkflowStep[])[run.current_step];
     const step =
       run.status === "waiting" && def?.type === "collect_data"
-        ? { index: run.current_step, name: def.name, title: def.config.title, description: def.config.description ?? null, fields: def.config.fields as CollectField[] }
+        ? {
+            index: run.current_step,
+            name: def.name,
+            title: def.config.title,
+            description: def.config.description ?? null,
+            fields: def.config.fields as CollectField[],
+          }
         : null;
     // Link de firma para quien completó los datos (si el sobre del run lo tiene como firmante).
     let signingUrl: string | null = null;
@@ -1451,7 +1597,9 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     // Runs anteriores a ese registro: se reconstruye con los pasos. Una clave de sobre usada por dos pasos queda afuera:
     // el contexto solo guarda el último sobre, y los firmantes autoservicio del primer paso se atribuían al segundo
     // (donde ese correo podía ser el de un firmante fijo).
-    const sendSteps = (run.steps as WorkflowStep[]).filter((st): st is Extract<WorkflowStep, { type: "send_for_signature" }> => st.type === "send_for_signature");
+    const sendSteps = (run.steps as WorkflowStep[]).filter(
+      (st): st is Extract<WorkflowStep, { type: "send_for_signature" }> => st.type === "send_for_signature",
+    );
     const keyUses = new Map<string, number>();
     for (const st of sendSteps) keyUses.set(st.config.envelopeKey, (keyUses.get(st.config.envelopeKey) ?? 0) + 1);
     for (const st of sendSteps) {
@@ -1511,92 +1659,117 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     }
   }
 
-  app.post<{ Params: { token: string; index: string } }>("/v1/public/workflow-runs/:token/steps/:index", { config: { rateLimit: { max: 20, timeWindow: "1 minute", keyGenerator: ipKey } } }, async (req) => {
-    const input = SubmitCollectInput.parse(req.body);
-    if (input.website) throw badRequest("rejected", "No se pudo enviar");
-    const run0 = await loadPublicRun(req.params.token);
-    const index = Number(req.params.index);
-    const def = (run0.steps as WorkflowStep[])[index];
-    if (!def || def.type !== "collect_data") throw notFound("Paso");
-    await assertRunAcceptsInput(s.db, run0);
-    // Números y fechas como los escribe una persona en el idioma de la organización ("2,500" es 2500 en inglés y 2,5 en
-    // español; 03/01/2027 es 1 de marzo en español y 3 de enero en inglés). Antes, siempre en español.
-    const locale = (await s.db.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [run0.tenant_id]))?.default_locale ?? "es";
-    // Validación por campo.
-    const values: Record<string, unknown> = {};
-    const errors: { path: string; message: string }[] = [];
-    for (const f of def.config.fields) {
-      // Solo claves propias: un campo "toString" o "valueOf" sin valor leía la función heredada y `.trim()` daba 500.
-      const raw = (Object.hasOwn(input.values, f.key) ? input.values[f.key] : "").trim();
-      if (!raw) {
-        if (f.required) errors.push({ path: f.key, message: `${f.label}: obligatorio` });
-        continue;
-      }
-      if (f.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) errors.push({ path: f.key, message: `${f.label}: correo inválido` });
-      else if (f.type === "number" && toNumberOrNull(raw, locale) === null) errors.push({ path: f.key, message: `${f.label}: número inválido` });
-      else if (f.type === "date" && !toIsoDate(raw, locale)) errors.push({ path: f.key, message: `${f.label}: fecha inválida` });
-      else if (f.type === "select" && !(f.options ?? []).includes(raw)) errors.push({ path: f.key, message: `${f.label}: opción inválida` });
-      values[f.key] = f.type === "number" ? toNumberOrNull(raw, locale) : f.type === "date" ? toIsoDate(raw, locale) : f.type === "email" ? raw.toLowerCase() : raw;
-    }
-    if (errors.length) throw new AppError(400, "validation_error", errors.map((e) => e.message).join("; "), errors);
-    // Huella de quien lo completa (run público con correo): HMAC de workflow + correo + IP (en IPv6, el /64).
-    const emailField = def.config.fields.find((f) => f.type === "email" && typeof values[f.key] === "string");
-    const submitter =
-      isPublicRun(run0) && emailField ? hmacSign("workflow-submitter", `${run0.workflow_id}\n${String(values[emailField.key])}\n${rateLimitIpKey(req.ip)}`) : null;
-    await s.db.tx(async (t) => {
-      // Primero el workflow (FOR SHARE) y después el run, en el mismo orden que la desactivación (que cancela estos
-      // runs): una desactivación simultánea no se cruza con el envío.
-      await assertRunAcceptsInput(t, run0, true);
-      const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
-      const st = await t.one<any>(`SELECT status, started_at FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, index]);
-      if (run.status !== "waiting" || run.current_step !== index || st.status !== "waiting") throw conflict("not_waiting", "Este formulario ya fue completado");
-      // Tiempo mínimo de llenado desde que el formulario quedó esperando (un humano tarda más; un bot, menos), solo en
-      // runs del link público: el link de un run interno lo recibe alguien elegido por quien lo inició. El paso es de un
-      // solo uso (queda completado), así que no hace falta otro token de formulario.
-      if (isPublicRun(run) && st.started_at && Date.now() - new Date(st.started_at).getTime() < MIN_FILL_MS) {
-        throw new AppError(422, "too_fast", "Esperá unos segundos y volvé a enviar");
-      }
-      if (submitter) {
-        // El mismo correo desde la misma IP en el mismo workflow hace poco (otra ejecución): no se acepta otro (cada uno
-        // puede crear y mandar sobres). Una ejecución cancelada o rechazada no cuenta. Con un lock por huella: dos envíos
-        // simultáneos de dos runs distintos no pasan los dos el chequeo (orden: workflow → run → huella → organización).
-        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`wf-submitter:${submitter}`]);
-        const W = config.webForms;
-        const dup = await t.one(
-          `SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND public_submitter = $2 AND id <> $3 AND status NOT IN ('cancelled','rejected')
-             AND updated_at > now() - make_interval(mins => $4) LIMIT 1`,
-          [run.workflow_id, submitter, run.id, W.dedupeMinutes],
-        );
-        if (dup) {
-          throw new AppError(429, "form_recent_submission", "Ya recibimos un envío igual hace unos minutos: revisá la pestaña donde completaste el formulario o probá más tarde", {
-            retryAfterSeconds: W.dedupeMinutes * 60,
-          });
+  app.post<{ Params: { token: string; index: string } }>(
+    "/v1/public/workflow-runs/:token/steps/:index",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute", keyGenerator: ipKey } } },
+    async (req) => {
+      const input = SubmitCollectInput.parse(req.body);
+      if (input.website) throw badRequest("rejected", "No se pudo enviar");
+      const run0 = await loadPublicRun(req.params.token);
+      const index = Number(req.params.index);
+      const def = (run0.steps as WorkflowStep[])[index];
+      if (!def || def.type !== "collect_data") throw notFound("Paso");
+      await assertRunAcceptsInput(s.db, run0);
+      // Números y fechas como los escribe una persona en el idioma de la organización ("2,500" es 2500 en inglés y 2,5 en
+      // español; 03/01/2027 es 1 de marzo en español y 3 de enero en inglés). Antes, siempre en español.
+      const locale =
+        (await s.db.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [run0.tenant_id]))?.default_locale ??
+        "es";
+      // Validación por campo.
+      const values: Record<string, unknown> = {};
+      const errors: { path: string; message: string }[] = [];
+      for (const f of def.config.fields) {
+        // Solo claves propias: un campo "toString" o "valueOf" sin valor leía la función heredada y `.trim()` daba 500.
+        const raw = (Object.hasOwn(input.values, f.key) ? input.values[f.key] : "").trim();
+        if (!raw) {
+          if (f.required) errors.push({ path: f.key, message: `${f.label}: obligatorio` });
+          continue;
         }
-        await t.query(`UPDATE workflow_runs SET public_submitter = $2 WHERE id = $1`, [run.id, submitter]);
+        if (f.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) errors.push({ path: f.key, message: `${f.label}: correo inválido` });
+        else if (f.type === "number" && toNumberOrNull(raw, locale) === null) errors.push({ path: f.key, message: `${f.label}: número inválido` });
+        else if (f.type === "date" && !toIsoDate(raw, locale)) errors.push({ path: f.key, message: `${f.label}: fecha inválida` });
+        else if (f.type === "select" && !(f.options ?? []).includes(raw)) errors.push({ path: f.key, message: `${f.label}: opción inválida` });
+        values[f.key] =
+          f.type === "number"
+            ? toNumberOrNull(raw, locale)
+            : f.type === "date"
+              ? toIsoDate(raw, locale)
+              : f.type === "email"
+                ? raw.toLowerCase()
+                : raw;
       }
-      // Run público que completa su primer formulario: recién ahora gasta el cupo de la organización (compartido con los
-      // formularios web); los inicios sin completar no lo gastan.
-      if (isPublicRun(run) && !run.public_collected_at) {
-        if (await publicTenantCapReached(t, run.tenant_id)) throw new AppError(429, "workflow_rate_limited", "Demasiados envíos en esta organización: probá más tarde");
-        await t.query(`UPDATE workflow_runs SET public_collected_at = now() WHERE id = $1`, [run.id]);
-      }
-      const ctx: RunContext = run.context;
-      ctx.data ??= {};
-      for (const [k, v] of Object.entries(values)) setPath(ctx.data, def.config.target ? `${def.config.target}.${k}` : k, v);
-      const emailPaths = def.config.fields
-        .filter((f) => f.type === "email" && typeof values[f.key] === "string")
-        .map((f) => (def.config.target ? `${def.config.target}.${f.key}` : f.key));
-      ctx.collectEmailPaths = [...new Set([...(ctx.collectEmailPaths ?? []), ...emailPaths])];
-      const source = clientInfo(req);
-      ctx.collectEmailSources = { ...(ctx.collectEmailSources ?? {}), ...Object.fromEntries(emailPaths.map((p) => [p, source])) };
-      await t.query(`UPDATE workflow_run_steps SET status = 'completed', output = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
-        run.id,
-        index,
-        JSON.stringify({ fields: Object.keys(values) }),
-      ]);
-      await t.query(`UPDATE workflow_runs SET status = 'running', context = $2, current_step = current_step + 1, updated_at = now() WHERE id = $1`, [run.id, JSON.stringify(ctx)]);
-    });
-    await advanceNow(deps, run0.id);
-    return publicView(await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [run0.id]));
-  });
+      if (errors.length) throw new AppError(400, "validation_error", errors.map((e) => e.message).join("; "), errors);
+      // Huella de quien lo completa (run público con correo): HMAC de workflow + correo + IP (en IPv6, el /64).
+      const emailField = def.config.fields.find((f) => f.type === "email" && typeof values[f.key] === "string");
+      const submitter =
+        isPublicRun(run0) && emailField
+          ? hmacSign("workflow-submitter", `${run0.workflow_id}\n${String(values[emailField.key])}\n${rateLimitIpKey(req.ip)}`)
+          : null;
+      await s.db.tx(async (t) => {
+        // Primero el workflow (FOR SHARE) y después el run, en el mismo orden que la desactivación (que cancela estos
+        // runs): una desactivación simultánea no se cruza con el envío.
+        await assertRunAcceptsInput(t, run0, true);
+        const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
+        const st = await t.one<any>(`SELECT status, started_at FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, index]);
+        if (run.status !== "waiting" || run.current_step !== index || st.status !== "waiting")
+          throw conflict("not_waiting", "Este formulario ya fue completado");
+        // Tiempo mínimo de llenado desde que el formulario quedó esperando (un humano tarda más; un bot, menos), solo en
+        // runs del link público: el link de un run interno lo recibe alguien elegido por quien lo inició. El paso es de un
+        // solo uso (queda completado), así que no hace falta otro token de formulario.
+        if (isPublicRun(run) && st.started_at && Date.now() - new Date(st.started_at).getTime() < MIN_FILL_MS) {
+          throw new AppError(422, "too_fast", "Esperá unos segundos y volvé a enviar");
+        }
+        if (submitter) {
+          // El mismo correo desde la misma IP en el mismo workflow hace poco (otra ejecución): no se acepta otro (cada uno
+          // puede crear y mandar sobres). Una ejecución cancelada o rechazada no cuenta. Con un lock por huella: dos envíos
+          // simultáneos de dos runs distintos no pasan los dos el chequeo (orden: workflow → run → huella → organización).
+          await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`wf-submitter:${submitter}`]);
+          const W = config.webForms;
+          const dup = await t.one(
+            `SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND public_submitter = $2 AND id <> $3 AND status NOT IN ('cancelled','rejected')
+             AND updated_at > now() - make_interval(mins => $4) LIMIT 1`,
+            [run.workflow_id, submitter, run.id, W.dedupeMinutes],
+          );
+          if (dup) {
+            throw new AppError(
+              429,
+              "form_recent_submission",
+              "Ya recibimos un envío igual hace unos minutos: revisá la pestaña donde completaste el formulario o probá más tarde",
+              {
+                retryAfterSeconds: W.dedupeMinutes * 60,
+              },
+            );
+          }
+          await t.query(`UPDATE workflow_runs SET public_submitter = $2 WHERE id = $1`, [run.id, submitter]);
+        }
+        // Run público que completa su primer formulario: recién ahora gasta el cupo de la organización (compartido con los
+        // formularios web); los inicios sin completar no lo gastan.
+        if (isPublicRun(run) && !run.public_collected_at) {
+          if (await publicTenantCapReached(t, run.tenant_id))
+            throw new AppError(429, "workflow_rate_limited", "Demasiados envíos en esta organización: probá más tarde");
+          await t.query(`UPDATE workflow_runs SET public_collected_at = now() WHERE id = $1`, [run.id]);
+        }
+        const ctx: RunContext = run.context;
+        ctx.data ??= {};
+        for (const [k, v] of Object.entries(values)) setPath(ctx.data, def.config.target ? `${def.config.target}.${k}` : k, v);
+        const emailPaths = def.config.fields
+          .filter((f) => f.type === "email" && typeof values[f.key] === "string")
+          .map((f) => (def.config.target ? `${def.config.target}.${f.key}` : f.key));
+        ctx.collectEmailPaths = [...new Set([...(ctx.collectEmailPaths ?? []), ...emailPaths])];
+        const source = clientInfo(req);
+        ctx.collectEmailSources = { ...(ctx.collectEmailSources ?? {}), ...Object.fromEntries(emailPaths.map((p) => [p, source])) };
+        await t.query(`UPDATE workflow_run_steps SET status = 'completed', output = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
+          run.id,
+          index,
+          JSON.stringify({ fields: Object.keys(values) }),
+        ]);
+        await t.query(
+          `UPDATE workflow_runs SET status = 'running', context = $2, current_step = current_step + 1, updated_at = now() WHERE id = $1`,
+          [run.id, JSON.stringify(ctx)],
+        );
+      });
+      await advanceNow(deps, run0.id);
+      return publicView(await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [run0.id]));
+    },
+  );
 }

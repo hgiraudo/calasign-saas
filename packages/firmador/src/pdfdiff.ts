@@ -58,7 +58,8 @@ export async function assertOnlySignatureAdded(working: Uint8Array, prepared: Ui
   if (str(A.context.trailerInfo.Encrypt) !== str(B.context.trailerInfo.Encrypt)) fail("el documento preparado cambia el cifrado");
   // Un objeto nuevo no puede reusar el número de uno existente (otra generación lo "taparía" para los lectores).
   const beforeNums = new Set([...before.keys()].map((k) => k.split(" ")[0]));
-  for (const key of after.keys()) if (!before.has(key) && beforeNums.has(key.split(" ")[0])) fail("el documento preparado reemplaza objetos existentes");
+  for (const key of after.keys())
+    if (!before.has(key) && beforeNums.has(key.split(" ")[0])) fail("el documento preparado reemplaza objetos existentes");
   // Lo que pdf-lib no ve (lee los objetos en orden e ignora la tabla xref): la revisión nueva solo puede listar
   // objetos que escribe ella misma, sin liberar ni redirigir objetos del documento mostrado.
   assertTailXref(working, prepared, str(A.context.trailerInfo.Root), str(A.context.trailerInfo.Encrypt));
@@ -117,7 +118,8 @@ function checkDictChange(prev: PDFDict, next: PDFDict, newWidgets: Set<string>) 
     }
     if (k === "Annots" || k === "Fields") {
       if (!(b instanceof PDFArray) || (a !== undefined && !(a instanceof PDFArray))) fail(`el documento preparado reemplaza /${k}`);
-      if (!onlyAppendsWidgets(a as PDFArray | undefined, b as PDFArray, newWidgets)) fail(`el documento preparado agrega a /${k} algo que no es la firma`);
+      if (!onlyAppendsWidgets(a as PDFArray | undefined, b as PDFArray, newWidgets))
+        fail(`el documento preparado agrega a /${k} algo que no es la firma`);
       continue;
     }
     // AcroForm directo en el catálogo: solo puede cambiar Fields/SigFlags.
@@ -158,7 +160,8 @@ function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string,
   // Última definición de cada objeto en la revisión nueva: es la que lee pdf-lib (y la que se compara arriba). Si la
   // tabla apuntara a otra copia anterior del mismo objeto, un lector mostraría esa copia, que nadie comparó.
   const lastDef = new Map<string, number>();
-  for (const m of tail.matchAll(/(^|[\s>\]])(\d+)\s+(\d+)\s+obj\b/g)) lastDef.set(`${Number(m[2])} ${Number(m[3])}`, base + (m.index ?? 0) + m[1].length);
+  for (const m of tail.matchAll(/(^|[\s>\]])(\d+)\s+(\d+)\s+obj\b/g))
+    lastDef.set(`${Number(m[2])} ${Number(m[3])}`, base + (m.index ?? 0) + m[1].length);
   const starts = new Set<number>();
   for (const sec of sections) {
     const lead = sec[0].startsWith("x") ? 0 : 1;
@@ -191,7 +194,8 @@ function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string,
   }
   // pdf-lib "recupera" un /Root que no es un catálogo y lo reemplaza por otro: se mira el trailer tal cual está escrito.
   const norm = (r: string) => r.replace(/\s+/g, " ");
-  if ((tail.match(/\/Root\b/g) ?? []).length !== [...tail.matchAll(/\/Root\s+\d+\s+\d+\s+R/g)].length) fail("el documento preparado cambia la raíz del documento");
+  if ((tail.match(/\/Root\b/g) ?? []).length !== [...tail.matchAll(/\/Root\s+\d+\s+\d+\s+R/g)].length)
+    fail("el documento preparado cambia la raíz del documento");
   for (const m of tail.matchAll(/\/Root\s+(\d+\s+\d+\s+R)/g)) if (norm(m[1]) !== root) fail("el documento preparado cambia la raíz del documento");
   for (const m of tail.matchAll(/\/Encrypt\s+(\d+\s+\d+\s+R|<<)/g)) if (norm(m[1]) !== encrypt) fail("el documento preparado cambia el cifrado");
   // La cadena de tablas tiene que ser: startxref → una tabla de la revisión nueva → (/Prev entre ellas) → la última

@@ -96,7 +96,7 @@ async function toMailbox(m: OutboundMessage): Promise<SendResult> {
       channel: m.channel,
       to: m.to,
       // Remitente y HTML: las pruebas de marca blanca revisan que no aparezca la marca de la plataforma.
-      from: m.channel === "email" ? m.from ?? config.mail.from : m.channel === "sms" ? m.smsFrom ?? null : null,
+      from: m.channel === "email" ? (m.from ?? config.mail.from) : m.channel === "sms" ? (m.smsFrom ?? null) : null,
       replyTo: m.replyTo ?? null,
       subject: m.subject,
       text: m.text,
@@ -216,7 +216,8 @@ export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
       // Rebotes y quejas por SNS (docs/CORREO-REBOTES.md).
       ...(isSesSmtp() ? { headers: sesHeaders(config.mail.sesConfigurationSet, msg.tenantId) } : {}),
     });
-  const viaPlatform = (msg: OutboundMessage) => send({ ...msg, from: platformFallbackFrom(msg), dkim: null, replyTo: msg.replyTo ?? (msg.from ? addressOf(msg.from) : null) });
+  const viaPlatform = (msg: OutboundMessage) =>
+    send({ ...msg, from: platformFallbackFrom(msg), dkim: null, replyTo: msg.replyTo ?? (msg.from ? addressOf(msg.from) : null) });
   let info: SMTPSentMessageInfo;
   let identityRejectedDomain: string | null = null;
   let dkimDomain: string | null = null;
@@ -355,7 +356,11 @@ export async function deliver(m: OutboundMessage & { cta?: string | null }): Pro
     // Sin buzón de desarrollo no se escribe nada en disco: el SMS lleva el código de verificación del firmante.
     if (!sms && !config.devMailbox) throw new Error("SMS no configurado");
     const r = config.devMailbox ? await toMailbox(m) : null;
-    if (sms) return sms.send(m.to, m.text, m.smsFrom ?? undefined).then((x) => ({ provider: sms.id, messageId: x.messageId })).catch((e) => (r ? r : Promise.reject(e)));
+    if (sms)
+      return sms
+        .send(m.to, m.text, m.smsFrom ?? undefined)
+        .then((x) => ({ provider: sms.id, messageId: x.messageId }))
+        .catch((e) => (r ? r : Promise.reject(e)));
     return r!;
   }
   if (config.devMailbox) {

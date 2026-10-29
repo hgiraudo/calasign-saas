@@ -15,11 +15,13 @@ const es = {
   save: "Guardar contraseña",
   done: "Listo: tu contraseña cambió y se cerraron las sesiones abiertas. Ya podés ingresar.",
   revokeCreated: "Revocar las claves de API e invitaciones que creé",
-  revokeCreatedHint: "Útil si sospechás que alguien usó tu cuenta: cualquier integración que use esas claves deja de funcionar y vas a tener que crear claves nuevas. Los tokens SCIM y las apps de servicio son de la organización y no se tocan; si hace falta, un administrador los rota.",
+  revokeCreatedHint:
+    "Útil si sospechás que alguien usó tu cuenta: cualquier integración que use esas claves deja de funcionar y vas a tener que crear claves nuevas. Los tokens SCIM y las apps de servicio son de la organización y no se tocan; si hace falta, un administrador los rota.",
   revokedNotice: "Se revocaron {items}.",
   revokedApiKeys: "{n} clave de API|{n} claves de API",
   revokedInvitations: "{n} invitación pendiente|{n} invitaciones pendientes",
-  activeNotice: "Credenciales que creaste y siguen activas (revisalas desde la configuración de cada organización si sospechás que alguien usó tu cuenta):",
+  activeNotice:
+    "Credenciales que creaste y siguen activas (revisalas desde la configuración de cada organización si sospechás que alguien usó tu cuenta):",
   activeApiKeys: "{n} clave de API|{n} claves de API",
   activeScimTokens: "{n} token SCIM|{n} tokens SCIM",
   activeServiceApps: "{n} app de servicio|{n} apps de servicio",
@@ -28,22 +30,26 @@ const es = {
   requestNew: "Pedir un link nuevo",
   resetRequired: "Tu acceso se creó con inicio de sesión único (SSO) o SCIM. Para ingresar con contraseña, primero restablecela.",
   resetRequiredAction: "Restablecer contraseña",
-  notAllowed: "En esa organización tu acceso se creó con inicio de sesión único (SSO) o SCIM: ingresá con SSO o restablecé tu contraseña para usarla ahí.",
+  notAllowed:
+    "En esa organización tu acceso se creó con inicio de sesión único (SSO) o SCIM: ingresá con SSO o restablecé tu contraseña para usarla ahí.",
   sessionExpired: "Tu sesión terminó (venció o se cerró). Volvé a ingresar para seguir donde estabas.",
   badCredentials: "Correo o contraseña incorrectos.",
   rememberMe: "Recordarme en este dispositivo (14 días)",
   // Sesión vencida con cambios sin guardar: no se manda al login (se perdían); se ingresa en otra pestaña y se sigue.
   lostTitle: "Tu sesión venció",
-  lostBody: "Tenés cambios sin guardar en esta pantalla. Para no perderlos, iniciá sesión en otra pestaña y después tocá «Reintentar» para seguir donde estabas.",
+  lostBody:
+    "Tenés cambios sin guardar en esta pantalla. Para no perderlos, iniciá sesión en otra pestaña y después tocá «Reintentar» para seguir donde estabas.",
   lostLogin: "Iniciar sesión en otra pestaña",
   lostRetry: "Reintentar",
   lostStill: "Todavía no hay una sesión activa: iniciá sesión en la otra pestaña y volvé a tocar «Reintentar».",
-  lostOtherAccount: "Iniciaste sesión con otra cuenta u organización: los cambios no se pueden guardar ahí. Ingresá con la misma cuenta y organización, y reintentá.",
+  lostOtherAccount:
+    "Iniciaste sesión con otra cuenta u organización: los cambios no se pueden guardar ahí. Ingresá con la misma cuenta y organización, y reintentá.",
   lostDiscard: "Descartar los cambios e ir al login",
   // Otra pestaña cambió de organización, aceptó una invitación o cerró la sesión.
   tabChangedTitle: "La sesión cambió en otra pestaña",
   tabChangedBody: "Recargamos esta pestaña porque en otra se cambió de organización, se aceptó una invitación o se cerró la sesión.",
-  tabChangedUnsaved: "En otra pestaña se cambió de organización, se aceptó una invitación o se cerró la sesión: lo que guardes acá iría a otro lado. Copiá lo que necesites y recargá la página.",
+  tabChangedUnsaved:
+    "En otra pestaña se cambió de organización, se aceptó una invitación o se cerró la sesión: lo que guardes acá iría a otro lado. Copiá lo que necesites y recargá la página.",
   tabReload: "Recargar",
   tabOk: "Entendido",
 };
@@ -63,11 +69,13 @@ const pt: Record<Key, string> = {
   save: "Salvar senha",
   done: "Pronto: sua senha mudou e as sessões abertas foram encerradas. Você já pode entrar.",
   revokeCreated: "Revogar as chaves de API e convites que eu criei",
-  revokeCreatedHint: "Útil se você suspeita que alguém usou sua conta: qualquer integração que use essas chaves para de funcionar e você terá que criar chaves novas. Os tokens SCIM e os apps de serviço são da organização e não são alterados; se necessário, um administrador os rotaciona.",
+  revokeCreatedHint:
+    "Útil se você suspeita que alguém usou sua conta: qualquer integração que use essas chaves para de funcionar e você terá que criar chaves novas. Os tokens SCIM e os apps de serviço são da organização e não são alterados; se necessário, um administrador os rotaciona.",
   revokedNotice: "Foram revogados {items}.",
   revokedApiKeys: "{n} chave de API|{n} chaves de API",
   revokedInvitations: "{n} convite pendente|{n} convites pendentes",
-  activeNotice: "Credenciais que você criou e continuam ativas (revise-as nas configurações de cada organização se suspeitar que alguém usou sua conta):",
+  activeNotice:
+    "Credenciais que você criou e continuam ativas (revise-as nas configurações de cada organização se suspeitar que alguém usou sua conta):",
   activeApiKeys: "{n} chave de API|{n} chaves de API",
   activeScimTokens: "{n} token SCIM|{n} tokens SCIM",
   activeServiceApps: "{n} app de serviço|{n} apps de serviço",
@@ -81,15 +89,18 @@ const pt: Record<Key, string> = {
   badCredentials: "E-mail ou senha incorretos.",
   rememberMe: "Lembrar de mim neste dispositivo (14 dias)",
   lostTitle: "Sua sessão expirou",
-  lostBody: "Há alterações não salvas nesta tela. Para não perdê-las, entre em outra aba e depois toque em «Tentar novamente» para continuar de onde parou.",
+  lostBody:
+    "Há alterações não salvas nesta tela. Para não perdê-las, entre em outra aba e depois toque em «Tentar novamente» para continuar de onde parou.",
   lostLogin: "Entrar em outra aba",
   lostRetry: "Tentar novamente",
   lostStill: "Ainda não há uma sessão ativa: entre na outra aba e toque em «Tentar novamente» outra vez.",
-  lostOtherAccount: "Você entrou com outra conta ou organização: as alterações não podem ser salvas lá. Entre com a mesma conta e organização e tente novamente.",
+  lostOtherAccount:
+    "Você entrou com outra conta ou organização: as alterações não podem ser salvas lá. Entre com a mesma conta e organização e tente novamente.",
   lostDiscard: "Descartar as alterações e ir para o login",
   tabChangedTitle: "A sessão mudou em outra aba",
   tabChangedBody: "Recarregamos esta aba porque em outra a organização foi trocada, um convite foi aceito ou a sessão foi encerrada.",
-  tabChangedUnsaved: "Em outra aba a organização foi trocada, um convite foi aceito ou a sessão foi encerrada: o que você salvar aqui iria para outro lugar. Copie o que precisar e recarregue a página.",
+  tabChangedUnsaved:
+    "Em outra aba a organização foi trocada, um convite foi aceito ou a sessão foi encerrada: o que você salvar aqui iria para outro lugar. Copie o que precisar e recarregue a página.",
   tabReload: "Recarregar",
   tabOk: "Entendi",
 };
@@ -108,11 +119,13 @@ const en: Record<Key, string> = {
   save: "Save password",
   done: "Done: your password changed and open sessions were closed. You can sign in now.",
   revokeCreated: "Revoke the API keys and invitations I created",
-  revokeCreatedHint: "Useful if you suspect someone used your account: any integration using those keys stops working and you'll need to create new ones. SCIM tokens and service apps belong to the organization and are not touched; an administrator can rotate them if needed.",
+  revokeCreatedHint:
+    "Useful if you suspect someone used your account: any integration using those keys stops working and you'll need to create new ones. SCIM tokens and service apps belong to the organization and are not touched; an administrator can rotate them if needed.",
   revokedNotice: "Revoked {items}.",
   revokedApiKeys: "{n} API key|{n} API keys",
   revokedInvitations: "{n} pending invitation|{n} pending invitations",
-  activeNotice: "Credentials you created that are still active (review them in each organization's settings if you suspect someone used your account):",
+  activeNotice:
+    "Credentials you created that are still active (review them in each organization's settings if you suspect someone used your account):",
   activeApiKeys: "{n} API key|{n} API keys",
   activeScimTokens: "{n} SCIM token|{n} SCIM tokens",
   activeServiceApps: "{n} service app|{n} service apps",
@@ -121,7 +134,8 @@ const en: Record<Key, string> = {
   requestNew: "Request a new link",
   resetRequired: "Your access was created through single sign-on (SSO) or SCIM. To sign in with a password, reset it first.",
   resetRequiredAction: "Reset password",
-  notAllowed: "In that organization your access was created through single sign-on (SSO) or SCIM: sign in with SSO or reset your password to use it there.",
+  notAllowed:
+    "In that organization your access was created through single sign-on (SSO) or SCIM: sign in with SSO or reset your password to use it there.",
   sessionExpired: "Your session ended (it expired or was closed). Sign in again to pick up where you left off.",
   badCredentials: "Incorrect email or password.",
   rememberMe: "Remember me on this device (14 days)",
@@ -130,11 +144,13 @@ const en: Record<Key, string> = {
   lostLogin: "Sign in in another tab",
   lostRetry: "Retry",
   lostStill: "There's no active session yet: sign in in the other tab and tap “Retry” again.",
-  lostOtherAccount: "You signed in with a different account or organization: the changes can't be saved there. Sign in with the same account and organization and retry.",
+  lostOtherAccount:
+    "You signed in with a different account or organization: the changes can't be saved there. Sign in with the same account and organization and retry.",
   lostDiscard: "Discard the changes and go to sign in",
   tabChangedTitle: "The session changed in another tab",
   tabChangedBody: "We reloaded this tab because another tab switched organization, accepted an invitation or signed out.",
-  tabChangedUnsaved: "Another tab switched organization, accepted an invitation or signed out: anything you save here would go somewhere else. Copy what you need and reload the page.",
+  tabChangedUnsaved:
+    "Another tab switched organization, accepted an invitation or signed out: anything you save here would go somewhere else. Copy what you need and reload the page.",
   tabReload: "Reload",
   tabOk: "Got it",
 };

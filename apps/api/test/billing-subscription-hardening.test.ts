@@ -40,7 +40,15 @@ afterAll(() => {
   server.close();
 });
 
-async function setup(o: { env?: string; stripeKey?: string | null; stripeHook?: string | null; mpToken?: string | null; mpHook?: string | null; mpCurrencies?: string[]; mock?: boolean }) {
+async function setup(o: {
+  env?: string;
+  stripeKey?: string | null;
+  stripeHook?: string | null;
+  mpToken?: string | null;
+  mpHook?: string | null;
+  mpCurrencies?: string[];
+  mock?: boolean;
+}) {
   const { config } = await import("../src/config");
   const p = await import("../src/modules/billing/providers");
   config.environment = o.env ?? "dev";
@@ -165,7 +173,14 @@ describe("/v1/billing con API key u OAuth", () => {
   it("los cambios exigen sesión de usuario; leer el resumen no", async () => {
     const { enforceRoutePolicy } = await import("../src/modules/access");
     const key = { tenantId: "t", userId: null, apiKeyId: "k", actor: { type: "api_key" }, access } as any;
-    const oauth = { tenantId: "t", userId: "u", apiKeyId: null, oauth: { clientId: "c", clientPublicId: "c", scopes: [] }, actor: { type: "user" }, access } as any;
+    const oauth = {
+      tenantId: "t",
+      userId: "u",
+      apiKeyId: null,
+      oauth: { clientId: "c", clientPublicId: "c", scopes: [] },
+      actor: { type: "user" },
+      access,
+    } as any;
     const user = { tenantId: "t", userId: "u", apiKeyId: null, actor: { type: "user" }, access } as any;
     for (const [m, u] of [
       ["POST", "/v1/billing/cancel"],
@@ -185,7 +200,7 @@ describe("/v1/billing con API key u OAuth", () => {
 });
 
 describe("baja programada y estado de la suscripción", () => {
-  type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+  type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
   let db: Db;
   let tenant: string;
 

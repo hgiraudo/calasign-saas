@@ -511,7 +511,14 @@ export function DocumentTemplateEditPage() {
       </Link>
       <form className="stack" onSubmit={save}>
         <div className="page-head">
-          <input className="agr-title-input" value={name} onChange={(e) => setName(e.target.value)} aria-label={ta("docs.name")} disabled={!editable} required />
+          <input
+            className="agr-title-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-label={ta("docs.name")}
+            disabled={!editable}
+            required
+          />
           <div className="row-wrap">
             {saved && <span className="muted small">✓ {ta("docs.saved")}</span>}
             <button type="button" className="btn" onClick={openPdf}>
@@ -600,7 +607,14 @@ export function DocumentTemplateEditPage() {
                     </option>
                   ))}
                 </select>
-                <input aria-label={ta("tb.role")} value={role} onChange={(e) => setRole(e.target.value)} style={{ width: 110 }} maxLength={80} disabled={!editable} />
+                <input
+                  aria-label={ta("tb.role")}
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  style={{ width: 110 }}
+                  maxLength={80}
+                  disabled={!editable}
+                />
                 <button type="button" onClick={() => insert(`{{firma:${role.trim() || ins.role}}}`)} disabled={!editable}>
                   {ta("tb.signature")}
                 </button>
@@ -631,7 +645,13 @@ export function DocumentTemplateEditPage() {
             </label>
             <label className="field">
               <span>{ta("docs.sample")}</span>
-              <textarea className="agr-json" value={sample} onChange={(e) => setSample(e.target.value)} spellCheck={false} aria-invalid={!sampleObj} />
+              <textarea
+                className="agr-json"
+                value={sample}
+                onChange={(e) => setSample(e.target.value)}
+                spellCheck={false}
+                aria-invalid={!sampleObj}
+              />
               {!sampleObj && <small className="agr-run-err">{ta("docs.sampleInvalid")}</small>}
             </label>
             <fieldset className="field">
@@ -639,23 +659,49 @@ export function DocumentTemplateEditPage() {
               <div className="grid-2">
                 <label className="field">
                   <span>{ta("docs.mapping.title")}</span>
-                  <input value={mapping.title} onChange={(e) => setMapping({ ...mapping, title: e.target.value })} placeholder={placeholderText("docTitle")} disabled={!editable} />
+                  <input
+                    value={mapping.title}
+                    onChange={(e) => setMapping({ ...mapping, title: e.target.value })}
+                    placeholder={placeholderText("docTitle")}
+                    disabled={!editable}
+                  />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.value")}</span>
-                  <input value={mapping.value} onChange={(e) => setMapping({ ...mapping, value: e.target.value })} placeholder="total" disabled={!editable} />
+                  <input
+                    value={mapping.value}
+                    onChange={(e) => setMapping({ ...mapping, value: e.target.value })}
+                    placeholder="total"
+                    disabled={!editable}
+                  />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.currency")}</span>
-                  <input value={mapping.currency} onChange={(e) => setMapping({ ...mapping, currency: e.target.value.toUpperCase() })} placeholder="USD" maxLength={3} disabled={!editable} />
+                  <input
+                    value={mapping.currency}
+                    onChange={(e) => setMapping({ ...mapping, currency: e.target.value.toUpperCase() })}
+                    placeholder="USD"
+                    maxLength={3}
+                    disabled={!editable}
+                  />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.effective")}</span>
-                  <input value={mapping.effectiveDate} onChange={(e) => setMapping({ ...mapping, effectiveDate: e.target.value })} placeholder={placeholderText("effectiveVar")} disabled={!editable} />
+                  <input
+                    value={mapping.effectiveDate}
+                    onChange={(e) => setMapping({ ...mapping, effectiveDate: e.target.value })}
+                    placeholder={placeholderText("effectiveVar")}
+                    disabled={!editable}
+                  />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.expiry")}</span>
-                  <input value={mapping.expiryDate} onChange={(e) => setMapping({ ...mapping, expiryDate: e.target.value })} placeholder={placeholderText("expiryVar")} disabled={!editable} />
+                  <input
+                    value={mapping.expiryDate}
+                    onChange={(e) => setMapping({ ...mapping, expiryDate: e.target.value })}
+                    placeholder={placeholderText("expiryVar")}
+                    disabled={!editable}
+                  />
                 </label>
               </div>
               <label className="field">
@@ -710,7 +756,9 @@ export function DocumentTemplateEditPage() {
                     {ta("docs.missing")}: {preview.missing.join(", ")}
                   </div>
                 )}
-                {preview.missingClauses.length > 0 && <div className="agr-run-err">{preview.missingClauses.map((c) => `{{clausula:${c}}}`).join(", ")}</div>}
+                {preview.missingClauses.length > 0 && (
+                  <div className="agr-run-err">{preview.missingClauses.map((c) => `{{clausula:${c}}}`).join(", ")}</div>
+                )}
               </div>
             )}
           </div>
@@ -804,7 +852,8 @@ function GenerateModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [json, source, clauses, locale]);
   const entry = (role: string) => entries[roleKey(role)] ?? { name: "", contact: "" };
-  const setEntry = (role: string, patch: Partial<{ name: string; contact: string }>) => setEntries((x) => ({ ...x, [roleKey(role)]: { ...entry(role), ...patch } }));
+  const setEntry = (role: string, patch: Partial<{ name: string; contact: string }>) =>
+    setEntries((x) => ({ ...x, [roleKey(role)]: { ...entry(role), ...patch } }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -864,7 +913,14 @@ function GenerateModal({
           {(roles ?? []).map((role) => (
             <div key={roleKey(role)} className="agr-subrow">
               <strong>{role}</strong>
-              <input aria-label={`${role} — ${ta("ag.name")}`} placeholder={ta("ag.name")} value={entry(role).name} required maxLength={200} onChange={(e) => setEntry(role, { name: e.target.value })} />
+              <input
+                aria-label={`${role} — ${ta("ag.name")}`}
+                placeholder={ta("ag.name")}
+                value={entry(role).name}
+                required
+                maxLength={200}
+                onChange={(e) => setEntry(role, { name: e.target.value })}
+              />
               <input
                 aria-label={`${role} — ${ta("gen.contact")}`}
                 placeholder={ta("gen.contact")}
@@ -940,7 +996,11 @@ export function ClausesPage() {
               <div className="row-between">
                 <div>
                   <strong>{c.title}</strong> <code className="small">{`{{clausula:${c.slug}}}`}</code>
-                  {c.category && <span className="badge" style={{ marginLeft: 6 }}>{c.category}</span>}
+                  {c.category && (
+                    <span className="badge" style={{ marginLeft: 6 }}>
+                      {c.category}
+                    </span>
+                  )}
                 </div>
                 {can("templates:manage") && (
                   <button type="button" className="btn btn-sm" onClick={() => setEditing(c)}>
@@ -1095,7 +1155,13 @@ function ClauseModal({ clause: initial, onClose, onSaved }: { clause: Clause | n
           </label>
           <label className="field">
             <span>{ta("cl.slug")}</span>
-            <input value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} pattern="[a-z0-9][a-z0-9_-]{0,59}" required disabled={!!clause} />
+            <input
+              value={slug}
+              onChange={(e) => setSlug(e.target.value.toLowerCase())}
+              pattern="[a-z0-9][a-z0-9_-]{0,59}"
+              required
+              disabled={!!clause}
+            />
           </label>
         </div>
         <label className="field">

@@ -4,7 +4,8 @@ import { badRequest } from "../../lib/errors";
 
 type Query = Record<string, unknown>;
 
-const one = (v: unknown): string | undefined => (Array.isArray(v) ? (typeof v[0] === "string" ? v[0] : undefined) : typeof v === "string" ? v : undefined);
+const one = (v: unknown): string | undefined =>
+  Array.isArray(v) ? (typeof v[0] === "string" ? v[0] : undefined) : typeof v === "string" ? v : undefined;
 const many = (v: unknown): string[] => (Array.isArray(v) ? v : v === undefined ? [] : [v]).filter((x): x is string => typeof x === "string");
 
 function date(q: Query, name: string): string | null {
@@ -60,7 +61,8 @@ export function envelopeSearchSql(q: Query, params: unknown[], alias = "e"): str
   if (Object.keys(meta).length) add((p) => `${alias}.metadata @> ${p}::jsonb`, JSON.stringify(meta));
   const templateId = one(q.template_id);
   if (templateId) {
-    if (!/^[0-9a-f-]{36}$/i.test(templateId)) throw badRequest("validation_error", "template_id inválido", [{ path: "template_id", message: "uuid" }]);
+    if (!/^[0-9a-f-]{36}$/i.test(templateId))
+      throw badRequest("validation_error", "template_id inválido", [{ path: "template_id", message: "uuid" }]);
     add((p) => `${alias}.metadata @> jsonb_build_object('templateId', ${p}::text)`, templateId.toLowerCase());
   }
   const recipient = one(q.recipient)?.trim().toLowerCase();
@@ -69,7 +71,8 @@ export function envelopeSearchSql(q: Query, params: unknown[], alias = "e"): str
   }
   const via = one(q.created_via);
   if (via) {
-    if (via !== "api" && via !== "web") throw badRequest("validation_error", "created_via: api o web", [{ path: "created_via", message: "api | web" }]);
+    if (via !== "api" && via !== "web")
+      throw badRequest("validation_error", "created_via: api o web", [{ path: "created_via", message: "api | web" }]);
     add((p) => `${alias}.created_via = ${p}`, via);
   }
   return where;

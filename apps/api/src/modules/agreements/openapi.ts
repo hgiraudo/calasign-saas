@@ -57,7 +57,12 @@ const WorkflowRunSchema = named(
     status: z.enum(WORKFLOW_RUN_STATUSES),
     currentStep: z.number().int(),
     context: z
-      .object({ data: z.record(z.string(), z.unknown()), documents: z.record(z.string(), z.unknown()), envelopes: z.record(z.string(), z.unknown()), http: z.record(z.string(), z.unknown()) })
+      .object({
+        data: z.record(z.string(), z.unknown()),
+        documents: z.record(z.string(), z.unknown()),
+        envelopes: z.record(z.string(), z.unknown()),
+        http: z.record(z.string(), z.unknown()),
+      })
       .describe("Datos acumulados de la ejecución (vacíos si redacted)."),
     steps: z.array(
       z.object({
@@ -82,7 +87,9 @@ const WorkflowRunSchema = named(
     redacted: z
       .boolean()
       .optional()
-      .describe("true si quien consulta administra plantillas pero no la inició, no aprueba ningún paso ni ve todos los sobres: context vacío, output null en los pasos, sin collectUrl. Ausente si no."),
+      .describe(
+        "true si quien consulta administra plantillas pero no la inició, no aprueba ningún paso ni ve todos los sobres: context vacío, output null en los pasos, sin collectUrl. Ausente si no.",
+      ),
     createdAt: iso,
     updatedAt: iso,
   }),
@@ -115,7 +122,9 @@ const PublicWorkflowStartSchema = z.object({
   captchaSiteKey: z
     .string()
     .nullable()
-    .describe("Clave pública de Cloudflare Turnstile si la plataforma exige el desafío: el inicio tiene que traer `captchaToken` (si no, 400 captcha_failed). null: sin desafío."),
+    .describe(
+      "Clave pública de Cloudflare Turnstile si la plataforma exige el desafío: el inicio tiene que traer `captchaToken` (si no, 400 captcha_failed). null: sin desafío.",
+    ),
 });
 
 const R = "Repositorio de acuerdos";
@@ -124,22 +133,53 @@ const W = "Workflows";
 const N = "Negociación";
 
 export const AGREEMENTS_OPS: Op[] = [
-  { method: "get", path: "/v1/agreements", tag: R, summary: "Buscar acuerdos", description: "Query: q (texto completo y título, sin acentos), status, source, tag, counterparty (nombre o correo de una contraparte), expiresWithinDays, f.<campo>=valor, viewId, cursor, limit. `total` viene solo en la primera página (sin cursor); en las siguientes es null." },
-  { method: "get", path: "/v1/agreements/export.csv", tag: R, summary: "Exportar acuerdos a CSV", description: "Mismos filtros que la búsqueda, más `sep` (`,` por defecto o `;` para Excel en español o portugués). Hasta 10.000 acuerdos (los más recientes): si hay más, header `X-Truncated: true` y una fila final TRUNCADO." },
-  { method: "post", path: "/v1/agreements/upload", tag: R, summary: "Subir un acuerdo externo", multipart: true, status: 201, description: "multipart: 'meta' (JSON con title, counterparties, fechas, value, currency, tags, metadata) y luego 'file' (PDF)." },
+  {
+    method: "get",
+    path: "/v1/agreements",
+    tag: R,
+    summary: "Buscar acuerdos",
+    description:
+      "Query: q (texto completo y título, sin acentos), status, source, tag, counterparty (nombre o correo de una contraparte), expiresWithinDays, f.<campo>=valor, viewId, cursor, limit. `total` viene solo en la primera página (sin cursor); en las siguientes es null.",
+  },
+  {
+    method: "get",
+    path: "/v1/agreements/export.csv",
+    tag: R,
+    summary: "Exportar acuerdos a CSV",
+    description:
+      "Mismos filtros que la búsqueda, más `sep` (`,` por defecto o `;` para Excel en español o portugués). Hasta 10.000 acuerdos (los más recientes): si hay más, header `X-Truncated: true` y una fila final TRUNCADO.",
+  },
+  {
+    method: "post",
+    path: "/v1/agreements/upload",
+    tag: R,
+    summary: "Subir un acuerdo externo",
+    multipart: true,
+    status: 201,
+    description: "multipart: 'meta' (JSON con title, counterparties, fechas, value, currency, tags, metadata) y luego 'file' (PDF).",
+  },
   { method: "get", path: "/v1/agreements/{id}", tag: R, summary: "Ver un acuerdo" },
   {
     method: "patch",
     path: "/v1/agreements/{id}",
     tag: R,
     summary: "Editar un acuerdo",
-    description: "Solo cambian los campos enviados (metadata se combina clave por clave con la guardada). Con `X-Expected-Updated-At`, 409 version_changed si el acuerdo cambió desde que se leyó.",
+    description:
+      "Solo cambian los campos enviados (metadata se combina clave por clave con la guardada). Con `X-Expected-Updated-At`, 409 version_changed si el acuerdo cambió desde que se leyó.",
     body: UpdateAgreementInput,
     expectedUpdatedAt: true,
     errors: ["version_changed"],
   },
   { method: "delete", path: "/v1/agreements/{id}", tag: R, summary: "Borrar un acuerdo externo", response: "none", status: 204 },
-  { method: "get", path: "/v1/agreements/{id}/file", tag: R, summary: "Descargar el PDF del acuerdo", description: "Si el archivo se borró por la política de retención, 410 purged.", response: "pdf", errors: ["purged"] },
+  {
+    method: "get",
+    path: "/v1/agreements/{id}/file",
+    tag: R,
+    summary: "Descargar el PDF del acuerdo",
+    description: "Si el archivo se borró por la política de retención, 410 purged.",
+    response: "pdf",
+    errors: ["purged"],
+  },
   { method: "get", path: "/v1/agreement-fields", tag: R, summary: "Campos propios" },
   { method: "post", path: "/v1/agreement-fields", tag: R, summary: "Crear un campo propio", body: AgreementFieldInput, status: 201 },
   {
@@ -147,7 +187,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/agreement-fields/{id}",
     tag: R,
     summary: "Editar un campo propio",
-    description: "Solo los atributos presentes (label, type, options). La clave (`key`) no se puede cambiar: 400 immutable_key. Un campo de lista (select) necesita opciones (400 validation_error).",
+    description:
+      "Solo los atributos presentes (label, type, options). La clave (`key`) no se puede cambiar: 400 immutable_key. Un campo de lista (select) necesita opciones (400 validation_error).",
     body: z.object({
       label: z.string().min(1).max(100).optional(),
       type: z.enum(AGREEMENT_FIELD_TYPES).optional(),
@@ -183,7 +224,14 @@ export const AGREEMENTS_OPS: Op[] = [
   },
   { method: "delete", path: "/v1/document-templates/{id}", tag: D, summary: "Archivar una plantilla", response: "none", status: 204 },
   { method: "post", path: "/v1/document-templates/{id}/preview", tag: D, summary: "Vista previa (bloques + variables faltantes)" },
-  { method: "post", path: "/v1/document-templates/render", tag: D, summary: "PDF de prueba de una plantilla o de un texto", body: RenderDocumentInput, response: "pdf" },
+  {
+    method: "post",
+    path: "/v1/document-templates/render",
+    tag: D,
+    summary: "PDF de prueba de una plantilla o de un texto",
+    body: RenderDocumentInput,
+    response: "pdf",
+  },
   {
     method: "post",
     path: "/v1/document-templates/{id}/generate",
@@ -201,7 +249,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/clauses/{id}/usage",
     tag: D,
     summary: "Dónde se usa una cláusula",
-    description: "Plantillas de documentos no archivadas y otras cláusulas que la citan con {{clausula:codigo}} (en cualquier rama de un {{#if}} o {{#each}}): `{ templates: [{id, name}], clauses: [{id, slug, title}] }`.",
+    description:
+      "Plantillas de documentos no archivadas y otras cláusulas que la citan con {{clausula:codigo}} (en cualquier rama de un {{#if}} o {{#each}}): `{ templates: [{id, name}], clauses: [{id, slug, title}] }`.",
   },
   {
     method: "patch",
@@ -218,7 +267,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/clauses/{id}",
     tag: D,
     summary: "Borrar una cláusula",
-    description: "409 clause_in_use si la citan plantillas no archivadas u otras cláusulas (details con la misma forma que GET /v1/clauses/{id}/usage).",
+    description:
+      "409 clause_in_use si la citan plantillas no archivadas u otras cláusulas (details con la misma forma que GET /v1/clauses/{id}/usage).",
     response: "none",
     status: 204,
     errors: ["clause_in_use"],
@@ -239,7 +289,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/workflows/{id}",
     tag: W,
     summary: "Editar un workflow",
-    description: "Con `X-Expected-Updated-At`, 409 version_changed si el workflow cambió desde que se leyó. Un encabezado, URL o cuerpo enmascarado (••••••) conserva el valor guardado del mismo paso.",
+    description:
+      "Con `X-Expected-Updated-At`, 409 version_changed si el workflow cambió desde que se leyó. Un encabezado, URL o cuerpo enmascarado (••••••) conserva el valor guardado del mismo paso.",
     body: UpdateWorkflowInput,
     expectedUpdatedAt: true,
     errors: ["version_changed"],
@@ -249,7 +300,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/workflows/{id}",
     tag: W,
     summary: "Borrar un workflow",
-    description: "409 runs_in_progress si hay ejecuciones en curso; 409 runs_with_open_envelopes si una ejecución fallida dejó sobres en firma (cancelarla primero: los anula).",
+    description:
+      "409 runs_in_progress si hay ejecuciones en curso; 409 runs_with_open_envelopes si una ejecución fallida dejó sobres en firma (cancelarla primero: los anula).",
     response: "none",
     status: 204,
     errors: ["runs_with_open_envelopes"],
@@ -283,10 +335,30 @@ export const AGREEMENTS_OPS: Op[] = [
       "redacted: true si quien consulta solo administra plantillas (no la inició, no aprueba un paso ni ve todos los sobres): se omiten context, salidas de los pasos y collectUrl, y los errores de los pasos vienen sin detalle.",
     response: WorkflowRunSchema,
   },
-  { method: "post", path: "/v1/workflow-runs/{id}/steps/{index}/decision", tag: W, summary: "Aprobar o rechazar un paso de aprobación", description: "Rechazar deja la ejecución en rejected y anula sus sobres en curso.", body: ApprovalDecisionInput },
-  { method: "post", path: "/v1/workflow-runs/{id}/cancel", tag: W, summary: "Cancelar una ejecución (anula sus sobres en curso)", description: "También una ejecución fallida: es la forma de anular los sobres que dejó en firma." },
+  {
+    method: "post",
+    path: "/v1/workflow-runs/{id}/steps/{index}/decision",
+    tag: W,
+    summary: "Aprobar o rechazar un paso de aprobación",
+    description: "Rechazar deja la ejecución en rejected y anula sus sobres en curso.",
+    body: ApprovalDecisionInput,
+  },
+  {
+    method: "post",
+    path: "/v1/workflow-runs/{id}/cancel",
+    tag: W,
+    summary: "Cancelar una ejecución (anula sus sobres en curso)",
+    description: "También una ejecución fallida: es la forma de anular los sobres que dejó en firma.",
+  },
   { method: "post", path: "/v1/workflow-runs/{id}/retry", tag: W, summary: "Reintentar el paso fallido" },
-  { method: "get", path: "/v1/public/workflows/{slug}", tag: W, summary: "Workflow con inicio público", auth: "none", response: PublicWorkflowStartSchema },
+  {
+    method: "get",
+    path: "/v1/public/workflows/{slug}",
+    tag: W,
+    summary: "Workflow con inicio público",
+    auth: "none",
+    response: PublicWorkflowStartSchema,
+  },
   {
     method: "post",
     path: "/v1/public/workflows/{slug}/start",
@@ -322,7 +394,15 @@ export const AGREEMENTS_OPS: Op[] = [
     description:
       "participants[].role es un rol de firma del documento ({{firma:Rol}}): 400 unknown_role si no existe, duplicate_role si se repite, missing_roles si falta más de uno. Para contrapartes que no firman (copia), observer: true: su role es una etiqueta libre (400 observer_signing_role si coincide con un rol de firma).",
   },
-  { method: "post", path: "/v1/negotiations/upload", tag: N, summary: "Negociar un PDF (solo comentarios)", multipart: true, status: 201, description: "415 si se sube un documento de Word." },
+  {
+    method: "post",
+    path: "/v1/negotiations/upload",
+    tag: N,
+    summary: "Negociar un PDF (solo comentarios)",
+    multipart: true,
+    status: 201,
+    description: "415 si se sube un documento de Word.",
+  },
   { method: "get", path: "/v1/negotiations/{id}", tag: N, summary: "Ver una negociación" },
   { method: "get", path: "/v1/negotiations/{id}/diff", tag: N, summary: "Diff entre versiones", description: "Query: from, to." },
   { method: "get", path: "/v1/negotiations/{id}/pdf", tag: N, summary: "PDF de la versión actual", response: "pdf" },
@@ -338,7 +418,7 @@ export const AGREEMENTS_OPS: Op[] = [
       data: z.record(z.string(), z.unknown()).optional().describe("Cambio parcial: se fusiona con los datos guardados; null borra la clave."),
       expectedVersion: z.number().int().min(1).optional().describe("Versión sobre la que se editó (409 version_changed si ya hay otra)."),
       clauseOverrides: z.record(z.string(), z.string().max(50_000)).optional().describe("Clave de la cláusula → texto nuevo."),
-      summary: z.string().max(500).optional().describe("Resumen del cambio (por defecto \"Edición del remitente\")."),
+      summary: z.string().max(500).optional().describe('Resumen del cambio (por defecto "Edición del remitente").'),
     }),
   },
   {
@@ -379,7 +459,14 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "post", path: "/v1/negotiations/{id}/cancel", tag: N, summary: "Cancelar la negociación" },
   { method: "get", path: "/v1/public/negotiations/{token}", tag: N, summary: "Vista de la contraparte", auth: "none" },
   { method: "get", path: "/v1/public/negotiations/{token}/diff", tag: N, summary: "Diff entre versiones (contraparte)", auth: "none" },
-  { method: "get", path: "/v1/public/negotiations/{token}/pdf", tag: N, summary: "PDF de la versión actual (contraparte)", response: "pdf", auth: "none" },
+  {
+    method: "get",
+    path: "/v1/public/negotiations/{token}/pdf",
+    tag: N,
+    summary: "PDF de la versión actual (contraparte)",
+    response: "pdf",
+    auth: "none",
+  },
   {
     method: "post",
     path: "/v1/public/negotiations/{token}/comments",

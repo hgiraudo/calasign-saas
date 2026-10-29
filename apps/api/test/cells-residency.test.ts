@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-cells-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let cellsMod: typeof import("../src/infra/cells");
 let queue: typeof import("../src/infra/queue");
@@ -55,7 +55,15 @@ describe("celda de los jobs", () => {
     await queue.enqueue(db, "webhook", { kind: "deliver", deliveryId: "x" }, { dedupeKey: "c5", tenantId: T.br });
     await queue.enqueue(db, "notify", { kind: "password_reset", userId: "u" }, { dedupeKey: "c6" });
     await queue.enqueue(db, "notify", { kind: "invite", tenantId: T.xx }, { dedupeKey: "c7" });
-    expect([await cellOf("c1"), await cellOf("c2"), await cellOf("c3"), await cellOf("c4"), await cellOf("c5"), await cellOf("c6"), await cellOf("c7")]).toEqual([
+    expect([
+      await cellOf("c1"),
+      await cellOf("c2"),
+      await cellOf("c3"),
+      await cellOf("c4"),
+      await cellOf("c5"),
+      await cellOf("c6"),
+      await cellOf("c7"),
+    ]).toEqual([
       "br",
       "us",
       "us",
@@ -69,14 +77,16 @@ describe("celda de los jobs", () => {
   it("jobs de la cola agreements con solo el id del acuerdo / run / negociación: la celda de su organización", async () => {
     setCells(TWO_CELLS, null);
     const file = util.uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,$4)`, [
-      file,
-      T.br,
-      `tenants/${T.br}/a/${file}.pdf`,
-      "a".repeat(64),
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,$4)`,
+      [file, T.br, `tenants/${T.br}/a/${file}.pdf`, "a".repeat(64)],
+    );
     const ag = util.uuidv7();
-    await db.query(`INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title) VALUES ($1,$2,'external',$3,'a.pdf','A')`, [ag, T.br, file]);
+    await db.query(`INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title) VALUES ($1,$2,'external',$3,'a.pdf','A')`, [
+      ag,
+      T.br,
+      file,
+    ]);
     await queue.enqueue(db, "agreements", { kind: "expiry_notice", agreementId: ag, expiryDate: "2030-01-01" }, { dedupeKey: "agr1" });
     expect(await cellOf("agr1")).toBe("br");
     // Un id que no existe: sin celda (cualquier worker), como antes.
@@ -98,7 +108,11 @@ describe("celda de los jobs", () => {
     await queue.enqueue(db, "notify", { kind: "x" }, { dedupeKey: "w-none" });
     const seen: string[] = [];
     const log = { info() {}, error() {} };
-    const worker = queue.startWorker(db, { handlers: { notify: async (p: any, job: any) => void seen.push(String(job.id)) } as any, pollMs: 20, log });
+    const worker = queue.startWorker(db, {
+      handlers: { notify: async (p: any, job: any) => void seen.push(String(job.id)) } as any,
+      pollMs: 20,
+      log,
+    });
     try {
       const end = Date.now() + 5000;
       while (seen.length < 2 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
@@ -134,13 +148,16 @@ describe("celdas no configuradas: falla cerrada", () => {
       onKeyFailure: async () => {},
       onKeySuccess: async () => {},
     });
-    await expect(store.put(`tenants/${tenant}/x.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toMatchObject({ status: 503, code: "wrong_cell" });
+    await expect(store.put(`tenants/${tenant}/x.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toMatchObject({
+      status: 503,
+      code: "wrong_cell",
+    });
     await expect(store.get(`tenants/${tenant}/x.pdf`)).rejects.toMatchObject({ status: 503, code: "wrong_cell" });
   });
 });
 
 describe("enrutamiento de las rutas públicas", () => {
-  type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+  type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
   let app: App;
   const slug: Record<string, string> = {};
   const runToken: Record<string, string> = {};

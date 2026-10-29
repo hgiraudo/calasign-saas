@@ -22,10 +22,10 @@ vi.mock("../src/notifications/channels", async (orig) => ({
   }),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let tenant: string;
-let handlers: Awaited<ReturnType<typeof import("../src/modules/jobs")["createJobHandlers"]>>;
+let handlers: Awaited<ReturnType<(typeof import("../src/modules/jobs"))["createJobHandlers"]>>;
 
 beforeAll(async () => {
   const { createDb, migrate } = await import("../src/infra/db");
@@ -56,14 +56,29 @@ async function envelope(opts: { status?: string; expiresAt?: string | null } = {
   return id;
 }
 
-async function recipient(env: string, r: { email?: string; phone?: string; channels?: string[]; embedded?: boolean; selfRegistered?: boolean; status?: string }) {
+async function recipient(
+  env: string,
+  r: { email?: string; phone?: string; channels?: string[]; embedded?: boolean; selfRegistered?: boolean; status?: string },
+) {
   const { uuidv7, encrypt, sha256Hex, randomToken } = await import("../src/lib/util");
   const id = uuidv7();
   const token = randomToken();
   await db.query(
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, channels, status, sent_at, embedded, self_registered, access_token_hash, access_token_enc)
      VALUES ($1,$2,$3,'signer',1,'Ana',$4,$5,$6,$7, now(), $8, $9, $10, $11)`,
-    [id, tenant, env, r.email ?? null, r.phone ?? null, r.channels ?? ["email"], r.status ?? "sent", r.embedded ?? false, r.selfRegistered ?? false, sha256Hex(token), encrypt(token)],
+    [
+      id,
+      tenant,
+      env,
+      r.email ?? null,
+      r.phone ?? null,
+      r.channels ?? ["email"],
+      r.status ?? "sent",
+      r.embedded ?? false,
+      r.selfRegistered ?? false,
+      sha256Hex(token),
+      encrypt(token),
+    ],
   );
   return id;
 }
@@ -95,7 +110,12 @@ describe("avisos a firmantes por varios canales", () => {
     await handlers.notify(p, job(101, 2));
     expect(sent.map((x) => x.channel)).toEqual(["email", "whatsapp"]);
     const rows = await db.query<any>(`SELECT channel, status, job_id FROM notifications WHERE recipient_id = $1 ORDER BY created_at, channel`, [rec]);
-    expect(rows.filter((r) => r.status === "sent").map((r) => r.channel).sort()).toEqual(["email", "whatsapp"]);
+    expect(
+      rows
+        .filter((r) => r.status === "sent")
+        .map((r) => r.channel)
+        .sort(),
+    ).toEqual(["email", "whatsapp"]);
     expect(rows.every((r) => Number(r.job_id) === 101)).toBe(true);
 
     // Un tercer intento (p. ej. el proceso murió antes de marcar el job): nada se repite.
@@ -137,10 +157,14 @@ describe("avisos a firmantes por varios canales", () => {
     expect(isTransientSendError(Object.assign(new Error("Message failed"), { responseCode: 550 }))).toBe(false);
     expect(isTransientSendError(Object.assign(new Error("Try later"), { responseCode: 451 }))).toBe(true);
     expect(isTransientSendError(Object.assign(new Error("conn"), { code: "ECONNRESET" }))).toBe(true);
-    expect(isTransientSendError(new TypeError("fetch failed", { cause: Object.assign(new Error("x"), { code: "UND_ERR_CONNECT_TIMEOUT" }) }))).toBe(true);
+    expect(isTransientSendError(new TypeError("fetch failed", { cause: Object.assign(new Error("x"), { code: "UND_ERR_CONNECT_TIMEOUT" }) }))).toBe(
+      true,
+    );
     // Configuración de la plataforma (canal sin configurar, credenciales SMTP rechazadas): se reintenta.
     expect(isTransientSendError(new Error("WhatsApp no configurado"))).toBe(true);
-    expect(isTransientSendError(Object.assign(new Error("Invalid login: 535 Authentication Credentials Invalid"), { code: "EAUTH", responseCode: 535 }))).toBe(true);
+    expect(
+      isTransientSendError(Object.assign(new Error("Invalid login: 535 Authentication Credentials Invalid"), { code: "EAUTH", responseCode: 535 })),
+    ).toBe(true);
     expect(isTransientSendError(new Error("535 Authentication Credentials Invalid"))).toBe(true);
     expect(isTransientSendError(new Error("550 mailbox unavailable"))).toBe(false);
     expect(isTransientSendError(new Error("algo raro"))).toBe(true);
@@ -177,7 +201,13 @@ describe("avisos a firmantes por varios canales", () => {
   it("autorregistrado sin correo validado: el completado llega solo por correo, sin link ni token y con una nota; nada más", async () => {
     sent.length = 0;
     const env = await envelope({ status: "completed" });
-    const rec = await recipient(env, { email: "form@x.com", phone: "+5491100000000", channels: ["email", "whatsapp"], selfRegistered: true, status: "signed" });
+    const rec = await recipient(env, {
+      email: "form@x.com",
+      phone: "+5491100000000",
+      channels: ["email", "whatsapp"],
+      selfRegistered: true,
+      status: "signed",
+    });
     await handlers.notify({ kind: "completed", envelopeId: env, recipientId: rec, tenantId: tenant }, job(401));
     expect(sent.map((x) => x.channel)).toEqual(["email"]);
     expect(sent[0]!.text).not.toContain("/s/");

@@ -8,7 +8,12 @@ describe("readCapped", () => {
   });
   it("corta por content-length o por bytes leídos", async () => {
     await expect(readCapped(new Response("x".repeat(20), { headers: { "content-length": "20" } }), 10)).rejects.toBeInstanceOf(BodyTooLargeError);
-    const stream = new ReadableStream({ start(c) { for (let i = 0; i < 5; i++) c.enqueue(new Uint8Array(8)); c.close(); } });
+    const stream = new ReadableStream({
+      start(c) {
+        for (let i = 0; i < 5; i++) c.enqueue(new Uint8Array(8));
+        c.close();
+      },
+    });
     await expect(readCapped(new Response(stream), 20)).rejects.toBeInstanceOf(BodyTooLargeError);
   });
   it("JSON inválido o demasiado grande da {}", async () => {

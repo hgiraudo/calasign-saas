@@ -19,7 +19,13 @@ describe("fórmulas", () => {
 });
 
 describe("condiciones", () => {
-  const f = (id: string, type: string, label: string | null, conditions: any = null, formula: string | null = null) => ({ id, type, label, conditions, formula });
+  const f = (id: string, type: string, label: string | null, conditions: any = null, formula: string | null = null) => ({
+    id,
+    type,
+    label,
+    conditions,
+    formula,
+  });
   it("oculta en cascada y calcula solo lo visible", () => {
     const fields = [
       f("a", "checkbox", "A"),
@@ -34,7 +40,9 @@ describe("condiciones", () => {
     expect(computeFormulas(fields, (id) => vals[id] ?? null, hidden).get("t")).toBe("42");
   });
   it("valida ciclos y referencias", () => {
-    expect(() => validateLogic([f("a", "text", "A", [{ fieldId: "b", operator: "filled" }]), f("b", "text", "B", [{ fieldId: "a", operator: "filled" }])])).toThrow(/ciclo/);
+    expect(() =>
+      validateLogic([f("a", "text", "A", [{ fieldId: "b", operator: "filled" }]), f("b", "text", "B", [{ fieldId: "a", operator: "filled" }])]),
+    ).toThrow(/ciclo/);
     expect(() => validateLogic([f("t", "number", "T", null, "{X} + 1")])).toThrow(/X/);
     expect(() => validateLogic([f("t", "number", "T", null, "{T} + 1")])).toThrow();
   });
@@ -42,7 +50,10 @@ describe("condiciones", () => {
 
 describe("CSV", () => {
   it("detecta punto y coma, comillas, BOM y saltos dentro de comillas", () => {
-    expect(parseCsv('﻿a;b\r\n"x;1";"lí\nnea"\r\n')).toEqual([["a", "b"], ["x;1", "lí\nnea"]]);
+    expect(parseCsv('﻿a;b\r\n"x;1";"lí\nnea"\r\n')).toEqual([
+      ["a", "b"],
+      ["x;1", "lí\nnea"],
+    ]);
   });
   it("mapea columnas a roles y campos", () => {
     const r = csvToRows("Cliente.nombre,Cliente.email,field.Plan,Otro\nAna,ANA@x.com,Anual,1\n", [{ id: "r1", name: "Cliente" }]);

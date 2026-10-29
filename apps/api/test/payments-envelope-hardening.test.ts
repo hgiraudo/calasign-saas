@@ -16,8 +16,8 @@ process.env.MP_API_BASE = "https://mp.test";
 process.env.MP_CURRENCIES = "ARS";
 delete process.env.MP_WEBHOOK_SECRET;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant = "";
@@ -33,7 +33,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name, billing_plan) VALUES ($1, $2, 'T', 'business')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -62,7 +66,8 @@ async function setup(o: { status?: string; provider?: string; currency?: string;
   }
   return { envelope, recipient, token };
 }
-const events = (envelope: string, type: string) => db.query<any>(`SELECT data, actor_type FROM envelope_events WHERE envelope_id = $1 AND type = $2`, [envelope, type]);
+const events = (envelope: string, type: string) =>
+  db.query<any>(`SELECT data, actor_type FROM envelope_events WHERE envelope_id = $1 AND type = $2`, [envelope, type]);
 const putPayment = (envelope: string, recipient: string, provider: string, currency: string) =>
   app.inject({
     method: "PUT",
@@ -178,7 +183,14 @@ describe("pago cobrado y sobre cerrado sin completarse: constancia, sin reembols
     expect(v.statusCode).toBeLessThan(300);
     const ev = await events(s.envelope, "payment.settled_on_closed_envelope");
     expect(ev).toHaveLength(1);
-    expect(ev[0].data).toMatchObject({ amount: 100, currency: "USD", provider: "mock", providerPaymentId: "pi_x", envelopeStatus: "voided", refund: "manual" });
+    expect(ev[0].data).toMatchObject({
+      amount: 100,
+      currency: "USD",
+      provider: "mock",
+      providerPaymentId: "pi_x",
+      envelopeStatus: "voided",
+      refund: "manual",
+    });
     const p = await db.one<any>(`SELECT status, refund_required_at FROM envelope_payments WHERE envelope_id = $1`, [s.envelope]);
     expect(p).toMatchObject({ status: "paid", refund_required_at: null });
   });
@@ -197,7 +209,8 @@ describe("pago cobrado y sobre cerrado sin completarse: constancia, sin reembols
     const paid = await setup({ payStatus: "paid" });
     const pending = await setup({ payStatus: "pending" });
     const late = await setup({ payStatus: "paid", refundRequired: true });
-    for (const s of [paid, pending, late]) await db.query(`UPDATE envelopes SET expires_at = now() - interval '1 minute' WHERE id = $1`, [s.envelope]);
+    for (const s of [paid, pending, late])
+      await db.query(`UPDATE envelopes SET expires_at = now() - interval '1 minute' WHERE id = $1`, [s.envelope]);
     const { sweep } = await import("../src/modules/jobs");
     const { createBlobStore } = await import("../src/infra/storage");
     await sweep({ db, blobs: createBlobStore(), log: { info() {}, warn() {}, error() {} } });
@@ -212,7 +225,11 @@ describe("pago cobrado y sobre cerrado sin completarse: constancia, sin reembols
 
 describe("POST /v1/envelopes idempotente con firmantes embebidos", () => {
   function minimalPdf() {
-    const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"];
+    const objs = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+    ];
     let out = "%PDF-1.4\n";
     const offs: number[] = [];
     objs.forEach((o, i) => {
@@ -275,4 +292,3 @@ describe("POST /v1/envelopes idempotente con firmantes embebidos", () => {
     expect(third.json().signingUrlsHint).toContain("signing-url");
   }, 60_000);
 });
-

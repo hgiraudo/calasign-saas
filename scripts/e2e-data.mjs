@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
-
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
 const tempDirs = [];
 process.on("exit", () => {
@@ -21,7 +20,12 @@ process.on("exit", () => {
 });
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -61,7 +65,8 @@ class Client {
       data = text;
     }
     const exp = expect === undefined ? null : [].concat(expect);
-    if (exp ? !exp.includes(res.status) : !res.ok) throw new Error(`${method} ${path} → ${res.status} (esperaba ${exp ?? "2xx"}) ${text.slice(0, 400)}`);
+    if (exp ? !exp.includes(res.status) : !res.ok)
+      throw new Error(`${method} ${path} → ${res.status} (esperaba ${exp ?? "2xx"}) ${text.slice(0, 400)}`);
     return data;
   }
 }
@@ -132,8 +137,16 @@ function findFile(dir, name) {
 
 const anon = new Client();
 const cells = (await anon.api("GET", "/v1/public/cells")).items;
-assert(cells.some((c) => c.default && c.available), "hay una celda por defecto disponible");
-await new Client().api("POST", "/v1/auth/signup", { name: "X", email: `x-${stamp}@example.com`, password: "una-clave-segura-123", organization: "X", cell: "marte" }, { expect: 400 });
+assert(
+  cells.some((c) => c.default && c.available),
+  "hay una celda por defecto disponible",
+);
+await new Client().api(
+  "POST",
+  "/v1/auth/signup",
+  { name: "X", email: `x-${stamp}@example.com`, password: "una-clave-segura-123", organization: "X", cell: "marte" },
+  { expect: 400 },
+);
 const br = cells.find((c) => c.id === "br");
 assert(br, "Brasil figura en la lista");
 const usCell = cells.find((c) => c.default).id;
@@ -149,26 +162,40 @@ if (br.available) {
     const meA = await A.api("GET", "/v1/me");
     const meB = await B.api("GET", "/v1/me");
     assert(a.doc.id && inBr(meB.tenant.id) && !inBr(meA.tenant.id), "los archivos de la organización de Brasil quedan en la celda de Brasil");
-    assert(existsSync(join(DATA_DIR, "blobs", "tenants", meA.tenant.id)) && !existsSync(join(DATA_DIR, "blobs", "tenants", meB.tenant.id)), "y los de la otra organización no");
+    assert(
+      existsSync(join(DATA_DIR, "blobs", "tenants", meA.tenant.id)) && !existsSync(join(DATA_DIR, "blobs", "tenants", meB.tenant.id)),
+      "y los de la otra organización no",
+    );
   }
-  const back = Buffer.from(await (await B.api("GET", `/v1/envelopes/${b.envelope.id}/documents/${b.doc.id}/file`, null, { raw: true })).arrayBuffer());
+  const back = Buffer.from(
+    await (await B.api("GET", `/v1/envelopes/${b.envelope.id}/documents/${b.doc.id}/file`, null, { raw: true })).arrayBuffer(),
+  );
   assert(b.doc.sha256 && sha(back) === b.doc.sha256 && back.subarray(0, 5).toString() === "%PDF-", "el documento de Brasil se lee desde su celda");
   ok(`celdas: alta en ${usCell} y en br; cada organización guarda en su celda${DATA_DIR ? " (verificado en disco)" : ""}; región inexistente → 400`);
 } else {
-  await new Client().api("POST", "/v1/auth/signup", { name: "Y", email: `y-${stamp}@example.com`, password: "una-clave-segura-123", organization: "Y", cell: "br" }, { expect: 400 });
+  await new Client().api(
+    "POST",
+    "/v1/auth/signup",
+    { name: "Y", email: `y-${stamp}@example.com`, password: "una-clave-segura-123", organization: "Y", cell: "br" },
+    { expect: 400 },
+  );
   ok("celdas: Brasil figura como «Próximamente» y no se puede elegir; región inexistente → 400");
 }
 
 // ───────────────────────────── BYOK ─────────────────────────────
 
 const meA = await A.api("GET", "/v1/me");
-const mockOn = (await A.api("POST", "/dev/kms-mock", { keyArn: "arn:aws:kms:us-east-1:111122223333:key/probe", disabled: false }, { raw: true })).status === 200;
+const mockOn =
+  (await A.api("POST", "/dev/kms-mock", { keyArn: "arn:aws:kms:us-east-1:111122223333:key/probe", disabled: false }, { raw: true })).status === 200;
 if (!mockOn) {
   skip("BYOK: el servidor no tiene KMS_MOCK=1 (entorno local); se saltea");
 } else {
   const OK_ARN = `arn:aws:kms:us-east-1:111122223333:key/e2e-${stamp}`;
   let s = await A.api("GET", "/v1/settings/byok");
-  assert(s.status === "none" && JSON.stringify(s.keyPolicy).includes(meA.tenant.id) && JSON.stringify(s.keyPolicy).includes("calasign-tenant-certificate"), "política sugerida atada a la organización");
+  assert(
+    s.status === "none" && JSON.stringify(s.keyPolicy).includes(meA.tenant.id) && JSON.stringify(s.keyPolicy).includes("calasign-tenant-certificate"),
+    "política sugerida atada a la organización",
+  );
   const bad = await A.api("PUT", "/v1/settings/byok", { keyArn: "arn:aws:kms:us-east-1:111122223333:key/mock-failing" }, { expect: 422 });
   assert(bad.error.code === "byok_key_test_failed" && bad.error.details.checks.some((c) => !c.ok), "una clave inutilizable no se activa");
   await A.api("PUT", "/v1/settings/byok", { keyArn: "no-es-un-arn" }, { expect: 400 });
@@ -178,22 +205,63 @@ if (!mockOn) {
 
   const pdf = tinyPdf("Contrato cifrado con BYOK");
   const d1 = await draftWithDoc(A, "BYOK 1", pdf);
-  const got = Buffer.from(await (await A.api("GET", `/v1/envelopes/${d1.envelope.id}/documents/${d1.doc.id}/file`, null, { raw: true })).arrayBuffer());
+  const got = Buffer.from(
+    await (await A.api("GET", `/v1/envelopes/${d1.envelope.id}/documents/${d1.doc.id}/file`, null, { raw: true })).arrayBuffer(),
+  );
   assert(d1.doc.sha256 && sha(got) === d1.doc.sha256 && got.subarray(0, 5).toString() === "%PDF-", "el documento se lee descifrado");
   if (DATA_DIR) {
     const f = findFile(join(DATA_DIR, "blobs", "tenants", meA.tenant.id, "envelopes", d1.envelope.id), "");
     const raw = readFileSync(f);
-    assert(raw.subarray(0, 8).toString() === "CSBYOK1\n" && !raw.includes(Buffer.from("cifrado con BYOK")), "en disco queda cifrado con la clave del cliente");
+    assert(
+      raw.subarray(0, 8).toString() === "CSBYOK1\n" && !raw.includes(Buffer.from("cifrado con BYOK")),
+      "en disco queda cifrado con la clave del cliente",
+    );
   }
   // Certificado en custodia envuelto con la clave del cliente y usado para firmar XML.
   const dir = tempDir("p12-");
-  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-days", "30", "-subj", "/CN=Empresa BYOK E2E"], { stdio: "ignore" });
-  execFileSync("openssl", ["pkcs12", "-export", "-inkey", join(dir, "k.pem"), "-in", join(dir, "c.pem"), "-passout", "pass:e2e-pass", "-out", join(dir, "c.p12")]);
-  const { certificate } = await A.api("POST", "/v1/certificates", { name: "BYOK", p12Base64: readFileSync(join(dir, "c.p12")).toString("base64"), password: "e2e-pass" }, { expect: 201 });
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      join(dir, "k.pem"),
+      "-out",
+      join(dir, "c.pem"),
+      "-days",
+      "30",
+      "-subj",
+      "/CN=Empresa BYOK E2E",
+    ],
+    { stdio: "ignore" },
+  );
+  execFileSync("openssl", [
+    "pkcs12",
+    "-export",
+    "-inkey",
+    join(dir, "k.pem"),
+    "-in",
+    join(dir, "c.pem"),
+    "-passout",
+    "pass:e2e-pass",
+    "-out",
+    join(dir, "c.p12"),
+  ]);
+  const { certificate } = await A.api(
+    "POST",
+    "/v1/certificates",
+    { name: "BYOK", p12Base64: readFileSync(join(dir, "c.p12")).toString("base64"), password: "e2e-pass" },
+    { expect: 201 },
+  );
   const xml = `<?xml version="1.0" encoding="utf-8"?><ECF><Encabezado><Totales><MontoTotal>10.00</MontoTotal></Totales></Encabezado></ECF>`;
   const signedXml = await A.api("POST", "/v1/xml/sign", { xml, profile: "dgii-ecf", certificateId: certificate.id });
   assert(signedXml.verification.valid, "firma XML con la clave del certificado envuelta por BYOK");
-  ok(`BYOK: documento cifrado${DATA_DIR ? " (en disco con la clave del cliente)" : ""} y leído; certificado en custodia envuelto con la clave del cliente`);
+  ok(
+    `BYOK: documento cifrado${DATA_DIR ? " (en disco con la clave del cliente)" : ""} y leído; certificado en custodia envuelto con la clave del cliente`,
+  );
 
   // La clave deja de funcionar: falla cerrado y avisa.
   await A.api("POST", "/dev/kms-mock", { keyArn: OK_ARN, disabled: true });
@@ -207,7 +275,10 @@ if (!mockOn) {
   const mail = (await A.api("GET", "/dev/mailbox")).items.find((m) => m.to === meA.user.email && /BYOK/.test(m.subject));
   assert(mail, "aviso a los administradores");
   const audit = await A.api("GET", "/v1/audit-log?action=byok.*");
-  assert(audit.items.some((x) => x.action === "byok.key_failing"), "auditoría de la falla");
+  assert(
+    audit.items.some((x) => x.action === "byok.key_failing"),
+    "auditoría de la falla",
+  );
   ok("BYOK: con la clave deshabilitada, subir, leer y firmar fallan cerrados (503); estado «con problemas», aviso por correo y auditoría");
 
   await A.api("POST", "/dev/kms-mock", { keyArn: OK_ARN, disabled: false });
@@ -224,7 +295,9 @@ if (!mockOn) {
     assert(raw.subarray(0, 5).toString() === "%PDF-", "sin BYOK se guarda con la clave de la plataforma");
   }
   // Lo cifrado antes con la clave del cliente se sigue leyendo mientras la clave exista.
-  const again = Buffer.from(await (await A.api("GET", `/v1/envelopes/${d1.envelope.id}/documents/${d1.doc.id}/file`, null, { raw: true })).arrayBuffer());
+  const again = Buffer.from(
+    await (await A.api("GET", `/v1/envelopes/${d1.envelope.id}/documents/${d1.doc.id}/file`, null, { raw: true })).arrayBuffer(),
+  );
   assert(sha(again) === d1.doc.sha256, "lo anterior se sigue leyendo");
   ok("BYOK: clave restablecida y probada → activa; desactivar vuelve a la clave de la plataforma sin perder lo anterior");
 }
@@ -239,12 +312,20 @@ assert(dom.status === "verified", "dominio propio verificado");
 // Firma embebida
 const emb = await draftWithDoc(A, "Embebido con dominio");
 const signer = randomUUID();
-await A.api("PUT", `/v1/envelopes/${emb.envelope.id}/recipients`, { recipients: [{ id: signer, name: "Cliente embebido", embedded: true, routingOrder: 1 }] });
-await A.api("PUT", `/v1/envelopes/${emb.envelope.id}/fields`, { fields: [{ documentId: emb.doc.id, recipientId: signer, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }] });
+await A.api("PUT", `/v1/envelopes/${emb.envelope.id}/recipients`, {
+  recipients: [{ id: signer, name: "Cliente embebido", embedded: true, routingOrder: 1 }],
+});
+await A.api("PUT", `/v1/envelopes/${emb.envelope.id}/fields`, {
+  fields: [{ documentId: emb.doc.id, recipientId: signer, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }],
+});
 await A.api("POST", `/v1/envelopes/${emb.envelope.id}/send`);
 const su = await A.api("POST", `/v1/envelopes/${emb.envelope.id}/recipients/${signer}/signing-url`, {}, { expect: 201 });
 if (dom.servingEnabled) assert(su.url.startsWith(`https://${DOMAIN}/embed/`), `URL embebida con el dominio propio: ${su.url}`);
-else assert(su.url.includes("/embed/") && !su.url.includes(DOMAIN), `URL embebida con el dominio de la plataforma (dominios propios deshabilitados): ${su.url}`);
+else
+  assert(
+    su.url.includes("/embed/") && !su.url.includes(DOMAIN),
+    `URL embebida con el dominio de la plataforma (dominios propios deshabilitados): ${su.url}`,
+  );
 // Formulario web
 const { template } = await A.api("POST", "/v1/templates", { name: `Alta ${stamp}`, subject: "Alta" });
 const tfd = new FormData();
@@ -252,8 +333,15 @@ tfd.append("file", new Blob([tinyPdf("Alta")], { type: "application/pdf" }), "al
 const tdoc = await A.api("POST", `/v1/templates/${template.id}/documents`, tfd);
 const role = randomUUID();
 await A.api("PUT", `/v1/templates/${template.id}/roles`, { roles: [{ id: role, name: "Cliente", role: "signer", routingOrder: 1 }] });
-await A.api("PUT", `/v1/templates/${template.id}/fields`, { fields: [{ documentId: tdoc.id, roleId: role, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }] });
-const form = await A.api("POST", "/v1/web-forms", { templateId: template.id, name: `Form ${stamp}`, signerRoleId: role, fixedRecipients: [] }, { expect: 201 });
+await A.api("PUT", `/v1/templates/${template.id}/fields`, {
+  fields: [{ documentId: tdoc.id, roleId: role, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }],
+});
+const form = await A.api(
+  "POST",
+  "/v1/web-forms",
+  { templateId: template.id, name: `Form ${stamp}`, signerRoleId: role, fixedRecipients: [] },
+  { expect: 201 },
+);
 if (dom.servingEnabled) assert(form.url === `https://${DOMAIN}/f/${form.slug}`, `link del formulario con el dominio propio: ${form.url}`);
 else assert(form.url.endsWith(`/f/${form.slug}`) && !form.url.includes(DOMAIN), `link del formulario con el dominio de la plataforma: ${form.url}`);
 ok("dominio propio: la URL de firma embebida y el link del formulario web usan el dominio de la organización");
@@ -286,7 +374,10 @@ assert(taken.error.code === "domain_taken", "dominio verificado por otra organiz
 // Guardar de nuevo la configuración conserva la verificación.
 await A.api("PUT", "/v1/settings/sso", { ...ssoBase, domains: [SSO_DOMAIN, `otro-${stamp}.test`] });
 items = (await A.api("GET", "/v1/settings/sso/domains")).items;
-assert(items.find((x) => x.domain === SSO_DOMAIN).verified && !items.find((x) => x.domain !== SSO_DOMAIN).verified, "guardar conserva la verificación");
+assert(
+  items.find((x) => x.domain === SSO_DOMAIN).verified && !items.find((x) => x.domain !== SSO_DOMAIN).verified,
+  "guardar conserva la verificación",
+);
 ok("dominios SSO: pendiente hasta el TXT; verificado queda de una sola organización (409 para otras); guardar no pierde la verificación");
 
 // ───────────────────────────── SCIM: cupo de usuarios del plan ─────────────────────────────
@@ -299,13 +390,28 @@ await D.api("POST", "/dev/dns-stub", { name: sd.txtName, values: [sd.txtValue] }
 assert((await D.api("POST", `/v1/settings/sso/domains/${SCIM_DOMAIN}/verify`, {})).verified, "dominio SCIM verificado");
 const tok = (await D.api("POST", "/v1/settings/scim/tokens", { name: "IdP" }, { expect: 201 })).secret;
 const scim = (method, path, body) =>
-  fetch(`${BASE}/scim/v2${path}`, { method, headers: { authorization: `Bearer ${tok}`, "content-type": "application/scim+json" }, body: body ? JSON.stringify(body) : undefined });
-const u1 = await scim("POST", "/Users", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `scim1-${stamp}@${SCIM_DOMAIN}`, active: true });
+  fetch(`${BASE}/scim/v2${path}`, {
+    method,
+    headers: { authorization: `Bearer ${tok}`, "content-type": "application/scim+json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+const u1 = await scim("POST", "/Users", {
+  schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  userName: `scim1-${stamp}@${SCIM_DOMAIN}`,
+  active: true,
+});
 assert(u1.status === 201, `alta SCIM con cupo: ${u1.status}`);
 await D.api("POST", "/v1/billing/cancel", {}); // baja a Free (1 usuario)
-const u2 = await scim("POST", "/Users", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `scim2-${stamp}@${SCIM_DOMAIN}`, active: true });
+const u2 = await scim("POST", "/Users", {
+  schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  userName: `scim2-${stamp}@${SCIM_DOMAIN}`,
+  active: true,
+});
 const e2 = await u2.json();
-assert(u2.status === 402 && e2.schemas?.[0]?.includes("Error") && e2.scimType === "plan_limit" && /plan_limit/.test(e2.detail), `SCIM sin cupo: ${u2.status} ${JSON.stringify(e2)}`);
+assert(
+  u2.status === 402 && e2.schemas?.[0]?.includes("Error") && e2.scimType === "plan_limit" && /plan_limit/.test(e2.detail),
+  `SCIM sin cupo: ${u2.status} ${JSON.stringify(e2)}`,
+);
 ok("SCIM: alta con cupo (201); sin cupo en el plan → 402 plan_limit con el esquema de error de SCIM");
 
 // ───────────────────────────── Archivo a largo plazo (B-LTA) ─────────────────────────────
@@ -318,8 +424,12 @@ if (ev2.effectiveLevel !== "B-LTA") {
 } else {
   const ar = await draftWithDoc(A, "Archivo B-LTA");
   const sid = randomUUID();
-  await A.api("PUT", `/v1/envelopes/${ar.envelope.id}/recipients`, { recipients: [{ id: sid, name: "Firmante archivo", email: `archivo-${stamp}@example.com`, routingOrder: 1 }] });
-  await A.api("PUT", `/v1/envelopes/${ar.envelope.id}/fields`, { fields: [{ documentId: ar.doc.id, recipientId: sid, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }] });
+  await A.api("PUT", `/v1/envelopes/${ar.envelope.id}/recipients`, {
+    recipients: [{ id: sid, name: "Firmante archivo", email: `archivo-${stamp}@example.com`, routingOrder: 1 }],
+  });
+  await A.api("PUT", `/v1/envelopes/${ar.envelope.id}/fields`, {
+    fields: [{ documentId: ar.doc.id, recipientId: sid, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }],
+  });
   await A.api("POST", `/v1/envelopes/${ar.envelope.id}/send`);
   let link = null;
   for (let i = 0; i < 40 && !link; i++) {
@@ -352,7 +462,10 @@ if (ev2.effectiveLevel !== "B-LTA") {
   const docTs = val.signatures.filter((x) => x.kind === "document_timestamp");
   assert(docTs.length === 2 && val.signatures.every((x) => x.integrity.valid), `PDF renovado: ${docTs.length} sellos de documento, todos íntegros`);
   const events = (await A.api("GET", `/v1/envelopes/${ar.envelope.id}/events`)).items;
-  assert(events.some((e) => e.type === "envelope.archive_renewed"), "evento de renovación en la evidencia");
+  assert(
+    events.some((e) => e.type === "envelope.archive_renewed"),
+    "evento de renovación en la evidencia",
+  );
   // Recién renovado (vence en años): la renovación manual se rechaza (no gasta un sello sin extender nada).
   const manual = await A.api("POST", `/v1/envelopes/${ar.envelope.id}/archive/renew`, {}, { expect: 409 });
   assert(manual.error.code === "archive_not_due", `renovación manual fuera de término: ${JSON.stringify(manual)}`);
@@ -362,12 +475,19 @@ if (ev2.effectiveLevel !== "B-LTA") {
     return anon.api("POST", "/v1/verify", f);
   };
   const oldV = await verifyBytes(pdfV1);
-  assert(oldV.match && oldV.envelope.id === ar.envelope.id && oldV.version?.number === 1 && oldV.version.latest === 2 && oldV.version.isLatest === false,
-    `verify reconoce la versión anterior a la renovación: ${JSON.stringify(oldV.version)}`);
+  assert(
+    oldV.match && oldV.envelope.id === ar.envelope.id && oldV.version?.number === 1 && oldV.version.latest === 2 && oldV.version.isLatest === false,
+    `verify reconoce la versión anterior a la renovación: ${JSON.stringify(oldV.version)}`,
+  );
   const latestPdf = Buffer.from(await (await A.api("GET", `/v1/envelopes/${ar.envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
   const newV = await verifyBytes(latestPdf);
-  assert(newV.match && newV.version?.isLatest === true && newV.version.number === 2 && newV.version.reason === "archive_renewal", `verify de la versión vigente: ${JSON.stringify(newV.version)}`);
-  ok("archivo: vigencia calculada, barrido renueva con DSS + sello de documento nuevo (2 sellos válidos), historial de versiones, evento, renovación manual fuera de término rechazada y verify de versiones anteriores");
+  assert(
+    newV.match && newV.version?.isLatest === true && newV.version.number === 2 && newV.version.reason === "archive_renewal",
+    `verify de la versión vigente: ${JSON.stringify(newV.version)}`,
+  );
+  ok(
+    "archivo: vigencia calculada, barrido renueva con DSS + sello de documento nuevo (2 sellos válidos), historial de versiones, evento, renovación manual fuera de término rechazada y verify de versiones anteriores",
+  );
 }
 await A.api("PATCH", "/v1/settings/evidence", { sealLevel: ev.sealLevel });
 

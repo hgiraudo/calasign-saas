@@ -51,7 +51,9 @@ function cspFrameAncestors(origins: string[]) {
 export function setFrameAncestors(reply: FastifyReply, origins: string[]) {
   const csp = String(reply.getHeader("content-security-policy") ?? "");
   const value = cspFrameAncestors(origins);
-  const next = /frame-ancestors [^;]*/.test(csp) ? csp.replace(/frame-ancestors [^;]*/, `frame-ancestors ${value}`) : `${csp};frame-ancestors ${value}`;
+  const next = /frame-ancestors [^;]*/.test(csp)
+    ? csp.replace(/frame-ancestors [^;]*/, `frame-ancestors ${value}`)
+    : `${csp};frame-ancestors ${value}`;
   reply.header("content-security-policy", next);
   if (origins.length) reply.removeHeader("x-frame-options");
 }
@@ -78,7 +80,12 @@ export async function tenantFrameAncestors(db: Db, tenantId: string): Promise<st
   return ((t?.embed_frame_ancestors ?? []) as string[]).filter(wildcardOriginOk);
 }
 
-async function originsForRecipient(db: Db, recipientId: string, tenantId: string, last?: { frame_ancestors: string[] | null } | null): Promise<string[]> {
+async function originsForRecipient(
+  db: Db,
+  recipientId: string,
+  tenantId: string,
+  last?: { frame_ancestors: string[] | null } | null,
+): Promise<string[]> {
   const allowed = await tenantFrameAncestors(db, tenantId);
   if (last === undefined) last = await lastEmbedSession(db, recipientId);
   const requested: string[] = last?.frame_ancestors ?? [];
@@ -91,7 +98,12 @@ async function originsForRecipient(db: Db, recipientId: string, tenantId: string
  * código OTP (cada navegador lo vuelve a pedir), firma presencial (sesión del anfitrión) o verificación de identidad
  * todavía no superada (una vez verificada, la página ya no la vuelve a pedir).
  */
-export function pageStillAuthenticates(r: { auth_method?: string | null; id_verification_provider?: string | null; identity_status?: string | null; role?: string | null }): boolean {
+export function pageStillAuthenticates(r: {
+  auth_method?: string | null;
+  id_verification_provider?: string | null;
+  identity_status?: string | null;
+  role?: string | null;
+}): boolean {
   const m = String(r.auth_method ?? "");
   if (m.startsWith("otp_") || m === "in_person") return true;
   // Igual que identityBlocking (identity/kyc.ts): solo firmantes y aprobadores la tienen que superar.
@@ -146,7 +158,10 @@ export async function issueSigningUrl(
     );
   }
   if (requested.length && otp) {
-    throw conflict("otp_not_embeddable", "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña");
+    throw conflict(
+      "otp_not_embeddable",
+      "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña",
+    );
   }
   await t.query(
     `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at, replay_code_enc)
@@ -169,9 +184,18 @@ export async function issueSigningUrl(
     envelopeId: e.id,
     type: "recipient.embedded_url_created",
     actor: a.actor,
-    data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested, ...(otp ? { tabOnly: true } : {}) },
+    data: {
+      recipientId: r.id,
+      returnHost: input.returnUrl ? new URL(input.returnUrl).host : null,
+      frameAncestors: requested,
+      ...(otp ? { tabOnly: true } : {}),
+    },
   });
-  return { url: `${await envelopeBaseUrl(t, a.tenantId, e.id)}/embed/${code}`, expiresAt: expiresAt.toISOString(), ...(otp ? { tabOnly: true } : {}) };
+  return {
+    url: `${await envelopeBaseUrl(t, a.tenantId, e.id)}/embed/${code}`,
+    expiresAt: expiresAt.toISOString(),
+    ...(otp ? { tabOnly: true } : {}),
+  };
 }
 
 /**
@@ -219,7 +243,11 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Configuración de la organización ─────────
 
-  app.get("/v1/settings/embed", { preHandler: auth }, async (req): Promise<EmbedSettings> => ({ frameAncestors: await tenantFrameAncestors(s.db, A(req).tenantId) }));
+  app.get(
+    "/v1/settings/embed",
+    { preHandler: auth },
+    async (req): Promise<EmbedSettings> => ({ frameAncestors: await tenantFrameAncestors(s.db, A(req).tenantId) }),
+  );
 
   app.patch("/v1/settings/embed", { preHandler: auth }, async (req): Promise<EmbedSettings> => {
     const prev = await s.db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [A(req).tenantId]);
@@ -229,7 +257,10 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     // completa se descarta con aviso (discarded) en vez de dar 400: si no, la organización no podía guardar nada. Uno
     // nuevo sigue rechazándose.
     const norm = (o: string) => o.trim().toLowerCase().replace(/\/$/, "");
-    const raw = z.object({ frameAncestors: z.array(z.string()).max(20) }).passthrough().parse(req.body);
+    const raw = z
+      .object({ frameAncestors: z.array(z.string()).max(20) })
+      .passthrough()
+      .parse(req.body);
     const legacy = new Set(prevList.map(norm));
     const discarded = [...new Set(raw.frameAncestors.map(norm).filter((o) => legacy.has(o) && !wildcardOriginOk(o)))];
     const input = EmbedSettingsInput.parse({ ...raw, frameAncestors: raw.frameAncestors.filter((o) => !discarded.includes(norm(o))) });
@@ -288,9 +319,16 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
       const cur = await t.one<any>(`SELECT status, expires_at FROM envelopes WHERE id = $1 FOR UPDATE`, [sess.envelope_id]);
       // El código vale 5 minutos: si el sobre se anuló, rechazó o venció mientras tanto, no se abre una sesión nueva ni se
       // suma el inicio de sesión a su evidencia.
-      if (["voided", "declined", "expired"].includes(cur?.status) || (cur?.status === "sent" && cur.expires_at != null && new Date(cur.expires_at).getTime() <= Date.now())) return null;
+      if (
+        ["voided", "declined", "expired"].includes(cur?.status) ||
+        (cur?.status === "sent" && cur.expires_at != null && new Date(cur.expires_at).getTime() <= Date.now())
+      )
+        return null;
       // Ni para un destinatario reemplazado (delegó, lo reasignaron) o con el link rotado después de leerlo arriba.
-      const rNow = await t.one<any>(`SELECT access_token_hash, embedded, auth_method, id_verification_provider, identity_status, role FROM recipients WHERE id = $1`, [r.id]);
+      const rNow = await t.one<any>(
+        `SELECT access_token_hash, embedded, auth_method, id_verification_provider, identity_status, role FROM recipients WHERE id = $1`,
+        [r.id],
+      );
       if (!rNow?.access_token_hash || rNow.access_token_hash !== r.access_token_hash) return null;
       // Lo mismo que al emitir el código (issueSigningUrl): un destinatario no embebido solo se abre si la página igual
       // le exige autenticarse. En los 5 minutos del código pudo verificar su identidad desde su link (o se le quitó el

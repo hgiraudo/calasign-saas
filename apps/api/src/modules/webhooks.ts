@@ -179,7 +179,12 @@ export const safeHttpAgent = new http.Agent({ lookup: safeLookup as never });
  * POST a una URL de un cliente (webhook, Slack, Teams): valida literales IP y conecta con `safeLookup`,
  * sin seguir redirecciones. Devuelve el status y el comienzo de la respuesta.
  */
-export async function postToCustomerUrl(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<{ status: number; text: string }> {
+export async function postToCustomerUrl(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  timeoutMs: number,
+): Promise<{ status: number; text: string }> {
   await assertPublicDestination(url);
   const u = new URL(url);
   const secure = u.protocol === "https:";
@@ -226,7 +231,14 @@ export async function postToCustomerUrl(url: string, headers: Record<string, str
  */
 export async function safeRequest(
   url: string,
-  opts: { method?: string; headers?: Record<string, string>; body?: string | Uint8Array; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
+  opts: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string | Uint8Array;
+    timeoutMs?: number;
+    maxBytes?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<{ status: number; headers: Record<string, string>; body: Buffer }> {
   const u = new URL(url);
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("protocolo no permitido");
@@ -290,7 +302,10 @@ export const toEndpoint = (r: any): WebhookEndpoint => ({
   // Solo en las filas leídas con DEACTIVATED_REASON (columna calculada, no guardada); si no, null.
   deactivatedReason: !r.active && DEACTIVATION_REASONS.includes(r.deactivated_reason) ? (r.deactivated_reason as DeactivationReason) : null,
   secretPrefix: r.secret_prefix,
-  previousSecretExpiresAt: r.previous_secret_enc && r.previous_secret_expires_at && new Date(r.previous_secret_expires_at) > new Date() ? iso(r.previous_secret_expires_at) : null,
+  previousSecretExpiresAt:
+    r.previous_secret_enc && r.previous_secret_expires_at && new Date(r.previous_secret_expires_at) > new Date()
+      ? iso(r.previous_secret_expires_at)
+      : null,
   createdAt: iso(r.created_at)!,
   updatedAt: iso(r.updated_at)!,
 });
@@ -313,10 +328,9 @@ const toDelivery = (r: any): WebhookDelivery => ({
 });
 
 export async function envelopeSnapshot(db: Db, envelopeId: string) {
-  const e = await db.one<any>(
-    `SELECT e.*, f.sha256 AS signed_sha256 FROM envelopes e LEFT JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
-    [envelopeId],
-  );
+  const e = await db.one<any>(`SELECT e.*, f.sha256 AS signed_sha256 FROM envelopes e LEFT JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`, [
+    envelopeId,
+  ]);
   if (!e) return null;
   const recips = await db.query<any>(
     `SELECT id, name, email, role, status, routing_order FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at, id`,
@@ -441,7 +455,11 @@ const REQUIRED_PERMS: Permission[] = ["webhooks:manage", "envelopes:view_all"];
  * acotan cada token que emite), o los del usuario recortados a los scopes que le concedió a la app OAuth (unión de sus
  * tokens vigentes). null si no se pueden calcular (dejó la organización: eso lo cubre deactivateOrphanedEndpoints).
  */
-async function originPermissions(db: Db, tenantId: string, ep: { created_by: string | null; created_by_api_key: string | null; oauth_client_id: string | null }) {
+async function originPermissions(
+  db: Db,
+  tenantId: string,
+  ep: { created_by: string | null; created_by_api_key: string | null; oauth_client_id: string | null },
+) {
   if (ep.created_by_api_key) {
     const perms = (await loadAccess(db, { tenantId, userId: null, apiKeyId: ep.created_by_api_key })).permissions;
     const app = await db.one<{ scopes: string[] }>(
@@ -600,7 +618,20 @@ async function notifyWebhookDeactivated(d: Deps, p: Extract<WebhookJob, { kind: 
     const out = await sendTracked(
       d.db,
       { tenantId: p.tenantId, template: "webhook_deactivated", jobId, log: d.log },
-      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale, tenantId: p.tenantId, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom },
+      {
+        channel: "email",
+        to: u.email,
+        subject: m.subject,
+        text: m.text,
+        html: m.html,
+        link,
+        locale,
+        tenantId: p.tenantId,
+        from: sendAs.from,
+        replyTo: sendAs.replyTo,
+        dkim: sendAs.dkim,
+        fallbackFrom: sendAs.fallbackFrom,
+      },
     );
     if (out.status === "failed") {
       if (out.transient) transient.push(out.error);
@@ -612,10 +643,7 @@ async function notifyWebhookDeactivated(d: Deps, p: Extract<WebhookJob, { kind: 
 
 /** Entrega exitosa: se reinicia la racha de fallas. */
 async function recordEndpointSuccess(db: Db, endpointId: string) {
-  await db.query(
-    `UPDATE webhook_endpoints SET consecutive_failures = 0, failing_since = NULL, last_success_at = now() WHERE id = $1`,
-    [endpointId],
-  );
+  await db.query(`UPDATE webhook_endpoints SET consecutive_failures = 0, failing_since = NULL, last_success_at = now() WHERE id = $1`, [endpointId]);
 }
 
 /**
@@ -657,7 +685,10 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
   // a 0087) o sin registro (purgado) usan la hora actual. data.envelope sí es el estado al armar la entrega (documentado).
   const occurred =
     typeof p.seq === "number"
-      ? await d.db.one<{ occurred_at: Date | string }>(`SELECT occurred_at FROM envelope_events WHERE envelope_id = $1 AND seq = $2`, [p.envelopeId, p.seq])
+      ? await d.db.one<{ occurred_at: Date | string }>(`SELECT occurred_at FROM envelope_events WHERE envelope_id = $1 AND seq = $2`, [
+          p.envelopeId,
+          p.seq,
+        ])
       : null;
   const payload: WebhookEventPayload = {
     id: eventId,
@@ -700,12 +731,17 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
     revoked = !row.active;
   }
   if ((!row.active && !manual) || revoked) {
-    await d.db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'endpoint desactivado', next_retry_at = NULL WHERE id = $1`, [deliveryId]);
+    await d.db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'endpoint desactivado', next_retry_at = NULL WHERE id = $1`, [
+      deliveryId,
+    ]);
     return;
   }
   const body = JSON.stringify(row.payload);
   // Durante el período de gracia de una rotación se firma también con el secreto anterior.
-  const signature = signPayload(row.previous_secret_enc ? [decrypt(row.secret_enc), decrypt(row.previous_secret_enc)] : decrypt(row.secret_enc), body);
+  const signature = signPayload(
+    row.previous_secret_enc ? [decrypt(row.secret_enc), decrypt(row.previous_secret_enc)] : decrypt(row.secret_enc),
+    body,
+  );
   let statusCode: number | null = null;
   let responseText: string | null = null;
   let error: string | null = null;
@@ -789,7 +825,10 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   };
 
   const load = async (tenantId: string, id: string) => {
-    const r = await s.db.one<any>(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.id = $1 AND ep.tenant_id = $2`, [id, tenantId]);
+    const r = await s.db.one<any>(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.id = $1 AND ep.tenant_id = $2`, [
+      id,
+      tenantId,
+    ]);
     if (!r) throw notFound("Webhook");
     return r;
   };
@@ -797,7 +836,10 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   app.get("/v1/webhooks", { preHandler: auth }, async (req) => {
     // Que la consola muestre ya desactivadas las de una credencial revocada o sin permisos (no recién en el próximo evento).
     await refresh(A(req).tenantId);
-    const rows = await s.db.query(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.tenant_id = $1 ORDER BY ep.created_at DESC`, [A(req).tenantId]);
+    const rows = await s.db.query(
+      `SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.tenant_id = $1 ORDER BY ep.created_at DESC`,
+      [A(req).tenantId],
+    );
     return { items: rows.map(toEndpoint), eventTypes: WEBHOOK_EVENT_TYPES };
   });
 
@@ -915,10 +957,11 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     await load(a.tenantId, req.params.id);
     const limit = Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50));
-    const rows = await s.db.query(
-      `SELECT * FROM webhook_deliveries WHERE endpoint_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT $3`,
-      [req.params.id, a.tenantId, limit],
-    );
+    const rows = await s.db.query(`SELECT * FROM webhook_deliveries WHERE endpoint_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT $3`, [
+      req.params.id,
+      a.tenantId,
+      limit,
+    ]);
     return { items: rows.map(toDelivery) };
   });
 
@@ -930,15 +973,15 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     // chequeo de activo y salía hacia la integración ya cortada.
     await refresh(a.tenantId);
     // Con el endpoint inactivo (pausado o desactivado por fallas, 410 o permisos) no sale: primero hay que reactivarlo.
-    const endpointActive = async (db: Db) => Boolean((await db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
+    const endpointActive = async (db: Db) =>
+      Boolean((await db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
     if (!(await endpointActive(s.db))) throw conflict("endpoint_inactive", "El webhook está desactivado: reactivalo para reintentar la entrega");
     // Pendiente con su reintento automático programado: se adelanta ese mismo trabajo (encolar otro mandaba el evento
     // dos veces). Si ya está en curso, o hay un reintento manual pedido, 409.
     if (row.status === "pending") {
-      const moved = await s.db.query(
-        `UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`,
-        [`whdel:${row.id}`],
-      );
+      const moved = await s.db.query(`UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`, [
+        `whdel:${row.id}`,
+      ]);
       if (moved.length) {
         reply.code(202);
         return toDelivery({ ...row, next_retry_at: null });
@@ -970,27 +1013,31 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Cada prueba es un POST a la URL del cliente: con límite propio (10 por minuto por organización de la credencial o, con sesión web, por IP).
-  app.post<P>("/v1/webhooks/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req, reply) => {
-    const a = A(req);
-    const ep = await load(a.tenantId, req.params.id);
-    const eventId = uuidv7();
-    const id = uuidv7();
-    const payload: WebhookEventPayload = {
-      id: eventId,
-      type: "webhook.test",
-      createdAt: new Date().toISOString(),
-      tenantId: a.tenantId,
-      data: { envelope: null },
-    };
-    const row = await s.db.tx(async (t) => {
-      const r = await t.one(
-        `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_id, event_type, envelope_id, payload) VALUES ($1,$2,$3,$4,'webhook.test',NULL,$5) RETURNING *`,
-        [id, a.tenantId, ep.id, eventId, JSON.stringify(payload)],
-      );
-      await enqueue(t, "webhook", { kind: "deliver", deliveryId: id, manual: true }, { maxAttempts: 1, tenantId: a.tenantId });
-      return r;
-    });
-    reply.code(202);
-    return toDelivery(row);
-  });
+  app.post<P>(
+    "/v1/webhooks/:id/test",
+    { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } },
+    async (req, reply) => {
+      const a = A(req);
+      const ep = await load(a.tenantId, req.params.id);
+      const eventId = uuidv7();
+      const id = uuidv7();
+      const payload: WebhookEventPayload = {
+        id: eventId,
+        type: "webhook.test",
+        createdAt: new Date().toISOString(),
+        tenantId: a.tenantId,
+        data: { envelope: null },
+      };
+      const row = await s.db.tx(async (t) => {
+        const r = await t.one(
+          `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_id, event_type, envelope_id, payload) VALUES ($1,$2,$3,$4,'webhook.test',NULL,$5) RETURNING *`,
+          [id, a.tenantId, ep.id, eventId, JSON.stringify(payload)],
+        );
+        await enqueue(t, "webhook", { kind: "deliver", deliveryId: id, manual: true }, { maxAttempts: 1, tenantId: a.tenantId });
+        return r;
+      });
+      reply.code(202);
+      return toDelivery(row);
+    },
+  );
 }

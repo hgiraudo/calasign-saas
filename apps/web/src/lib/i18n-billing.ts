@@ -61,13 +61,16 @@ const es = {
   "billing.processingSlow": "El proveedor todavía no confirmó el pago. Puede tardar unos minutos más: volvé a cargar esta página en un rato.",
   "billing.busy": "Procesando…",
   "billing.mpEmail": "Mercado Pago puede pedir que el pago se haga con una cuenta con el mismo correo que usás acá ({email}).",
-  "billing.noProvider": "No hay medios de pago disponibles para {currency}, por eso no se puede elegir un plan pago. Probá con otra moneda o escribinos a soporte.",
+  "billing.noProvider":
+    "No hay medios de pago disponibles para {currency}, por eso no se puede elegir un plan pago. Probá con otra moneda o escribinos a soporte.",
   "billing.currencyUnsupported": "no disponible en {currency}",
   "billing.unavailableNow": "no disponible por ahora",
   "billing.misconfigured": "no disponible: falta configurarlo en la plataforma",
   "billing.usersIncludePending": "Incluye las invitaciones pendientes.",
-  "billing.usersOver": "Tenés {n} usuarios y este plan admite {max}: nadie pierde el acceso, pero no vas a poder sumar usuarios hasta quedar dentro del límite.",
-  "billing.downgradeUsers": "Tenés {n} usuarios (incluye invitaciones pendientes) y el plan Free admite {max}: nadie pierde el acceso, pero no vas a poder sumar usuarios hasta quedar dentro del límite.",
+  "billing.usersOver":
+    "Tenés {n} usuarios y este plan admite {max}: nadie pierde el acceso, pero no vas a poder sumar usuarios hasta quedar dentro del límite.",
+  "billing.downgradeUsers":
+    "Tenés {n} usuarios (incluye invitaciones pendientes) y el plan Free admite {max}: nadie pierde el acceso, pero no vas a poder sumar usuarios hasta quedar dentro del límite.",
   "billing.noPermission": "Ver y cambiar el plan requiere el permiso de administrar la facturación. Pedile a un administrador de tu organización.",
   "usage.barLabel": "{label}: {used} de {max}",
   "feature.api": "API, OAuth y agentes de IA (MCP)",
@@ -120,7 +123,8 @@ const es = {
   "pay.detailTitle": "Cobro",
   "pay.detailLine": "{amount} · {description} · paga {payer}",
   "pay.waitingEnvelope": "Firmaron todos: el sobre se completa cuando se confirme el pago.",
-  "pay.settledOnClosed": "Hay un pago cobrado en un sobre que no se completó; revisalo o reembolsalo desde el proveedor ({provider}). CalaSign no lo devuelve automáticamente.",
+  "pay.settledOnClosed":
+    "Hay un pago cobrado en un sobre que no se completó; revisalo o reembolsalo desde el proveedor ({provider}). CalaSign no lo devuelve automáticamente.",
 
   "signerPay.title": "Pago",
   "signerPay.before": "Para firmar, primero completá el pago.",
@@ -137,7 +141,8 @@ const es = {
   "mcp.intro":
     "CalaSign tiene un servidor MCP (Model Context Protocol) para que asistentes como Claude consulten sobres, creen uno desde una plantilla, lo envíen y descarguen el PDF firmado. Usa la misma API: valen los permisos del token, los límites del plan y la evidencia, que registra al agente como actor.",
   "mcp.tools": "Herramientas",
-  "mcp.confirm": "Enviar y anular van en dos pasos: el agente recibe una vista previa con un confirmToken, se la muestra al usuario y solo con su aprobación repite la llamada con ese token.",
+  "mcp.confirm":
+    "Enviar y anular van en dos pasos: el agente recibe una vista previa con un confirmToken, se la muestra al usuario y solo con su aprobación repite la llamada con ese token.",
   "mcp.auth": "Credencial: un access token OAuth (app con client credentials o authorization code) o una API key, en el encabezado Authorization.",
   "mcp.claudeCode": "Claude Code",
   "mcp.claudeDesktop": "Claude Desktop (claude_desktop_config.json)",
@@ -203,13 +208,16 @@ const pt: Record<Key, string> = {
   "billing.processingSlow": "O provedor ainda não confirmou o pagamento. Pode levar mais alguns minutos: recarregue esta página daqui a pouco.",
   "billing.busy": "Processando…",
   "billing.mpEmail": "O Mercado Pago pode exigir que o pagamento seja feito com uma conta com o mesmo e-mail que você usa aqui ({email}).",
-  "billing.noProvider": "Não há formas de pagamento disponíveis para {currency}, por isso não é possível escolher um plano pago. Tente outra moeda ou fale com o suporte.",
+  "billing.noProvider":
+    "Não há formas de pagamento disponíveis para {currency}, por isso não é possível escolher um plano pago. Tente outra moeda ou fale com o suporte.",
   "billing.currencyUnsupported": "indisponível em {currency}",
   "billing.unavailableNow": "indisponível no momento",
   "billing.misconfigured": "indisponível: falta configurá-lo na plataforma",
   "billing.usersIncludePending": "Inclui os convites pendentes.",
-  "billing.usersOver": "Você tem {n} usuários e este plano permite {max}: ninguém perde o acesso, mas não será possível adicionar usuários até ficar dentro do limite.",
-  "billing.downgradeUsers": "Você tem {n} usuários (inclui convites pendentes) e o plano Free permite {max}: ninguém perde o acesso, mas não será possível adicionar usuários até ficar dentro do limite.",
+  "billing.usersOver":
+    "Você tem {n} usuários e este plano permite {max}: ninguém perde o acesso, mas não será possível adicionar usuários até ficar dentro do limite.",
+  "billing.downgradeUsers":
+    "Você tem {n} usuários (inclui convites pendentes) e o plano Free permite {max}: ninguém perde o acesso, mas não será possível adicionar usuários até ficar dentro do limite.",
   "billing.noPermission": "Ver e alterar o plano requer a permissão de gerenciar o faturamento. Peça a um administrador da sua organização.",
   "usage.barLabel": "{label}: {used} de {max}",
   "feature.api": "API, OAuth e agentes de IA (MCP)",
@@ -261,7 +269,8 @@ const pt: Record<Key, string> = {
   "pay.detailTitle": "Cobrança",
   "pay.detailLine": "{amount} · {description} · paga {payer}",
   "pay.waitingEnvelope": "Todos assinaram: o envelope é concluído quando o pagamento for confirmado.",
-  "pay.settledOnClosed": "Há um pagamento cobrado em um envelope que não foi concluído; revise-o ou reembolse-o pelo provedor ({provider}). A CalaSign não o devolve automaticamente.",
+  "pay.settledOnClosed":
+    "Há um pagamento cobrado em um envelope que não foi concluído; revise-o ou reembolse-o pelo provedor ({provider}). A CalaSign não o devolve automaticamente.",
   "signerPay.title": "Pagamento",
   "signerPay.before": "Para assinar, primeiro conclua o pagamento.",
   "signerPay.after": "Você assinou. Para concluir o processo falta o pagamento.",
@@ -276,7 +285,8 @@ const pt: Record<Key, string> = {
   "mcp.intro":
     "A CalaSign tem um servidor MCP (Model Context Protocol) para que assistentes como o Claude consultem envelopes, criem um a partir de um modelo, enviem e baixem o PDF assinado. Usa a mesma API: valem as permissões do token, os limites do plano e a evidência, que registra o agente como ator.",
   "mcp.tools": "Ferramentas",
-  "mcp.confirm": "Enviar e anular são feitos em dois passos: o agente recebe uma prévia com um confirmToken, mostra ao usuário e só com a aprovação dele repete a chamada com esse token.",
+  "mcp.confirm":
+    "Enviar e anular são feitos em dois passos: o agente recebe uma prévia com um confirmToken, mostra ao usuário e só com a aprovação dele repete a chamada com esse token.",
   "mcp.auth": "Credencial: um access token OAuth (app com client credentials ou authorization code) ou uma API key, no cabeçalho Authorization.",
   "mcp.claudeCode": "Claude Code",
   "mcp.claudeDesktop": "Claude Desktop (claude_desktop_config.json)",
@@ -345,8 +355,10 @@ const en: Record<Key, string> = {
   "billing.unavailableNow": "not available right now",
   "billing.misconfigured": "unavailable: not set up on the platform yet",
   "billing.usersIncludePending": "Includes pending invitations.",
-  "billing.usersOver": "You have {n} users and this plan allows {max}: nobody loses access, but you won't be able to add users until you're within the limit.",
-  "billing.downgradeUsers": "You have {n} users (including pending invitations) and the Free plan allows {max}: nobody loses access, but you won't be able to add users until you're within the limit.",
+  "billing.usersOver":
+    "You have {n} users and this plan allows {max}: nobody loses access, but you won't be able to add users until you're within the limit.",
+  "billing.downgradeUsers":
+    "You have {n} users (including pending invitations) and the Free plan allows {max}: nobody loses access, but you won't be able to add users until you're within the limit.",
   "billing.noPermission": "Viewing and changing the plan requires the permission to manage billing. Ask an administrator of your organization.",
   "usage.barLabel": "{label}: {used} of {max}",
   "feature.api": "API, OAuth and AI agents (MCP)",
@@ -398,7 +410,8 @@ const en: Record<Key, string> = {
   "pay.detailTitle": "Payment",
   "pay.detailLine": "{amount} · {description} · paid by {payer}",
   "pay.waitingEnvelope": "Everyone signed: the envelope completes once the payment is confirmed.",
-  "pay.settledOnClosed": "A payment was collected on an envelope that was not completed; review or refund it from the provider ({provider}). CalaSign does not refund it automatically.",
+  "pay.settledOnClosed":
+    "A payment was collected on an envelope that was not completed; review or refund it from the provider ({provider}). CalaSign does not refund it automatically.",
   "signerPay.title": "Payment",
   "signerPay.before": "To sign, complete the payment first.",
   "signerPay.after": "You signed. The payment is still needed to finish.",
@@ -413,7 +426,8 @@ const en: Record<Key, string> = {
   "mcp.intro":
     "CalaSign has an MCP (Model Context Protocol) server so assistants like Claude can look up envelopes, create one from a template, send it and download the signed PDF. It uses the same API: token permissions, plan limits and evidence all apply, and the agent is recorded as the actor.",
   "mcp.tools": "Tools",
-  "mcp.confirm": "Send and void take two steps: the agent gets a preview with a confirmToken, shows it to the user and only repeats the call with that token after they approve.",
+  "mcp.confirm":
+    "Send and void take two steps: the agent gets a preview with a confirmToken, shows it to the user and only repeats the call with that token after they approve.",
   "mcp.auth": "Credential: an OAuth access token (client credentials or authorization code app) or an API key, in the Authorization header.",
   "mcp.claudeCode": "Claude Code",
   "mcp.claudeDesktop": "Claude Desktop (claude_desktop_config.json)",

@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-byok-archive-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -52,7 +52,11 @@ async function newUser(email: string, role: string) {
 }
 async function session(userId: string) {
   const token = util.randomToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at) VALUES ($1,$2,$3, now() + interval '1 day')`, [util.sha256Hex(token), userId, tenant]);
+  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at) VALUES ($1,$2,$3, now() + interval '1 day')`, [
+    util.sha256Hex(token),
+    userId,
+    tenant,
+  ]);
   return token;
 }
 const history = () =>
@@ -148,12 +152,10 @@ describe("renovación manual del sello de archivo", () => {
   async function completedEnvelope(cols: { validUntil?: string | null; error?: string | null }) {
     const file = util.uuidv7();
     const env = util.uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',1,$4)`, [
-      file,
-      tenant,
-      `tenants/${tenant}/x/${file}.pdf`,
-      "a".repeat(64),
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',1,$4)`,
+      [file, tenant, `tenants/${tenant}/x/${file}.pdf`, "a".repeat(64)],
+    );
     await db.query(
       `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id, archive_valid_until, archive_checked_at, archive_error)
        VALUES ($1,$2,'S','completed', now(), $3, $4, now(), $5)`,

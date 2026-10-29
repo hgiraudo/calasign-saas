@@ -5,7 +5,16 @@ import type { Db } from "../infra/db";
 import { AppError, notFound } from "../lib/errors";
 import { ipNetworkKey } from "../lib/ip";
 import { iso, randomToken, sha256Hex, verifyPassword } from "../lib/util";
-import { authenticate, clearSessionCookie, clientInfo, sessionAliveSql, sessionCookieToken, SESSION_DAYS, setSessionCookie, type Services } from "./context";
+import {
+  authenticate,
+  clearSessionCookie,
+  clientInfo,
+  sessionAliveSql,
+  sessionCookieToken,
+  SESSION_DAYS,
+  setSessionCookie,
+  type Services,
+} from "./context";
 import { requireUserSession } from "./oauth-tokens";
 import { clearLoginAttempts, takeLoginAttempt } from "./login-attempts";
 import { recordAudit } from "./audit";
@@ -18,7 +27,14 @@ export const REAUTH_MINUTES = 10;
  * sesión del navegador y la sesión se cierra tras config.sessionIdleHours sin actividad; con "recordarme", cookie
  * persistente y sesión de SESSION_DAYS días.
  */
-export async function openPasswordSession(db: Db, req: FastifyRequest, reply: FastifyReply, userId: string, tenantId: string, opts: { rememberMe?: boolean } = {}) {
+export async function openPasswordSession(
+  db: Db,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  userId: string,
+  tenantId: string,
+  opts: { rememberMe?: boolean } = {},
+) {
   const token = randomToken();
   const { ip, userAgent } = clientInfo(req);
   const remember = opts.rememberMe === true;
@@ -50,7 +66,14 @@ export async function assertRecentAuth(db: Db, req: FastifyRequest, userId: stri
     }
     const tenants = await db.query<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [userId]);
     for (const m of tenants) {
-      await recordAudit(db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "user", id: userId, label: u!.email }, ip, userAgent, data: { reason: "bad_password_reauth" } }).catch(() => {});
+      await recordAudit(db, {
+        tenantId: m.tenant_id,
+        action: "auth.login_failed",
+        actor: { type: "user", id: userId, label: u!.email },
+        ip,
+        userAgent,
+        data: { reason: "bad_password_reauth" },
+      }).catch(() => {});
     }
     throw new AppError(403, "invalid_password", "La contraseña no es correcta");
   }
@@ -149,7 +172,10 @@ export async function sessionRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth;
     requireUserSession(a);
     if (!UUID_RE.test(req.params.id)) throw notFound("Sesión");
-    const r = await s.db.query<{ token_hash: string }>(`DELETE FROM sessions WHERE id = $1 AND user_id = $2 RETURNING token_hash`, [req.params.id, a.userId]);
+    const r = await s.db.query<{ token_hash: string }>(`DELETE FROM sessions WHERE id = $1 AND user_id = $2 RETURNING token_hash`, [
+      req.params.id,
+      a.userId,
+    ]);
     if (!r.length) throw notFound("Sesión");
     const cookie = sessionCookieToken(req);
     if (cookie && r[0].token_hash === sha256Hex(cookie)) clearSessionCookie(reply);
@@ -167,9 +193,16 @@ export async function sessionRoutes(app: FastifyInstance, s: Services) {
     const tenants = await s.db.query<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [a.userId]);
     const { ip, userAgent } = clientInfo(req);
     for (const tenantId of new Set([a.tenantId, ...tenants.map((m) => m.tenant_id)])) {
-      await recordAudit(s.db, { tenantId, action: "auth.logout_all", actor: { type: "user", id: a.userId, label: a.actor.label }, targetType: "user", targetId: a.userId, ip, userAgent, data: { sessionsClosed: closed } }).catch(
-        (err) => req.log.error({ err }, "no se pudo registrar la auditoría"),
-      );
+      await recordAudit(s.db, {
+        tenantId,
+        action: "auth.logout_all",
+        actor: { type: "user", id: a.userId, label: a.actor.label },
+        targetType: "user",
+        targetId: a.userId,
+        ip,
+        userAgent,
+        data: { sessionsClosed: closed },
+      }).catch((err) => req.log.error({ err }, "no se pudo registrar la auditoría"));
     }
     clearSessionCookie(reply);
     return reply.code(204).send();

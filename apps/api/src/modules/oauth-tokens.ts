@@ -54,7 +54,9 @@ export async function ssoCodeDeadline(
 
 /** Duración de la conexión SSO de la organización, en segundos (para una familia que empieza ahora). */
 async function ssoTtlSeconds(db: Db, ssoTenantId: string | null): Promise<number> {
-  const r = ssoTenantId ? await db.one<{ session_ttl_hours: number | null }>(`SELECT session_ttl_hours FROM sso_configs WHERE tenant_id = $1`, [ssoTenantId]) : null;
+  const r = ssoTenantId
+    ? await db.one<{ session_ttl_hours: number | null }>(`SELECT session_ttl_hours FROM sso_configs WHERE tenant_id = $1`, [ssoTenantId])
+    : null;
   return ssoSessionTtlHours(r) * 3600;
 }
 
@@ -92,7 +94,21 @@ export async function issueTokens(
     `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id, sso_deadline)
      VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12, $13::timestamptz)
      RETURNING expires_at`,
-    [uuidv7(), sha256Hex(access), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(ACCESS_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
+    [
+      uuidv7(),
+      sha256Hex(access),
+      t.clientId,
+      t.tenantId,
+      t.userId,
+      t.serviceApiKeyId,
+      t.scopes,
+      familyId,
+      t.codeHash ?? null,
+      String(ACCESS_TTL_SEC),
+      t.authMethod ?? null,
+      t.ssoTenantId ?? null,
+      cap,
+    ],
   );
   let refresh: string | null = null;
   if (t.withRefresh) {
@@ -100,13 +116,29 @@ export async function issueTokens(
     await db.query(
       `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id, sso_deadline)
        VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12, $13::timestamptz)`,
-      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.refreshScopes ?? t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
+      [
+        uuidv7(),
+        sha256Hex(refresh),
+        t.clientId,
+        t.tenantId,
+        t.userId,
+        t.serviceApiKeyId,
+        t.refreshScopes ?? t.scopes,
+        familyId,
+        t.codeHash ?? null,
+        String(REFRESH_TTL_SEC),
+        t.authMethod ?? null,
+        t.ssoTenantId ?? null,
+        cap,
+      ],
     );
   }
   return {
     access_token: access,
     token_type: "Bearer" as const,
-    expires_in: cap ? Math.max(0, Math.min(ACCESS_TTL_SEC, Math.floor((new Date(accessRow!.expires_at).getTime() - Date.now()) / 1000))) : ACCESS_TTL_SEC,
+    expires_in: cap
+      ? Math.max(0, Math.min(ACCESS_TTL_SEC, Math.floor((new Date(accessRow!.expires_at).getTime() - Date.now()) / 1000)))
+      : ACCESS_TTL_SEC,
     ...(refresh ? { refresh_token: refresh } : {}),
     scope: t.scopes.join(" "),
   };
@@ -189,9 +221,21 @@ export async function assertUserTokenAllowed(
 export async function oauthAuthContext(db: Db, token: string, ip: string | null, userAgent: string | null): Promise<AuthContext> {
   const o = await resolveAccessToken(db, token);
   if (!o) throw unauthorized();
-  if (o.userId) await assertUserTokenAllowed(db, { tenantId: o.tenantId, userId: o.userId, authMethod: o.authMethod, ssoTenantId: o.ssoTenantId, issuedAt: o.createdAt });
+  if (o.userId)
+    await assertUserTokenAllowed(db, {
+      tenantId: o.tenantId,
+      userId: o.userId,
+      authMethod: o.authMethod,
+      ssoTenantId: o.ssoTenantId,
+      issuedAt: o.createdAt,
+    });
   // ssoSession: el token salió de una sesión SSO de esta organización (para la misma excepción de 2FA que la sesión web).
-  const oauth = { clientId: o.clientId, clientPublicId: o.clientPublicId, scopes: o.scopes, ssoSession: o.authMethod === "sso" && o.ssoTenantId === o.tenantId };
+  const oauth = {
+    clientId: o.clientId,
+    clientPublicId: o.clientPublicId,
+    scopes: o.scopes,
+    ssoSession: o.authMethod === "sso" && o.ssoTenantId === o.tenantId,
+  };
   if (o.userId) {
     return {
       tenantId: o.tenantId,
@@ -250,7 +294,8 @@ export function requiredScope(url: string, method: string): OAuthScope | null | 
   // API de eventos (polling y SSE): solo lectura de la actividad de los sobres.
   if (/^\/v1\/events(\/|$)/.test(url)) return "envelopes:read";
   if (url.startsWith("/v1/templates")) return write ? "templates:write" : "templates:read";
-  if (/^\/v1\/(agreements|agreement-views|agreement-fields|workflow-runs|negotiations)(\/|$)/.test(url)) return write ? "envelopes:write" : "envelopes:read";
+  if (/^\/v1\/(agreements|agreement-views|agreement-fields|workflow-runs|negotiations)(\/|$)/.test(url))
+    return write ? "envelopes:write" : "envelopes:read";
   if (/^\/v1\/(document-templates|clauses|workflows)(\/|$)/.test(url)) {
     if (/\/(generate|preview|runs)$/.test(url) || url === "/v1/document-templates/render") return write ? "envelopes:write" : "envelopes:read";
     return write ? "templates:write" : "templates:read";

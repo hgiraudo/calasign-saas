@@ -66,8 +66,7 @@ export async function textStreamBytes(pdf: Uint8Array, budget = MAX_TEXT_STREAM_
         const d85 = ascii85(data, room);
         if (!d85) return null;
         data = d85;
-      }
-      else return null; // LZW, RunLength, filtros de imagen en un stream que no es imagen, etc.: no se acota
+      } else return null; // LZW, RunLength, filtros de imagen en un stream que no es imagen, etc.: no se acota
     }
     used += data.length;
     if (used > budget) return null;

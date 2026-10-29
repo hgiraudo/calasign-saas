@@ -3,10 +3,22 @@
 export const meta = {
   id: "zapier",
   name: "Zapier",
-  description: "App de Zapier Platform CLI: triggers REST hook (completado, enviado, rechazado, firmado), enviar desde plantilla, enviar PDF, buscar, anular, recordar.",
+  description:
+    "App de Zapier Platform CLI: triggers REST hook (completado, enviado, rechazado, firmado), enviar desde plantilla, enviar PDF, buscar, anular, recordar.",
 };
 
-const SOURCES = ["package.json", "index.js", "authentication.js", "hydrators.js", "README.md", "lib/api.js", "triggers/envelopeEvents.js", "triggers/templateList.js", "creates/index.js", "searches/findEnvelope.js"];
+const SOURCES = [
+  "package.json",
+  "index.js",
+  "authentication.js",
+  "hydrators.js",
+  "README.md",
+  "lib/api.js",
+  "triggers/envelopeEvents.js",
+  "triggers/templateList.js",
+  "creates/index.js",
+  "searches/findEnvelope.js",
+];
 
 export async function build(ctx) {
   const files = SOURCES.map((f) => ({ name: f, data: ctx.load(f) }));

@@ -57,7 +57,9 @@ describe("dominio SSO: re-verificación periódica", () => {
     expect(r.demoted).toBe(1);
     expect((await row()).verified_at).toBeNull();
     await syncSsoDomains(db, nuevo, ["empresa.test"]);
-    const audit = await db.one<any>(`SELECT action, target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'sso.domain_unverified'`, [viejo]);
+    const audit = await db.one<any>(`SELECT action, target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'sso.domain_unverified'`, [
+      viejo,
+    ]);
     expect(audit).toMatchObject({ action: "sso.domain_unverified", target_id: "empresa.test" });
     await db.close();
   }, 180_000);

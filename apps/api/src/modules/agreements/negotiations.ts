@@ -37,7 +37,16 @@ import { sendPdf } from "../envelopes";
 import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, mergeDataPatch, setPath } from "./common";
 import { enqueueNegotiationNotice, enqueueProposalNotice } from "./notices";
-import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, renderTemplateCompat, storeGeneratedPdf } from "./documents";
+import {
+  agreementMetaFromMapping,
+  createEnvelopeFromPdf,
+  insertFileRow,
+  loadClauseMap,
+  loadDocTemplate,
+  renderDocument,
+  renderTemplateCompat,
+  storeGeneratedPdf,
+} from "./documents";
 import { ownerProblem } from "../owner-check";
 
 // ───────────────────────────── Render de una versión ─────────────────────────────
@@ -87,7 +96,11 @@ export function checkNegotiationRoles(
     if (!role) continue;
     const k = role.toLowerCase();
     if (p.observer) {
-      if (known.has(k)) throw badRequest("observer_signing_role", `«${role}» es un rol de firma del documento: un observador no firma (usá otra etiqueta o quitá observer)`);
+      if (known.has(k))
+        throw badRequest(
+          "observer_signing_role",
+          `«${role}» es un rol de firma del documento: un observador no firma (usá otra etiqueta o quitá observer)`,
+        );
       continue;
     }
     if (seen.has(k)) throw badRequest("duplicate_role", `El rol «${role}» está asignado a más de una contraparte`);
@@ -98,9 +111,13 @@ export function checkNegotiationRoles(
   }
   const missing = [...new Set(markRoles.map((r) => r.toLowerCase()))].filter((r) => !seen.has(r));
   if (missing.length > 1) {
-    throw badRequest("missing_roles", `Faltan contrapartes para los roles: ${missing.map((r) => known.get(r) ?? r).join(", ")} (el remitente puede firmar solo uno)`, {
-      roles: missing.map((r) => known.get(r) ?? r),
-    });
+    throw badRequest(
+      "missing_roles",
+      `Faltan contrapartes para los roles: ${missing.map((r) => known.get(r) ?? r).join(", ")} (el remitente puede firmar solo uno)`,
+      {
+        roles: missing.map((r) => known.get(r) ?? r),
+      },
+    );
   }
 }
 
@@ -111,14 +128,22 @@ function clausesFor(n: any): Record<string, string> {
 function renderNegotiation(n: any, data = n.data, overrides = n.clause_overrides): { blocks: ResolvedBlock[]; text: string } {
   if (n.source === "pdf") return { blocks: [], text: "" };
   // Copia de cláusulas guardada: modo compatible si trae ciclos de antes de validar el grafo (ver renderTemplateCompat).
-  const r = renderTemplateCompat(n.template_source, data, { clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) }, locale: n.template_locale, missing: "placeholder" });
+  const r = renderTemplateCompat(n.template_source, data, {
+    clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) },
+    locale: n.template_locale,
+    missing: "placeholder",
+  });
   return { blocks: r.blocks, text: blocksToText(r.blocks) };
 }
 
 /** Render sin modo compatible: lanza TemplateSyntaxError si las cláusulas se citan en ciclo o pasan el tope de niveles. */
 function renderNegotiationStrict(n: any, data: unknown, overrides: Record<string, string> | null | undefined): string {
   if (n.source === "pdf") return "";
-  const r = renderTemplate(n.template_source, data, { clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) }, locale: n.template_locale, missing: "placeholder" });
+  const r = renderTemplate(n.template_source, data, {
+    clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) },
+    locale: n.template_locale,
+    missing: "placeholder",
+  });
   return blocksToText(r.blocks);
 }
 
@@ -246,7 +271,10 @@ const purgedError = () => new AppError(410, "purged", "Los datos de esta negocia
 
 async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
   const [versions, comments, proposals, cur] = await Promise.all([
-    db.query<any>(`SELECT version, author_type, author_name, summary, created_at FROM negotiation_versions WHERE negotiation_id = $1 ORDER BY version`, [n.id]),
+    db.query<any>(
+      `SELECT version, author_type, author_name, summary, created_at FROM negotiation_versions WHERE negotiation_id = $1 ORDER BY version`,
+      [n.id],
+    ),
     db.query<any>(`SELECT * FROM negotiation_comments WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]),
     db.query<any>(`SELECT * FROM negotiation_proposals WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]),
     db.one<any>(`SELECT text_snapshot FROM negotiation_versions WHERE negotiation_id = $1 AND version = $2`, [n.id, n.current_version]),
@@ -257,7 +285,7 @@ async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
   const view: NegotiationView = {
     negotiation: await summary(db, n),
     blocks: rendered.blocks,
-    text: n.source === "pdf" ? cur?.text_snapshot ?? "" : rendered.text,
+    text: n.source === "pdf" ? (cur?.text_snapshot ?? "") : rendered.text,
     versions: versions.map((v) => ({ version: v.version, author: author(v), summary: v.summary, createdAt: iso(v.created_at)! })),
     comments: comments.map((c) => ({
       id: c.id,
@@ -293,9 +321,7 @@ async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
     view.negotiation = {
       ...view.negotiation,
       envelopeId: null,
-      participants: view.negotiation.participants.map((x) =>
-        x.id === me.id ? x : { ...x, email: null, lastSeenAt: null, canPropose: false },
-      ),
+      participants: view.negotiation.participants.map((x) => (x.id === me.id ? x : { ...x, email: null, lastSeenAt: null, canPropose: false })),
     } as typeof view.negotiation;
   }
   return view;
@@ -303,7 +329,10 @@ async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
 
 async function diffFor(db: Db, n: any, from: number, to: number) {
   if (![from, to].every((v) => Number.isInteger(v) && v >= 1 && v <= 1_000_000)) throw badRequest("invalid_version", "Versión inválida");
-  const rows = await db.query<any>(`SELECT version, text_snapshot FROM negotiation_versions WHERE negotiation_id = $1 AND version = ANY($2)`, [n.id, [from, to]]);
+  const rows = await db.query<any>(`SELECT version, text_snapshot FROM negotiation_versions WHERE negotiation_id = $1 AND version = ANY($2)`, [
+    n.id,
+    [from, to],
+  ]);
   const a = rows.find((r) => r.version === from);
   const b = rows.find((r) => r.version === to);
   if (!a || !b) throw notFound("Versión");
@@ -311,7 +340,14 @@ async function diffFor(db: Db, n: any, from: number, to: number) {
 }
 
 /** Nueva versión con los datos/cláusulas dados. Debe correr en una transacción con la negociación bloqueada. */
-async function newVersion(t: Db, n: any, data: Record<string, unknown>, overrides: Record<string, string>, by: NegotiationAuthor, summaryText: string) {
+async function newVersion(
+  t: Db,
+  n: any,
+  data: Record<string, unknown>,
+  overrides: Record<string, string>,
+  by: NegotiationAuthor,
+  summaryText: string,
+) {
   const version = n.current_version + 1;
   let text: string;
   try {
@@ -364,7 +400,18 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       await t.query(
         `INSERT INTO negotiation_participants (id, negotiation_id, tenant_id, name, email, role, can_propose, token_hash, token_enc, observer)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [uuidv7(), negotiationId, tenantId, p.name, p.email, p.role ?? null, p.canPropose ?? true, sha256Hex(token), encrypt(token), p.observer ?? false],
+        [
+          uuidv7(),
+          negotiationId,
+          tenantId,
+          p.name,
+          p.email,
+          p.role ?? null,
+          p.canPropose ?? true,
+          sha256Hex(token),
+          encrypt(token),
+          p.observer ?? false,
+        ],
       );
     }
   }
@@ -423,7 +470,19 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       await t.query(
         `INSERT INTO negotiations (id, tenant_id, title, source, document_template_id, template_source, template_locale, clause_snapshot, negotiable, data, message, created_by)
          VALUES ($1,$2,$3,'template',$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [id, a.tenantId, input.title, tpl.id, tpl.source, tpl.locale, JSON.stringify(snapshot), input.negotiableVariables ? JSON.stringify(input.negotiableVariables) : null, JSON.stringify(input.data), input.message ?? null, a.userId],
+        [
+          id,
+          a.tenantId,
+          input.title,
+          tpl.id,
+          tpl.source,
+          tpl.locale,
+          JSON.stringify(snapshot),
+          input.negotiableVariables ? JSON.stringify(input.negotiableVariables) : null,
+          JSON.stringify(input.data),
+          input.message ?? null,
+          a.userId,
+        ],
       );
       await t.query(
         `INSERT INTO negotiation_versions (negotiation_id, version, data, clause_overrides, text_snapshot, author_type, author_name, summary) VALUES ($1,1,$2,'{}',$3,'user',$4,'Borrador inicial')`,
@@ -458,7 +517,11 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       throw badRequest("invalid_meta", "El campo 'meta' no es JSON válido");
     }
     const meta = z
-      .object({ title: z.string().trim().min(1).max(300), participants: z.array(NegotiationParticipantInput).min(1).max(20), message: z.string().max(5000).nullable().optional() })
+      .object({
+        title: z.string().trim().min(1).max(300),
+        participants: z.array(NegotiationParticipantInput).min(1).max(20),
+        message: z.string().max(5000).nullable().optional(),
+      })
       .parse(metaRaw);
     // PDF normalizado: el texto que se negocia y el documento que se firma salen del mismo archivo.
     let bytes: Uint8Array;
@@ -479,25 +542,31 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     }
     const f = await storeGeneratedPdf(s.blobs, a.tenantId, bytes);
     const id = uuidv7();
-    await discardBlobsOnFailure(s.blobs, [f.key], () => s.db.tx(async (t) => {
-      await insertFileRow(t, a.tenantId, f);
-      await t.query(`INSERT INTO negotiations (id, tenant_id, title, source, file_id, message, created_by) VALUES ($1,$2,$3,'pdf',$4,$5,$6)`, [
-        id,
-        a.tenantId,
-        meta.title,
-        f.fileId,
-        meta.message ?? null,
-        a.userId,
-      ]);
-      await t.query(
-        `INSERT INTO negotiation_versions (negotiation_id, version, data, text_snapshot, author_type, author_name, summary) VALUES ($1,1,'{}',$2,'user',$3,'Documento subido')`,
-        [id, text, userAuthor(a).name],
-      );
-      await insertParticipants(t, id, a.tenantId, meta.participants as any);
-      await enqueueNegotiationNotice(t, id, "invite", 1);
-    }));
+    await discardBlobsOnFailure(s.blobs, [f.key], () =>
+      s.db.tx(async (t) => {
+        await insertFileRow(t, a.tenantId, f);
+        await t.query(`INSERT INTO negotiations (id, tenant_id, title, source, file_id, message, created_by) VALUES ($1,$2,$3,'pdf',$4,$5,$6)`, [
+          id,
+          a.tenantId,
+          meta.title,
+          f.fileId,
+          meta.message ?? null,
+          a.userId,
+        ]);
+        await t.query(
+          `INSERT INTO negotiation_versions (negotiation_id, version, data, text_snapshot, author_type, author_name, summary) VALUES ($1,1,'{}',$2,'user',$3,'Documento subido')`,
+          [id, text, userAuthor(a).name],
+        );
+        await insertParticipants(t, id, a.tenantId, meta.participants as any);
+        await enqueueNegotiationNotice(t, id, "invite", 1);
+      }),
+    );
     const row = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [id]);
-    await auditFromRequest(s.db, req, a, "negotiation.created", { targetType: "negotiation", targetId: id, data: { title: meta.title, source: "pdf", sha256: f.sha256 } });
+    await auditFromRequest(s.db, req, a, "negotiation.created", {
+      targetType: "negotiation",
+      targetId: id,
+      data: { title: meta.title, source: "pdf", sha256: f.sha256 },
+    });
     reply.code(201);
     return fullView(s.db, row);
   });
@@ -532,7 +601,16 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const f = await s.db.one<any>(`SELECT storage_key FROM files WHERE id = $1`, [n.file_id]);
       return s.blobs.get(f.storage_key);
     }
-    return (await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n), legacyClauseFallback: true })).pdf;
+    return (
+      await renderDocument(s.db, n.tenant_id, {
+        source: n.template_source,
+        data: n.data,
+        locale: n.template_locale,
+        title: n.title,
+        clauses: clausesFor(n),
+        legacyClauseFallback: true,
+      })
+    ).pdf;
   }
 
   // Edición directa del remitente (cambia datos o el texto de una cláusula): versión nueva.
@@ -557,7 +635,14 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       // `data` es un cambio parcial (fusión profunda; null borra la clave): reemplazar todo borraba en silencio las
       // propuestas aceptadas mientras tanto que el cliente no tenía.
       const data = input.data ? mergeDataPatch(n.data ?? {}, input.data) : n.data;
-      const v = await newVersion(t, n, data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
+      const v = await newVersion(
+        t,
+        n,
+        data,
+        { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) },
+        userAuthor(a),
+        input.summary ?? "Edición del remitente",
+      );
       await enqueueNegotiationNotice(t, n.id, "version", v, { summary: input.summary ?? null });
       return v;
     });
@@ -598,44 +683,72 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = z.object({ resolved: z.boolean() }).parse(req.body);
     const n = await loadForManage(a, req.params.id);
-    const r = await s.db.query(`UPDATE negotiation_comments SET resolved = $3 WHERE id = $1 AND negotiation_id = $2 RETURNING id`, [req.params.commentId, n.id, input.resolved]);
+    const r = await s.db.query(`UPDATE negotiation_comments SET resolved = $3 WHERE id = $1 AND negotiation_id = $2 RETURNING id`, [
+      req.params.commentId,
+      n.id,
+      input.resolved,
+    ]);
     if (!r.length) throw notFound("Comentario");
     return fullView(s.db, n);
   });
 
-  app.post<{ Params: { id: string; proposalId: string } }>("/v1/negotiations/:id/proposals/:proposalId/decision", { preHandler: auth }, async (req) => {
-    const a = A(req);
-    const input = ProposalDecisionInput.parse(req.body);
-    const decided = await s.db.tx(async (t) => {
-      const n = await loadForManage(a, req.params.id, true, t);
-      if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-      const p = await t.one<any>(`SELECT * FROM negotiation_proposals WHERE id = $1 AND negotiation_id = $2 FOR UPDATE`, [req.params.proposalId, n.id]);
-      if (!p) throw notFound("Propuesta");
-      if (p.status !== "pending") throw conflict("decided", "La propuesta ya fue decidida");
-      await t.query(`UPDATE negotiation_proposals SET status = $2, decided_at = now() WHERE id = $1`, [p.id, input.accept ? "accepted" : "rejected"]);
-      if (!input.accept) return { negotiationId: n.id, proposal: p, version: null as number | null };
-      // Si el texto cambió desde que se hizo la propuesta (edición o otra propuesta aceptada), aceptarla pisaría ese
-      // cambio sin que se vea: el "valor actual" que muestra es el de entonces.
-      if (p.version !== n.current_version) {
-        const now = p.kind === "variable" ? valueText(getPath(n.data, p.key)) : Object.hasOwn(clausesFor(n), p.key) ? clausesFor(n)[p.key] : undefined;
-        if (now !== p.old_value) throw conflict("proposal_outdated", "El texto cambió desde que se hizo la propuesta: rechazala y pedí una nueva");
-      }
-      const data = structuredClone(n.data ?? {});
-      const overrides = { ...(n.clause_overrides ?? {}) };
-      if (p.kind === "variable") setPath(data, p.key, p.new_value);
-      else overrides[p.key] = p.new_value;
-      const v = await newVersion(t, n, data, overrides, { type: "participant", name: p.author_name }, `Propuesta aceptada: ${p.kind === "variable" ? p.key : `cláusula ${p.key}`}`);
-      await enqueueNegotiationNotice(t, n.id, "version", v, { acceptedKey: p.key });
-      return { negotiationId: n.id, proposal: p, version: v as number | null };
-    });
-    await auditFromRequest(s.db, req, a, input.accept ? "negotiation.proposal_accepted" : "negotiation.proposal_rejected", {
-      targetType: "negotiation",
-      targetId: decided.negotiationId,
-      data: { proposalId: decided.proposal.id, kind: decided.proposal.kind, key: decided.proposal.key, author: decided.proposal.author_name, version: decided.version },
-    });
-    const n = await loadForUser(a, req.params.id);
-    return fullView(s.db, n);
-  });
+  app.post<{ Params: { id: string; proposalId: string } }>(
+    "/v1/negotiations/:id/proposals/:proposalId/decision",
+    { preHandler: auth },
+    async (req) => {
+      const a = A(req);
+      const input = ProposalDecisionInput.parse(req.body);
+      const decided = await s.db.tx(async (t) => {
+        const n = await loadForManage(a, req.params.id, true, t);
+        if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+        const p = await t.one<any>(`SELECT * FROM negotiation_proposals WHERE id = $1 AND negotiation_id = $2 FOR UPDATE`, [
+          req.params.proposalId,
+          n.id,
+        ]);
+        if (!p) throw notFound("Propuesta");
+        if (p.status !== "pending") throw conflict("decided", "La propuesta ya fue decidida");
+        await t.query(`UPDATE negotiation_proposals SET status = $2, decided_at = now() WHERE id = $1`, [
+          p.id,
+          input.accept ? "accepted" : "rejected",
+        ]);
+        if (!input.accept) return { negotiationId: n.id, proposal: p, version: null as number | null };
+        // Si el texto cambió desde que se hizo la propuesta (edición o otra propuesta aceptada), aceptarla pisaría ese
+        // cambio sin que se vea: el "valor actual" que muestra es el de entonces.
+        if (p.version !== n.current_version) {
+          const now =
+            p.kind === "variable" ? valueText(getPath(n.data, p.key)) : Object.hasOwn(clausesFor(n), p.key) ? clausesFor(n)[p.key] : undefined;
+          if (now !== p.old_value) throw conflict("proposal_outdated", "El texto cambió desde que se hizo la propuesta: rechazala y pedí una nueva");
+        }
+        const data = structuredClone(n.data ?? {});
+        const overrides = { ...(n.clause_overrides ?? {}) };
+        if (p.kind === "variable") setPath(data, p.key, p.new_value);
+        else overrides[p.key] = p.new_value;
+        const v = await newVersion(
+          t,
+          n,
+          data,
+          overrides,
+          { type: "participant", name: p.author_name },
+          `Propuesta aceptada: ${p.kind === "variable" ? p.key : `cláusula ${p.key}`}`,
+        );
+        await enqueueNegotiationNotice(t, n.id, "version", v, { acceptedKey: p.key });
+        return { negotiationId: n.id, proposal: p, version: v as number | null };
+      });
+      await auditFromRequest(s.db, req, a, input.accept ? "negotiation.proposal_accepted" : "negotiation.proposal_rejected", {
+        targetType: "negotiation",
+        targetId: decided.negotiationId,
+        data: {
+          proposalId: decided.proposal.id,
+          kind: decided.proposal.kind,
+          key: decided.proposal.key,
+          author: decided.proposal.author_name,
+          version: decided.version,
+        },
+      });
+      const n = await loadForUser(a, req.params.id);
+      return fullView(s.db, n);
+    },
+  );
 
   app.post<{ Params: { id: string } }>("/v1/negotiations/:id/cancel", { preHandler: auth }, async (req) => {
     const a = A(req);
@@ -643,14 +756,23 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
     // Solo si sigue abierta: una aceptación simultánea ya pudo crear (y enviar) el sobre; pisarla la dejaba "cancelada".
     const rejected = await s.db.tx(async (t) => {
-      const upd = await t.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'open' RETURNING id`, [n.id]);
+      const upd = await t.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'open' RETURNING id`, [
+        n.id,
+      ]);
       if (!upd.length) throw conflict("closed", "La negociación ya está cerrada");
       // Las propuestas sin decidir quedan rechazadas (el CHECK de estados es pending/accepted/rejected): si no, seguían
       // "pendientes" para siempre en una negociación cerrada (contadores, vista de la contraparte).
-      const r = await t.query(`UPDATE negotiation_proposals SET status = 'rejected', decided_at = now() WHERE negotiation_id = $1 AND status = 'pending' RETURNING id`, [n.id]);
+      const r = await t.query(
+        `UPDATE negotiation_proposals SET status = 'rejected', decided_at = now() WHERE negotiation_id = $1 AND status = 'pending' RETURNING id`,
+        [n.id],
+      );
       return r.length;
     });
-    await auditFromRequest(s.db, req, a, "negotiation.cancelled", { targetType: "negotiation", targetId: n.id, data: { title: n.title, pendingProposalsRejected: rejected } });
+    await auditFromRequest(s.db, req, a, "negotiation.cancelled", {
+      targetType: "negotiation",
+      targetId: n.id,
+      data: { title: n.title, pendingProposalsRejected: rejected },
+    });
     return fullView(s.db, await loadForUser(a, n.id));
   });
 
@@ -663,17 +785,28 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (input.expectedVersion !== undefined && input.expectedVersion !== n.current_version) {
       throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a aceptar");
     }
-    const pending = await s.db.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [n.id]);
+    const pending = await s.db.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [
+      n.id,
+    ]);
     if (pending?.c) throw conflict("pending_proposals", `Quedan ${pending.c} propuestas sin decidir`);
     const parts = await s.db.query<any>(`SELECT * FROM negotiation_participants WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]);
     let marks: any[] = [];
     let finalPdf: Uint8Array;
     if (n.source === "template") {
-      const doc = await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n), legacyClauseFallback: true });
+      const doc = await renderDocument(s.db, n.tenant_id, {
+        source: n.template_source,
+        data: n.data,
+        locale: n.template_locale,
+        title: n.title,
+        clauses: clausesFor(n),
+        legacyClauseFallback: true,
+      });
       // Como al generar un documento: una cláusula que cita la plantilla y no existe se omitía en silencio y el sobre
       // salía a firmar sin ese texto.
       if (doc.missingClauses.length)
-        throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, { missingClauses: doc.missingClauses });
+        throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, {
+          missingClauses: doc.missingClauses,
+        });
       if (doc.missing.length) throw new AppError(422, "missing_variables", `Faltan datos: ${doc.missing.join(", ")}`, { missing: doc.missing });
       finalPdf = doc.pdf;
       marks = doc.marks;
@@ -705,63 +838,82 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const missingRoles = roles.filter((r) => !recipients.some((x) => !x.cc && x.role.toLowerCase() === r));
     if (missingRoles.length) {
       const me = await s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [ownerId]);
-      if (missingRoles.length === 1 && me) recipients.push({ role: marks.find((m) => m.role.toLowerCase() === missingRoles[0]).role, name: me.name, email: me.email, cc: false });
+      if (missingRoles.length === 1 && me)
+        recipients.push({ role: marks.find((m) => m.role.toLowerCase() === missingRoles[0]).role, name: me.name, email: me.email, cc: false });
     }
     // Si la negociación cambió o se cerró mientras tanto (o el sobre no se puede crear), el PDF final no lo referencia nada.
-    const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () => s.db.tx(async (t) => {
-      const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
-      if (locked.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-      // El PDF se armó con la versión leída al principio: si mientras tanto se aceptó un cambio o se editó, el sobre
-      // saldría con un texto que ya no es el acordado.
-      if (locked.current_version !== n.current_version) throw conflict("version_changed", "La negociación cambió mientras se aceptaba: revisá la versión nueva y volvé a aceptar");
-      // Una contraparte pudo proponer un cambio después del primer chequeo: con la negociación bloqueada, el sobre no
-      // sale con una propuesta sin decidir (quedaría pendiente para siempre en una negociación cerrada).
-      const late = await t.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [n.id]);
-      if (late?.c) throw conflict("pending_proposals", `Quedan ${late.c} propuestas sin decidir`);
-      let envId: string;
-      if (n.source === "pdf") {
-        // Sin marcas de firma: queda un sobre en borrador para ubicar los campos en el editor.
-        envId = await createEnvelopeFromPdf(t, owner, {
-          file,
-          fileName: `${n.title}.pdf`,
-          subject: input.subject ?? n.title,
-          message: input.message ?? null,
-          // Sobre un PDF subido no hay idioma de plantilla (template_locale queda en su valor por defecto): el de la organización.
-          locale: (await t.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [n.tenant_id]))?.default_locale ?? "es",
-          recipients: [],
-          marks: [],
-          metadata: { negotiationId: n.id },
-          send: false,
-        });
-        // Los observadores van como copia (como en las negociaciones sobre plantilla); el resto, firmantes.
-        for (const p of parts) {
-          await t.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, channels) VALUES ($1,$2,$3,$4,1,$5,$6,ARRAY['email'])`, [
-            uuidv7(),
-            n.tenant_id,
-            envId,
-            p.observer ? "cc" : "signer",
-            p.name,
-            p.email,
-          ]);
+    const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () =>
+      s.db.tx(async (t) => {
+        const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
+        if (locked.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+        // El PDF se armó con la versión leída al principio: si mientras tanto se aceptó un cambio o se editó, el sobre
+        // saldría con un texto que ya no es el acordado.
+        if (locked.current_version !== n.current_version)
+          throw conflict("version_changed", "La negociación cambió mientras se aceptaba: revisá la versión nueva y volvé a aceptar");
+        // Una contraparte pudo proponer un cambio después del primer chequeo: con la negociación bloqueada, el sobre no
+        // sale con una propuesta sin decidir (quedaría pendiente para siempre en una negociación cerrada).
+        const late = await t.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [
+          n.id,
+        ]);
+        if (late?.c) throw conflict("pending_proposals", `Quedan ${late.c} propuestas sin decidir`);
+        let envId: string;
+        if (n.source === "pdf") {
+          // Sin marcas de firma: queda un sobre en borrador para ubicar los campos en el editor.
+          envId = await createEnvelopeFromPdf(t, owner, {
+            file,
+            fileName: `${n.title}.pdf`,
+            subject: input.subject ?? n.title,
+            message: input.message ?? null,
+            // Sobre un PDF subido no hay idioma de plantilla (template_locale queda en su valor por defecto): el de la organización.
+            locale:
+              (await t.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [n.tenant_id]))?.default_locale ??
+              "es",
+            recipients: [],
+            marks: [],
+            metadata: { negotiationId: n.id },
+            send: false,
+          });
+          // Los observadores van como copia (como en las negociaciones sobre plantilla); el resto, firmantes.
+          for (const p of parts) {
+            await t.query(
+              `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, channels) VALUES ($1,$2,$3,$4,1,$5,$6,ARRAY['email'])`,
+              [uuidv7(), n.tenant_id, envId, p.observer ? "cc" : "signer", p.name, p.email],
+            );
+          }
+        } else {
+          envId = await createEnvelopeFromPdf(t, owner, {
+            file,
+            fileName: `${n.title}.pdf`,
+            subject: input.subject ?? n.title,
+            message: input.message ?? null,
+            locale: n.template_locale,
+            recipients,
+            marks,
+            metadata: {
+              negotiationId: n.id,
+              negotiationVersion: n.current_version,
+              ...(n.document_template_id ? { documentTemplateId: n.document_template_id } : {}),
+              ...(agreement ? { agreement } : {}),
+            },
+            send: input.send,
+          });
         }
-      } else {
-        envId = await createEnvelopeFromPdf(t, owner, {
-          file,
-          fileName: `${n.title}.pdf`,
-          subject: input.subject ?? n.title,
-          message: input.message ?? null,
-          locale: n.template_locale,
-          recipients,
-          marks,
-          metadata: { negotiationId: n.id, negotiationVersion: n.current_version, ...(n.document_template_id ? { documentTemplateId: n.document_template_id } : {}), ...(agreement ? { agreement } : {}) },
-          send: input.send,
+        await t.query(`UPDATE negotiations SET status = 'accepted', envelope_id = $2, updated_at = now() WHERE id = $1`, [n.id, envId]);
+        await appendEvent(t, {
+          tenantId: n.tenant_id,
+          envelopeId: envId,
+          type: "envelope.negotiated",
+          actor: a.actor,
+          data: { negotiationId: n.id, version: n.current_version },
         });
-      }
-      await t.query(`UPDATE negotiations SET status = 'accepted', envelope_id = $2, updated_at = now() WHERE id = $1`, [n.id, envId]);
-      await appendEvent(t, { tenantId: n.tenant_id, envelopeId: envId, type: "envelope.negotiated", actor: a.actor, data: { negotiationId: n.id, version: n.current_version } });
-      return envId;
-    }));
-    await auditFromRequest(s.db, req, a, "negotiation.accepted", { targetType: "negotiation", targetId: n.id, data: { envelopeId, version: n.current_version } });
+        return envId;
+      }),
+    );
+    await auditFromRequest(s.db, req, a, "negotiation.accepted", {
+      targetType: "negotiation",
+      targetId: n.id,
+      data: { envelopeId, version: n.current_version },
+    });
     const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
     return { ...(await fullView(s.db, await loadForUser(a, n.id))), envelope: { id: envelopeId, status: env.status }, missing: [] as string[] };
   });

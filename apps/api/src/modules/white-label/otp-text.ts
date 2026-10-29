@@ -6,8 +6,14 @@ import { maskVars, normLocale } from "../../notifications/templates";
 import { brandForEnvelope, brandize, mailBranding, productLabel, senderFor, type ResolvedBrand } from "./brand";
 
 const DEFAULT = {
-  es: { subject: "Tu código de verificación de CalaSign", text: 'Tu código para firmar "{{subject}}" es {{code}}. Vence en 10 minutos. No lo compartas.' },
-  "pt-BR": { subject: "Seu código de verificação da CalaSign", text: 'Seu código para assinar "{{subject}}" é {{code}}. Expira em 10 minutos. Não compartilhe.' },
+  es: {
+    subject: "Tu código de verificación de CalaSign",
+    text: 'Tu código para firmar "{{subject}}" es {{code}}. Vence en 10 minutos. No lo compartas.',
+  },
+  "pt-BR": {
+    subject: "Seu código de verificação da CalaSign",
+    text: 'Seu código para assinar "{{subject}}" é {{code}}. Expira em 10 minutos. Não compartilhe.',
+  },
   en: { subject: "Your CalaSign verification code", text: 'Your code to sign "{{subject}}" is {{code}}. It expires in 10 minutes. Don\'t share it.' },
 } as const;
 
@@ -19,12 +25,24 @@ export function hasCodeVariable(body: string): boolean {
 }
 
 /** Asunto y texto del código con la marca (plantilla propia si la hay). */
-export function OTP_MESSAGES(b: ResolvedBrand, localeIn: string, code: string, subject: string, def?: { subject: string; text: (code: string, subject: string) => string }) {
+export function OTP_MESSAGES(
+  b: ResolvedBrand,
+  localeIn: string,
+  code: string,
+  subject: string,
+  def?: { subject: string; text: (code: string, subject: string) => string },
+) {
   const locale = normLocale(localeIn);
   const tpl = mailBranding(b, "otp_code", locale).template;
   // Valores enmascarados: la marca blanca reemplaza el nombre de la plataforma en la plantilla, no en el asunto del sobre.
-  const { masked: vars, unmask } = maskVars({ code, subject, productName: productLabel(b), organizationName: b.name, supportUrl: b.links.supportUrl ?? "" });
-  const s = tpl?.subject?.trim() ? fillTemplate(tpl.subject, vars) : def?.subject ?? fillTemplate(DEFAULT[locale].subject, vars);
+  const { masked: vars, unmask } = maskVars({
+    code,
+    subject,
+    productName: productLabel(b),
+    organizationName: b.name,
+    supportUrl: b.links.supportUrl ?? "",
+  });
+  const s = tpl?.subject?.trim() ? fillTemplate(tpl.subject, vars) : (def?.subject ?? fillTemplate(DEFAULT[locale].subject, vars));
   let t = tpl?.body?.trim() ? fillTemplate(tpl.body, vars) : def ? def.text(vars.code, vars.subject) : fillTemplate(DEFAULT[locale].text, vars);
   // Plantilla propia sin {{code}} (guardada antes de que se validara): sin esto el firmante recibía un mensaje sin el
   // código y no podía firmar. Se agrega al final.
@@ -132,5 +150,13 @@ export async function brandedOtpMessage(
   const m = OTP_MESSAGES(b, locale, code, e.subject, { subject: defSubject, text: defText });
   const text = channel === "sms" ? otpSmsText(b, locale, code, e.subject) : m.text;
   const sender = await senderFor(db, b);
-  return { subject: m.subject, text, from: sender.from, replyTo: sender.replyTo, dkim: sender.dkim, fallbackFrom: sender.fallbackFrom, smsFrom: b.smsSenderId };
+  return {
+    subject: m.subject,
+    text,
+    from: sender.from,
+    replyTo: sender.replyTo,
+    dkim: sender.dkim,
+    fallbackFrom: sender.fallbackFrom,
+    smsFrom: b.smsSenderId,
+  };
 }

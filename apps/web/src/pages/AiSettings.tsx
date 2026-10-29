@@ -34,7 +34,9 @@ export function AiSettingsPage() {
   };
 
   useEffect(() => {
-    api<AiSettings>("/v1/settings/ai").then(apply).catch((e) => setError(errorText(e)));
+    api<AiSettings>("/v1/settings/ai")
+      .then(apply)
+      .catch((e) => setError(errorText(e)));
   }, []);
 
   if (!s) return error ? <ErrorBox error={error} /> : <Spinner />;
@@ -84,12 +86,21 @@ export function AiSettingsPage() {
       <p className="muted">{ai("ai.intro")}</p>
       <section className="card pad ai-form">
         <p className="small">
-          <strong>{ai("ai.provider")}:</strong> {s.provider === "mock" ? ai("ai.provider.mock") : s.provider === "none" ? ai("ai.provider.none") : ai("ai.provider.anthropic", { model: s.model })}
+          <strong>{ai("ai.provider")}:</strong>{" "}
+          {s.provider === "mock"
+            ? ai("ai.provider.mock")
+            : s.provider === "none"
+              ? ai("ai.provider.none")
+              : ai("ai.provider.anthropic", { model: s.model })}
         </p>
         <div className="ai-notice">
           <strong>{ai("ai.notice.title")}</strong>
           <p className="small">{ai("ai.notice.body")}</p>
-          {noticeChanged && <p className="small warn-text" role="status">{ai("ai.notice.changed")}</p>}
+          {noticeChanged && (
+            <p className="small warn-text" role="status">
+              {ai("ai.notice.changed")}
+            </p>
+          )}
           {noticeAccepted ? (
             <p className="muted small">{ai("ai.notice.accepted", { date: formatDateTime(s.noticeAcceptedAt, locale) })}</p>
           ) : (
@@ -132,10 +143,14 @@ export function AiSettingsPage() {
         {cap === 0 ? (
           <p className="small warn-text">{ai("ai.planNoAi")}</p>
         ) : cap !== null ? (
-          <p className="muted small">{ai("ai.planCap", { cap: cap.toLocaleString(locale), effective: s.effectiveTokenBudget.toLocaleString(locale) })}</p>
+          <p className="muted small">
+            {ai("ai.planCap", { cap: cap.toLocaleString(locale), effective: s.effectiveTokenBudget.toLocaleString(locale) })}
+          </p>
         ) : null}
         <div className="ai-usage" role="group" aria-label={ai("ai.usage", { month: s.usage.month, used, budget: s.effectiveTokenBudget })}>
-          <div className="small">{ai("ai.usage", { month: s.usage.month, used: used.toLocaleString(locale), budget: s.effectiveTokenBudget.toLocaleString(locale) })}</div>
+          <div className="small">
+            {ai("ai.usage", { month: s.usage.month, used: used.toLocaleString(locale), budget: s.effectiveTokenBudget.toLocaleString(locale) })}
+          </div>
           <div className="ai-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
             <span style={{ width: `${pct}%` }} className={pct >= 90 ? "ai-bar-hot" : ""} />
           </div>
@@ -164,7 +179,11 @@ export function AiSettingsPage() {
             <button type="button" className="btn btn-primary" onClick={save}>
               {ai("ai.save")}
             </button>
-            {saved && <span className="muted small" role="status">{ai("ai.saved")}</span>}
+            {saved && (
+              <span className="muted small" role="status">
+                {ai("ai.saved")}
+              </span>
+            )}
           </div>
         )}
       </section>

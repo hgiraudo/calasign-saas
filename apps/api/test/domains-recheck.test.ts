@@ -36,7 +36,10 @@ describe("dominio propio: re-verificación periódica", () => {
     let routed = true;
     const deps = { txt: async () => txt, routes: async () => routed };
     await recheckVerifiedDomains({ db, log }, deps);
-    expect(await db.one<any>(`SELECT status, last_error FROM custom_domains WHERE id = $1`, [domainId])).toMatchObject({ status: "verified", last_error: null });
+    expect(await db.one<any>(`SELECT status, last_error FROM custom_domains WHERE id = $1`, [domainId])).toMatchObject({
+      status: "verified",
+      last_error: null,
+    });
     expect(await tenantBaseUrl(db, tenant)).toBe("https://firmas.cliente.test");
 
     // Un error de DNS suelto no lo desverifica.
@@ -67,7 +70,9 @@ describe("dominio propio: re-verificación periódica", () => {
     expect(await status()).toBe("pending");
     expect(await tenantBaseUrl(db, tenant)).toBe(config.appUrl);
     expect(await tenantForHost(db, "firmas.cliente.test")).toBeNull();
-    const audit = await db.one<any>(`SELECT action, target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'domain.unverified'`, [tenant]);
+    const audit = await db.one<any>(`SELECT action, target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'domain.unverified'`, [
+      tenant,
+    ]);
     expect(audit).toMatchObject({ action: "domain.unverified", target_id: "firmas.cliente.test" });
 
     // Quien se quedó con el dominio vuelve a publicar el TXT viejo (es público: queda en los historiales de DNS) pero

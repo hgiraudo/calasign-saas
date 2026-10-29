@@ -70,17 +70,25 @@ async function readMultipart(req: FastifyRequest): Promise<{ body: unknown; file
   let total = 0;
   const parts = req.parts({
     // `parts` (archivos + campos): el tope global de app.ts (12) no alcanza para 10 documentos + payload + campos.
-    limits: { files: ONE_SHOT_MAX_DOCUMENTS + 1, fileSize: config.maxUploadBytes, fields: 10, fieldSize: 2 * 1024 * 1024, parts: ONE_SHOT_MAX_DOCUMENTS + 1 + 10 },
+    limits: {
+      files: ONE_SHOT_MAX_DOCUMENTS + 1,
+      fileSize: config.maxUploadBytes,
+      fields: 10,
+      fieldSize: 2 * 1024 * 1024,
+      parts: ONE_SHOT_MAX_DOCUMENTS + 1 + 10,
+    },
   });
   for await (const part of parts) {
     if (part.type === "field") {
-      if (part.fieldname !== PAYLOAD_PART) throw badRequest("unknown_part", `Parte "${part.fieldname}" desconocida: el JSON va en la parte "${PAYLOAD_PART}"`);
+      if (part.fieldname !== PAYLOAD_PART)
+        throw badRequest("unknown_part", `Parte "${part.fieldname}" desconocida: el JSON va en la parte "${PAYLOAD_PART}"`);
       if (rawJson !== null) throw badRequest("duplicate_part", `La parte "${PAYLOAD_PART}" está repetida`);
       rawJson = String(part.value ?? "");
       continue;
     }
     const buf = new Uint8Array(await part.toBuffer());
-    if (part.file.truncated) throw new AppError(413, "file_too_large", `El archivo "${part.filename}" supera ${mb(config.maxUploadBytes)}`, { limit: "file" });
+    if (part.file.truncated)
+      throw new AppError(413, "file_too_large", `El archivo "${part.filename}" supera ${mb(config.maxUploadBytes)}`, { limit: "file" });
     // `payload` también puede llegar como archivo (curl -F 'payload=@sobre.json;type=application/json').
     if (part.fieldname === PAYLOAD_PART) {
       if (rawJson !== null) throw badRequest("duplicate_part", `La parte "${PAYLOAD_PART}" está repetida`);
@@ -127,7 +135,9 @@ function signingUrlsReplay(s: Services, a: AuthContext, body: unknown) {
     redactStored: (b: CreateEnvelopeResponse & { signingUrls?: EnvelopeSigningUrl[] }) =>
       b.signingUrls ? { ...b, signingUrls: b.signingUrls.map((u) => ({ recipientId: u.recipientId })) } : b,
     rehydrate: async (stored: any) => {
-      const ids: string[] = Array.isArray(stored?.signingUrls) ? stored.signingUrls.map((u: any) => String(u?.recipientId ?? "")).filter(Boolean) : [];
+      const ids: string[] = Array.isArray(stored?.signingUrls)
+        ? stored.signingUrls.map((u: any) => String(u?.recipientId ?? "")).filter(Boolean)
+        : [];
       const envelopeId = String(stored?.envelope?.id ?? "");
       if (!ids.length || !envelopeId) return stored;
       const opts = CreateSigningUrlInput.safeParse((body as { embeddedSigning?: unknown } | null)?.embeddedSigning ?? {});
@@ -136,12 +146,18 @@ function signingUrlsReplay(s: Services, a: AuthContext, body: unknown) {
         try {
           // Cada una en su transacción: una que falla no deshace las demás.
           const r = await s.db.tx(async (t) => {
-            const cur = await t.one<any>(`SELECT embedded, status, role FROM recipients WHERE id = $1 AND envelope_id = $2`, [recipientId, envelopeId]);
+            const cur = await t.one<any>(`SELECT embedded, status, role FROM recipients WHERE id = $1 AND envelope_id = $2`, [
+              recipientId,
+              envelopeId,
+            ]);
             if (!cur?.embedded || cur.status !== "sent" || !["signer", "approver"].includes(cur.role)) return null;
             const input = opts.success ? opts.data : {};
             // Una URL de esta misma creación (o de una repetición anterior) todavía sin canjear ni vencer se devuelve tal
             // cual: repetir el pedido no emite un código nuevo cada vez.
-            return (await reusableSigningUrl(t, a, envelopeId, recipientId, input)) ?? issueSigningUrl(t, a, envelopeId, recipientId, input, { replayable: true });
+            return (
+              (await reusableSigningUrl(t, a, envelopeId, recipientId, input)) ??
+              issueSigningUrl(t, a, envelopeId, recipientId, input, { replayable: true })
+            );
           });
           if (r) signingUrls.push({ recipientId, ...r });
         } catch {
@@ -190,8 +206,10 @@ async function createEnvelope(
   const id = uuidv7();
 
   // ── Documentos: se obtienen y normalizan todos antes de guardar nada.
-  const docInputs = input.documents ?? [...files.keys()].map((file) => ({ file }) as { file: string; ref?: string; name?: string; base64?: string; url?: string });
-  if (docInputs.length > ONE_SHOT_MAX_DOCUMENTS) throw badRequest("too_many_documents", `Hasta ${ONE_SHOT_MAX_DOCUMENTS} documentos por llamada`, { max: ONE_SHOT_MAX_DOCUMENTS });
+  const docInputs =
+    input.documents ?? [...files.keys()].map((file) => ({ file }) as { file: string; ref?: string; name?: string; base64?: string; url?: string });
+  if (docInputs.length > ONE_SHOT_MAX_DOCUMENTS)
+    throw badRequest("too_many_documents", `Hasta ${ONE_SHOT_MAX_DOCUMENTS} documentos por llamada`, { max: ONE_SHOT_MAX_DOCUMENTS });
   const used = new Set<string>();
   const docs: (PreparedPdfDocument & { ref?: string })[] = [];
   let total = 0;

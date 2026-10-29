@@ -50,8 +50,10 @@ const AGREEMENT_FROM = `FROM agreements ag JOIN files f ON f.id = ag.file_id LEF
 const AGREEMENT_SELECT = `SELECT ${AGREEMENT_COLS}, f.sha256, u.name AS owner_name ${AGREEMENT_FROM}`;
 
 /** Letras latinas con diacríticos (minúsculas y mayúsculas) y su letra base, posición a posición, para titleFoldSql. */
-export const TITLE_FOLD_FROM = "áàâãäåāăąçćčĉċďđéèêëēĕėęěğĝġģĥħíìîïīĭįĩıĵķĺļľŀłñńņňóòôõöøōŏőŕŗřśŝşšșţťŧțúùûüũūŭůűųŵýÿŷźżžÁÀÂÃÄÅĀĂĄÇĆČĈĊĎĐÉÈÊËĒĔĖĘĚĞĜĠĢĤĦÍÌÎÏĪĬĮĨİĴĶĹĻĽĿŁÑŃŅŇÓÒÔÕÖØŌŎŐŔŖŘŚŜŞŠȘŢŤŦȚÚÙÛÜŨŪŬŮŰŲŴÝŸŶŹŻŽ";
-export const TITLE_FOLD_TO = "aaaaaaaaacccccddeeeeeeeeegggghhiiiiiiiiijklllllnnnnooooooooorrrsssssttttuuuuuuuuuuwyyyzzzaaaaaaaaacccccddeeeeeeeeegggghhiiiiiiiiijklllllnnnnooooooooorrrsssssttttuuuuuuuuuuwyyyzzz";
+export const TITLE_FOLD_FROM =
+  "áàâãäåāăąçćčĉċďđéèêëēĕėęěğĝġģĥħíìîïīĭįĩıĵķĺļľŀłñńņňóòôõöøōŏőŕŗřśŝşšșţťŧțúùûüũūŭůűųŵýÿŷźżžÁÀÂÃÄÅĀĂĄÇĆČĈĊĎĐÉÈÊËĒĔĖĘĚĞĜĠĢĤĦÍÌÎÏĪĬĮĨİĴĶĹĻĽĿŁÑŃŅŇÓÒÔÕÖØŌŎŐŔŖŘŚŜŞŠȘŢŤŦȚÚÙÛÜŨŪŬŮŰŲŴÝŸŶŹŻŽ";
+export const TITLE_FOLD_TO =
+  "aaaaaaaaacccccddeeeeeeeeegggghhiiiiiiiiijklllllnnnnooooooooorrrsssssttttuuuuuuuuuuwyyyzzzaaaaaaaaacccccddeeeeeeeeegggghhiiiiiiiiijklllllnnnnooooooooorrrsssssttttuuuuuuuuuuwyyyzzz";
 
 /**
  * Título sin acentos y en minúsculas, en SQL. La misma expresión exacta que el índice trigram agreements_title_fold_trgm_idx
@@ -71,7 +73,9 @@ export const titleFoldSql = (expr: string) => `translate(lower(normalize(${expr}
 export async function warnIfTitleIndexMissing(db: Db, log: { warn(o: object, m?: string): void }): Promise<void> {
   if (db.dialect !== "pg") return;
   try {
-    const r = await db.one<any>(`SELECT 1 AS ok FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'agreements_title_fold_trgm_idx'`);
+    const r = await db.one<any>(
+      `SELECT 1 AS ok FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'agreements_title_fold_trgm_idx'`,
+    );
     if (!r) {
       log.warn(
         { index: "agreements_title_fold_trgm_idx" },
@@ -289,7 +293,8 @@ async function checkCustomFields(db: Db, tenantId: string, metadata: Record<stri
     if (!def || v == null || v === "") continue;
     if (def.type === "number" && toNumberOrNull(v) === null) throw badRequest("invalid_metadata", `${def.label}: se esperaba un número`);
     if (def.type === "date" && !toIsoDate(v)) throw badRequest("invalid_metadata", `${def.label}: se esperaba una fecha AAAA-MM-DD`);
-    if (def.type === "select" && !(def.options ?? []).includes(String(v))) throw badRequest("invalid_metadata", `${def.label}: valor fuera de la lista`);
+    if (def.type === "select" && !(def.options ?? []).includes(String(v)))
+      throw badRequest("invalid_metadata", `${def.label}: valor fuera de la lista`);
   }
 }
 
@@ -384,7 +389,22 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const truncated = all.length > AGREEMENTS_CSV_MAX;
     const rows = truncated ? all.slice(0, AGREEMENTS_CSV_MAX) : all;
     const defs = await s.db.query<any>(`SELECT key, label FROM agreement_fields WHERE tenant_id = $1 ORDER BY position, created_at`, [a.tenantId]);
-    const head = ["id", "titulo", "estado", "origen", "contrapartes", "vigencia_desde", "vencimiento", "renovacion", "valor", "moneda", "etiquetas", "responsable", "sha256", ...defs.map((x) => x.label)];
+    const head = [
+      "id",
+      "titulo",
+      "estado",
+      "origen",
+      "contrapartes",
+      "vigencia_desde",
+      "vencimiento",
+      "renovacion",
+      "valor",
+      "moneda",
+      "etiquetas",
+      "responsable",
+      "sha256",
+      ...defs.map((x) => x.label),
+    ];
     const lines = [head.map(csvCell).join(sep)];
     for (const r of rows) {
       const ag = toAgreement(r);
@@ -411,7 +431,9 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     }
     if (truncated) {
       lines.push(
-        ["", `TRUNCADO: se exportaron los ${AGREEMENTS_CSV_MAX} acuerdos más recientes; hay más. Acotá la búsqueda con filtros para el resto.`].map(csvCell).join(sep),
+        ["", `TRUNCADO: se exportaron los ${AGREEMENTS_CSV_MAX} acuerdos más recientes; hay más. Acotá la búsqueda con filtros para el resto.`]
+          .map(csvCell)
+          .join(sep),
       );
       reply.header("x-truncated", "true");
     }
@@ -423,7 +445,9 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     return csvBody(lines);
   });
 
-  app.get<{ Params: { id: string } }>("/v1/agreements/:id", { preHandler: auth }, async (req) => toAgreement(await loadAgreementForUser(s.db, A(req), req.params.id)));
+  app.get<{ Params: { id: string } }>("/v1/agreements/:id", { preHandler: auth }, async (req) =>
+    toAgreement(await loadAgreementForUser(s.db, A(req), req.params.id)),
+  );
 
   app.get<{ Params: { id: string } }>("/v1/agreements/:id/file", { preHandler: auth }, async (req, reply: FastifyReply) => {
     const r = await loadAgreementForUser(s.db, A(req), req.params.id);
@@ -452,7 +476,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     if (input.expiryDate !== undefined) {
       set("expiry_date", input.expiryDate, "::date");
       // Nueva fecha: el recordatorio vuelve a corresponder; si ya no está vencido, vuelve a estar vigente.
-      if (input.status === undefined && r.status === "expired" && input.expiryDate && input.expiryDate >= new Date().toISOString().slice(0, 10)) set("status", "active");
+      if (input.status === undefined && r.status === "expired" && input.expiryDate && input.expiryDate >= new Date().toISOString().slice(0, 10))
+        set("status", "active");
     }
     if (input.renewalDate !== undefined) set("renewal_date", input.renewalDate, "::date");
     if (input.noticeDays !== undefined) set("notice_days", input.noticeDays);
@@ -475,10 +500,14 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
         if (!sets.length) return;
         // updated_at estrictamente creciente: dos guardados en el mismo milisegundo daban el mismo valor y el control
         // de arriba no veía el segundo.
-        await t.query(`UPDATE agreements SET ${sets.join(", ")}, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, params);
+        await t.query(
+          `UPDATE agreements SET ${sets.join(", ")}, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`,
+          params,
+        );
         await refreshSearchVector(t, r.id);
       });
-      if (sets.length) await auditFromRequest(s.db, req, a, "agreement.updated", { targetType: "agreement", targetId: r.id, data: { fields: Object.keys(input) } });
+      if (sets.length)
+        await auditFromRequest(s.db, req, a, "agreement.updated", { targetType: "agreement", targetId: r.id, data: { fields: Object.keys(input) } });
     }
     return toAgreement(await loadAgreementForUser(s.db, a, r.id));
   });
@@ -486,11 +515,14 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
   app.delete<{ Params: { id: string } }>("/v1/agreements/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const r = await loadAgreementForUser(s.db, a, req.params.id);
-    if (r.source !== "external") throw conflict("not_external", "Solo se pueden borrar acuerdos externos; los firmados en CalaSign se dan de baja (estado: terminado)");
+    if (r.source !== "external")
+      throw conflict("not_external", "Solo se pueden borrar acuerdos externos; los firmados en CalaSign se dan de baja (estado: terminado)");
     if (!canManageAgreement(a, r)) throw forbidden();
     await s.db.query(`DELETE FROM agreements WHERE id = $1`, [r.id]);
     // El PDF subido solo lo usaba este acuerdo: sin borrarlo quedaba en `files` y en el almacenamiento para siempre.
-    await deleteFileIfUnused(s.db, s.blobs, r.file_id).catch((err) => req.log.warn({ agreementId: r.id, err: String(err) }, "no se pudo borrar el PDF del acuerdo"));
+    await deleteFileIfUnused(s.db, s.blobs, r.file_id).catch((err) =>
+      req.log.warn({ agreementId: r.id, err: String(err) }, "no se pudo borrar el PDF del acuerdo"),
+    );
     await auditFromRequest(s.db, req, a, "agreement.deleted", { targetType: "agreement", targetId: r.id, data: { title: r.title } });
     return reply.code(204).send();
   });
@@ -549,41 +581,40 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     await s.blobs.put(key, bytes, "application/pdf");
     const id = uuidv7();
     // Si la transacción falla, el PDF subido no lo referencia nada (sin fila en `files` la retención nunca lo vería).
-    await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
-      await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
-        fileId,
-        a.tenantId,
-        key,
-        bytes.length,
-        sha,
-      ]);
-      await t.query(
-        `INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title, counterparties, status, effective_date, expiry_date, renewal_date,
+    await discardBlobsOnFailure(s.blobs, [key], () =>
+      s.db.tx(async (t) => {
+        await t.query(
+          `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`,
+          [fileId, a.tenantId, key, bytes.length, sha],
+        );
+        await t.query(
+          `INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title, counterparties, status, effective_date, expiry_date, renewal_date,
            notice_days, value, currency, tags, metadata, signatures, owner_user_id, created_by_api_key, text_folded)
          VALUES ($1,$2,'external',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
-        [
-          id,
-          a.tenantId,
-          fileId,
-          (file.filename || "acuerdo.pdf").slice(0, 200),
-          meta.title,
-          JSON.stringify(meta.counterparties ?? []),
-          meta.status ?? "active",
-          meta.effectiveDate ?? null,
-          meta.expiryDate ?? null,
-          meta.renewalDate ?? null,
-          meta.noticeDays ?? null,
-          meta.value ?? null,
-          meta.currency ?? null,
-          [...new Set(meta.tags ?? [])],
-          JSON.stringify(meta.metadata ?? {}),
-          signatures,
-          a.userId,
-          a.apiKeyId,
-          fold(text),
-        ],
-      );
-    }));
+          [
+            id,
+            a.tenantId,
+            fileId,
+            (file.filename || "acuerdo.pdf").slice(0, 200),
+            meta.title,
+            JSON.stringify(meta.counterparties ?? []),
+            meta.status ?? "active",
+            meta.effectiveDate ?? null,
+            meta.expiryDate ?? null,
+            meta.renewalDate ?? null,
+            meta.noticeDays ?? null,
+            meta.value ?? null,
+            meta.currency ?? null,
+            [...new Set(meta.tags ?? [])],
+            JSON.stringify(meta.metadata ?? {}),
+            signatures,
+            a.userId,
+            a.apiKeyId,
+            fold(text),
+          ],
+        );
+      }),
+    );
     await refreshSearchVector(s.db, id);
     await auditFromRequest(s.db, req, a, "agreement.uploaded", { targetType: "agreement", targetId: id, data: { title: meta.title, sha256: sha } });
     reply.code(201);
@@ -604,15 +635,24 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const input = AgreementFieldInput.parse(req.body);
     const pos = await s.db.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM agreement_fields WHERE tenant_id = $1`, [a.tenantId]);
     const row = await s.db
-      .one(
-        `INSERT INTO agreement_fields (id, tenant_id, key, label, type, options, position) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [uuidv7(), a.tenantId, input.key, input.label, input.type, input.options ? JSON.stringify(input.options) : null, pos.p],
-      )
+      .one(`INSERT INTO agreement_fields (id, tenant_id, key, label, type, options, position) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [
+        uuidv7(),
+        a.tenantId,
+        input.key,
+        input.label,
+        input.type,
+        input.options ? JSON.stringify(input.options) : null,
+        pos.p,
+      ])
       .catch((e) => {
         if (String(e).includes("unique") || String(e).includes("duplicate")) throw conflict("duplicate_key", "Ya existe un campo con esa clave");
         throw e;
       });
-    await auditFromRequest(s.db, req, a, "agreement_field.created", { targetType: "agreement_field", targetId: (row as any).id, data: { key: input.key, type: input.type } });
+    await auditFromRequest(s.db, req, a, "agreement_field.created", {
+      targetType: "agreement_field",
+      targetId: (row as any).id,
+      data: { key: input.key, type: input.type },
+    });
     reply.code(201);
     return toField(row);
   });
@@ -630,7 +670,11 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
       input.type,
       input.options ? JSON.stringify(input.options) : null,
     ]);
-    await auditFromRequest(s.db, req, a, "agreement_field.updated", { targetType: "agreement_field", targetId: cur.id, data: { key: cur.key, fields: Object.keys((req.body as object) ?? {}) } });
+    await auditFromRequest(s.db, req, a, "agreement_field.updated", {
+      targetType: "agreement_field",
+      targetId: cur.id,
+      data: { key: cur.key, fields: Object.keys((req.body as object) ?? {}) },
+    });
     return toField(row);
   });
 
@@ -645,7 +689,13 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Vistas guardadas ─────────
 
-  const toView = (r: any, a: AuthContext): AgreementView => ({ id: r.id, name: r.name, filters: r.filters ?? {}, shared: r.shared, mine: ownsView(a, r) });
+  const toView = (r: any, a: AuthContext): AgreementView => ({
+    id: r.id,
+    name: r.name,
+    filters: r.filters ?? {},
+    shared: r.shared,
+    mine: ownsView(a, r),
+  });
 
   app.get("/v1/agreement-views", { preHandler: auth }, async (req) => {
     const a = A(req);

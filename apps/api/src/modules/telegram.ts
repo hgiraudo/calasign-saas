@@ -71,10 +71,13 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
     if (!chatId || !m) return { ok: true };
 
     const linkHash = sha256Hex(m[1]);
-    const lt = await s.db.one<any>(`SELECT recipient_id, access_token_hash FROM telegram_link_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`, [
-      linkHash,
-    ]);
-    const r = lt ? await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND access_token_hash = $2`, [lt.recipient_id, lt.access_token_hash]) : null;
+    const lt = await s.db.one<any>(
+      `SELECT recipient_id, access_token_hash FROM telegram_link_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`,
+      [linkHash],
+    );
+    const r = lt
+      ? await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND access_token_hash = $2`, [lt.recipient_id, lt.access_token_hash])
+      : null;
     const e = r ? await s.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [r.envelope_id]) : null;
     if (!r || !e || e.status === "draft") {
       await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
@@ -97,7 +100,10 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
         if (!cur?.authenticated_at) return "needs_otp";
       }
       // Un solo uso: el token se consume con el sobre bloqueado (dos /start con el mismo link no vinculan dos chats).
-      const used = await t.query(`UPDATE telegram_link_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING 1`, [linkHash]);
+      const used = await t.query(
+        `UPDATE telegram_link_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING 1`,
+        [linkHash],
+      );
       if (!used.length) return false;
       const upd = await t.query(
         `UPDATE recipients SET telegram_chat_id = $2
@@ -119,7 +125,10 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       return { ok: true };
     }
     const locale = normLocale(r.locale ?? e.locale);
-    const link = e.status === "sent" && ["sent", "viewed"].includes(r.status) ? `${await envelopeBaseUrl(s.db, e.tenant_id, e.id)}/s/${decrypt(r.access_token_enc)}` : null;
+    const link =
+      e.status === "sent" && ["sent", "viewed"].includes(r.status)
+        ? `${await envelopeBaseUrl(s.db, e.tenant_id, e.id)}/s/${decrypt(r.access_token_enc)}`
+        : null;
     await sendTelegram({ to: String(chatId), text: MSG.linked[locale](e.subject), link, cta: MSG.cta[locale] }).catch((err) =>
       req.log.warn({ err: String(err) }, "no se pudo responder en Telegram"),
     );

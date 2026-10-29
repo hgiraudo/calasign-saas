@@ -40,11 +40,50 @@ const production = env.NODE_ENV === "production";
  * cubierto se resuelve con SESSION_COOKIE_PARENT_DOMAINS.
  */
 const PRIVATE_SUFFIXES = new Set([
-  "vercel.app", "netlify.app", "herokuapp.com", "github.io", "pages.dev", "workers.dev", "onrender.com", "fly.dev",
-  "amplifyapp.com", "azurewebsites.net", "cloudfront.net", "appspot.com", "web.app", "firebaseapp.com", "railway.app",
-  "up.railway.app", "elasticbeanstalk.com", "ngrok.io", "ngrok-free.app", "trycloudflare.com",
+  "vercel.app",
+  "netlify.app",
+  "herokuapp.com",
+  "github.io",
+  "pages.dev",
+  "workers.dev",
+  "onrender.com",
+  "fly.dev",
+  "amplifyapp.com",
+  "azurewebsites.net",
+  "cloudfront.net",
+  "appspot.com",
+  "web.app",
+  "firebaseapp.com",
+  "railway.app",
+  "up.railway.app",
+  "elasticbeanstalk.com",
+  "ngrok.io",
+  "ngrok-free.app",
+  "trycloudflare.com",
 ]);
-const CC_SECOND_LEVELS = new Set(["com", "net", "org", "gov", "gob", "edu", "co", "ac", "mil", "ne", "or", "go", "nic", "ltd", "plc", "info", "biz", "int", "nom", "res", "tur"]);
+const CC_SECOND_LEVELS = new Set([
+  "com",
+  "net",
+  "org",
+  "gov",
+  "gob",
+  "edu",
+  "co",
+  "ac",
+  "mil",
+  "ne",
+  "or",
+  "go",
+  "nic",
+  "ltd",
+  "plc",
+  "info",
+  "biz",
+  "int",
+  "nom",
+  "res",
+  "tur",
+]);
 
 /** Sufijo público: un solo nivel (com, ar), un segundo nivel genérico de un ccTLD (com.ar, co.uk) o un hosting conocido. */
 function isPublicSuffix(domain: string): boolean {
@@ -77,7 +116,8 @@ export function hostAndParentDomains(url: string): string[] {
 function legacyCookieReadUntil(v: string | undefined): number {
   const raw = v?.trim() || "2026-11-10T00:00:00Z";
   const t = Date.parse(raw);
-  if (!Number.isFinite(t)) throw new Error(`LEGACY_SESSION_COOKIE_READ_UNTIL inválido: "${v}" (se espera una fecha ISO, p. ej. 2026-11-10T00:00:00Z)`);
+  if (!Number.isFinite(t))
+    throw new Error(`LEGACY_SESSION_COOKIE_READ_UNTIL inválido: "${v}" (se espera una fecha ISO, p. ej. 2026-11-10T00:00:00Z)`);
   return t;
 }
 
@@ -350,11 +390,7 @@ export const config = {
   /** Planes, cobros y servidor MCP (Fase 6). */
   billing: {
     /** Plan de las organizaciones sin suscripción. En producción "free"; fuera de producción "enterprise" (pruebas sin límites). */
-    defaultPlan: (env.BILLING_DEFAULT_PLAN ?? (appEnv === "prod" ? "free" : "enterprise")) as
-      | "free"
-      | "starter"
-      | "business"
-      | "enterprise",
+    defaultPlan: (env.BILLING_DEFAULT_PLAN ?? (appEnv === "prod" ? "free" : "enterprise")) as "free" | "starter" | "business" | "enterprise",
     /**
      * Tope de tokens de IA por mes del plan Enterprise (los demás planes tienen el suyo fijo en PLANS). Vacío: el valor
      * de PLANS (50 M); "unlimited": sin tope del plan (rige solo el presupuesto de la organización).
@@ -368,7 +404,11 @@ export const config = {
     })(),
     /** El proveedor de prueba ("mock") solo existe fuera de producción. */
     mockEnabled: appEnv !== "prod" || bool(env.PAYMENTS_MOCK_ENABLED, false),
-    stripe: { secretKey: env.STRIPE_SECRET_KEY ?? null, webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null, apiBase: env.STRIPE_API_BASE ?? "https://api.stripe.com" },
+    stripe: {
+      secretKey: env.STRIPE_SECRET_KEY ?? null,
+      webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null,
+      apiBase: env.STRIPE_API_BASE ?? "https://api.stripe.com",
+    },
     mercadopago: {
       accessToken: env.MP_ACCESS_TOKEN ?? null,
       webhookSecret: env.MP_WEBHOOK_SECRET ?? null,

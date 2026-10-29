@@ -33,7 +33,11 @@ export interface PreparedExternalSignature {
 
 const sha256 = (b: Uint8Array) => new Uint8Array(createHash("sha256").update(b).digest());
 
-export async function prepareExternalSignature(pdf: Uint8Array, chainDer: Uint8Array[], o: PrepareExternalOptions): Promise<PreparedExternalSignature> {
+export async function prepareExternalSignature(
+  pdf: Uint8Array,
+  chainDer: Uint8Array[],
+  o: PrepareExternalOptions,
+): Promise<PreparedExternalSignature> {
   if (!chainDer.length) throw new Error("falta el certificado del firmante");
   const { algorithm, namedCurve } = signingAlgorithmFor(chainDer[0]);
   const withPlaceholder = await buildSignaturePlaceholderIncremental(pdf, {
@@ -59,10 +63,19 @@ export async function prepareExternalSignature(pdf: Uint8Array, chainDer: Uint8A
 }
 
 /** Verifica la firma del titular sobre los atributos firmados con la clave pública de su certificado. */
-export function verifyExternalSignature(p: Pick<PreparedExternalSignature, "signedAttrsDer" | "signatureAlgorithm">, certDer: Uint8Array, signature: Uint8Array): boolean {
+export function verifyExternalSignature(
+  p: Pick<PreparedExternalSignature, "signedAttrsDer" | "signatureAlgorithm">,
+  certDer: Uint8Array,
+  signature: Uint8Array,
+): boolean {
   const key = new X509Certificate(Buffer.from(certDer)).publicKey;
   try {
-    return cryptoVerify("sha256", Buffer.from(p.signedAttrsDer), p.signatureAlgorithm === "ECDSA" ? { key, dsaEncoding: "der" } : key, Buffer.from(signature));
+    return cryptoVerify(
+      "sha256",
+      Buffer.from(p.signedAttrsDer),
+      p.signatureAlgorithm === "ECDSA" ? { key, dsaEncoding: "der" } : key,
+      Buffer.from(signature),
+    );
   } catch {
     return false;
   }

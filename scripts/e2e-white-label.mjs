@@ -111,11 +111,22 @@ const mailbox = async (api, pred, what) => {
 
 const api = client();
 const org = `Seguros Andinos ${stamp}`;
-const me = await api("POST", "/v1/auth/signup", { name: "Ana Admin", email: `ana+wl${stamp}@example.com`, password: "una-clave-segura-123", organization: org, locale: "es" });
+const me = await api("POST", "/v1/auth/signup", {
+  name: "Ana Admin",
+  email: `ana+wl${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: org,
+  locale: "es",
+});
 ok("alta de la organización");
 
 // ───────── Validaciones ─────────
-const badCss = await api("PUT", "/v1/settings/brands/default", { config: { customCss: "body{background:url(https://evil.example/x.png)}" } }, { raw: true });
+const badCss = await api(
+  "PUT",
+  "/v1/settings/brands/default",
+  { config: { customCss: "body{background:url(https://evil.example/x.png)}" } },
+  { raw: true },
+);
 assert(badCss.status === 400, `CSS con url() debería rechazarse (HTTP ${badCss.status})`);
 const badFrom = await api("PUT", "/v1/settings/brands/default", { config: { email: { fromEmail: "firmas@no-verificado.test" } } }, { raw: true });
 assert(badFrom.status === 400, `un remitente de un dominio no registrado debería rechazarse (HTTP ${badFrom.status})`);
@@ -135,11 +146,31 @@ ok("dominio de correo verificado (TXT de propiedad + DKIM)");
 const config = {
   productName: "FirmaAndina",
   hidePoweredBy: true,
-  theme: { primaryColor: "#123456", secondaryColor: "#aa5500", buttonColor: "#00aa55", backgroundColor: "#fafafa", textColor: "#111111", borderRadius: 4, fontFamily: "Montserrat", fontSource: "google" },
+  theme: {
+    primaryColor: "#123456",
+    secondaryColor: "#aa5500",
+    buttonColor: "#00aa55",
+    backgroundColor: "#fafafa",
+    textColor: "#111111",
+    borderRadius: 4,
+    fontFamily: "Montserrat",
+    fontSource: "google",
+  },
   links: { supportUrl: "https://ayuda.andinos.test", privacyUrl: "https://andinos.test/privacidad", termsUrl: "https://andinos.test/terminos" },
-  email: { fromName: "Firmas Andinos", fromEmail: `firmas@${mailDomain}`, replyTo: "ayuda@andinos.test", footer: "Seguros Andinos S.A. · Av. Siempre Viva 123" },
+  email: {
+    fromName: "Firmas Andinos",
+    fromEmail: `firmas@${mailDomain}`,
+    replyTo: "ayuda@andinos.test",
+    footer: "Seguros Andinos S.A. · Av. Siempre Viva 123",
+  },
   templates: {
-    invite: { es: { subject: "{{organizationName}} necesita tu firma: {{subject}}", body: "Hola {{recipientName}}:\n\n{{senderName}} te pidió firmar «{{subject}}» con {{productName}}.", cta: "Firmar ahora" } },
+    invite: {
+      es: {
+        subject: "{{organizationName}} necesita tu firma: {{subject}}",
+        body: "Hola {{recipientName}}:\n\n{{senderName}} te pidió firmar «{{subject}}» con {{productName}}.",
+        cta: "Firmar ahora",
+      },
+    },
     otp_code: { es: { subject: "Código {{code}} para {{subject}}", body: "Tu código de {{productName}} es {{code}}." } },
   },
   texts: { es: { "sign.doneTitle": "¡Listo, gracias por firmar!" } },
@@ -162,7 +193,12 @@ assert(logoRes.ok && logoRes.headers.get("content-type") === "image/png", "logo 
 ok("marca blanca total configurada (tema, textos, plantillas, remitente, logo, favicon)");
 
 // Vista previa (sin guardar) y tema público.
-const prev = await api("POST", "/v1/settings/brands/default/preview", { kind: "email", event: "invite", locale: "es", config: { ...config, templates: { invite: { es: { subject: "Vista previa {{subject}}" } } } } });
+const prev = await api("POST", "/v1/settings/brands/default/preview", {
+  kind: "email",
+  event: "invite",
+  locale: "es",
+  config: { ...config, templates: { invite: { es: { subject: "Vista previa {{subject}}" } } } },
+});
 assert(prev.subject.startsWith("Vista previa"), `vista previa: ${prev.subject}`);
 noPlatform("vista previa del correo", prev.html + prev.subject + prev.from);
 const pub = await api("GET", `/v1/public/brand-theme?b=${encodeURIComponent(brand.slug)}`);
@@ -179,7 +215,9 @@ const signer = `Carla Firmante ${stamp}`;
 await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
   recipients: [{ id: sid, name: signer, email: `carla+${stamp}@example.com`, routingOrder: 1, channels: ["email"], authMethod: "otp_email" }],
 });
-await api("PUT", `/v1/envelopes/${envelope.id}/fields`, { fields: [{ documentId: doc.id, recipientId: sid, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }] });
+await api("PUT", `/v1/envelopes/${envelope.id}/fields`, {
+  fields: [{ documentId: doc.id, recipientId: sid, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
+});
 await api("POST", `/v1/envelopes/${envelope.id}/send`);
 
 const invite = await mailbox(api, (m) => m.channel === "email" && m.text.includes(signer) && m.link?.includes("/s/"), "invitación");
@@ -195,7 +233,11 @@ let sess = await api("GET", `/v1/signing/${token}`);
 noPlatform("sesión de firma (antes del código)", JSON.stringify(sess));
 assert(sess.theme?.whiteLabel && sess.theme.texts?.es?.["sign.doneTitle"], "la sesión trae el tema y los textos");
 await api("POST", `/v1/signing/${token}/otp/send`);
-const otpMail = await mailbox(api, (m) => m.channel === "email" && m.to === `carla+${stamp}@example.com` && /^Código \d{6}/.test(m.subject), "código OTP");
+const otpMail = await mailbox(
+  api,
+  (m) => m.channel === "email" && m.to === `carla+${stamp}@example.com` && /^Código \d{6}/.test(m.subject),
+  "código OTP",
+);
 noPlatform("correo del código", [otpMail.from, otpMail.subject, otpMail.text].join("\n"));
 const code = /(\d{6})/.exec(otpMail.text)[1];
 await api("POST", `/v1/signing/${token}/otp/verify`, { code });
@@ -225,7 +267,11 @@ assert(detail.envelope.status === "completed", `no se completó: ${detail.envelo
 sess = await api("GET", `/v1/signing/${token}`);
 noPlatform("sesión final", JSON.stringify(sess));
 
-const completedMail = await mailbox(api, (m) => m.channel === "email" && m.to === `carla+${stamp}@example.com` && m.subject.startsWith("Completado"), "aviso de completado");
+const completedMail = await mailbox(
+  api,
+  (m) => m.channel === "email" && m.to === `carla+${stamp}@example.com` && m.subject.startsWith("Completado"),
+  "aviso de completado",
+);
 noPlatform("correo de completado", [completedMail.from, completedMail.subject, completedMail.text, completedMail.html].join("\n"));
 
 const pdfRes = await fetch(`${BASE}/v1/signing/${token}/signed.pdf`, { headers: { cookie: "" } });
@@ -242,11 +288,15 @@ const ver = await api("POST", "/v1/verify", vfd);
 assert(ver.match, "verificación");
 noPlatform("verificación", JSON.stringify(ver));
 const vpage = await fetch(`${BASE}/verify?b=${encodeURIComponent(brand.slug)}`);
-if (vpage.headers.get("content-type")?.includes("text/html")) noPlatform("página de verificación", (await vpage.text()).replace(/\/assets\/[^"]+/g, ""));
+if (vpage.headers.get("content-type")?.includes("text/html"))
+  noPlatform("página de verificación", (await vpage.text()).replace(/\/assets\/[^"]+/g, ""));
 ok("verificación sin la plataforma");
 
 // ───────── Sub-marca por sobre ─────────
-const sub = await api("POST", "/v1/settings/brands", { name: `Cliente Uno ${stamp}`, config: { productName: "UnoFirma", theme: { primaryColor: "#990000", buttonColor: "#990000" } } });
+const sub = await api("POST", "/v1/settings/brands", {
+  name: `Cliente Uno ${stamp}`,
+  config: { productName: "UnoFirma", theme: { primaryColor: "#990000", buttonColor: "#990000" } },
+});
 assert(sub.id !== "default" && sub.effective.productName === "UnoFirma" && sub.effective.whiteLabel, "sub-marca hereda la marca blanca");
 const badBrand = await api("POST", "/v1/envelopes", { subject: "x", brandId: randomUUID() }, { raw: true });
 assert(badBrand.status === 400, `brandId de otra organización debería rechazarse (HTTP ${badBrand.status})`);
@@ -256,8 +306,12 @@ const d2 = new FormData();
 d2.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "c.pdf");
 const doc2 = await api("POST", `/v1/envelopes/${e2.id}/documents`, d2);
 const s2 = randomUUID();
-await api("PUT", `/v1/envelopes/${e2.id}/recipients`, { recipients: [{ id: s2, name: `Pedro ${stamp}`, email: `pedro+${stamp}@example.com`, routingOrder: 1, channels: ["email"] }] });
-await api("PUT", `/v1/envelopes/${e2.id}/fields`, { fields: [{ documentId: doc2.id, recipientId: s2, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }] });
+await api("PUT", `/v1/envelopes/${e2.id}/recipients`, {
+  recipients: [{ id: s2, name: `Pedro ${stamp}`, email: `pedro+${stamp}@example.com`, routingOrder: 1, channels: ["email"] }],
+});
+await api("PUT", `/v1/envelopes/${e2.id}/fields`, {
+  fields: [{ documentId: doc2.id, recipientId: s2, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
+});
 await api("POST", `/v1/envelopes/${e2.id}/send`);
 const inv2 = await mailbox(api, (m) => m.channel === "email" && m.text.includes(`Pedro ${stamp}`), "invitación de la sub-marca");
 assert(inv2.html.includes("#990000") && inv2.text.includes("UnoFirma"), "correo con la sub-marca");
@@ -271,7 +325,13 @@ ok("sub-marca por sobre (brandId): correos y sesión con su marca");
 
 // ───────── Control: una organización sin marca blanca sí ve la plataforma ─────────
 const api2 = client();
-await api2("POST", "/v1/auth/signup", { name: "Otro", email: `otro+wl${stamp}@example.com`, password: "una-clave-segura-123", organization: `Control ${stamp}`, locale: "es" });
+await api2("POST", "/v1/auth/signup", {
+  name: "Otro",
+  email: `otro+wl${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Control ${stamp}`,
+  locale: "es",
+});
 const prevCtl = await api2("POST", "/v1/settings/brands/default/preview", { kind: "email", event: "invite", locale: "es" });
 assert(PLATFORM.test(prevCtl.html), "control: sin marca blanca el correo menciona la plataforma (la prueba detecta la marca)");
 ok("control: la detección funciona (organización sin marca blanca)");

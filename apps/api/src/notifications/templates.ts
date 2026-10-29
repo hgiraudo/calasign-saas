@@ -48,7 +48,10 @@ export interface TemplateVars {
   unsealableCode?: string | null;
 }
 
-type Dict = Record<TemplateKind | AgreementTemplateKind | OrgNoticeKind, { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }>;
+type Dict = Record<
+  TemplateKind | AgreementTemplateKind | OrgNoticeKind,
+  { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }
+>;
 
 const T: Record<"es" | "pt-BR" | "en", Dict> = {
   es: {
@@ -64,7 +67,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     expiry_warning: {
       subject: (v) => `Por vencer: "${v.subject}" espera tu firma`,
-      lines: (v) => [`Hola ${v.recipientName}:`, `El documento que te envió ${v.senderName} (${v.organizationName}) vence pronto. Firmalo antes de que caduque.`],
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `El documento que te envió ${v.senderName} (${v.organizationName}) vence pronto. Firmalo antes de que caduque.`,
+      ],
       cta: "Revisar y firmar",
     },
     certificate_request: {
@@ -138,7 +144,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     completed: {
       subject: (v) => `Completado: "${v.subject}"`,
-      lines: (v) => [`Hola ${v.recipientName}:`, `Todas las partes firmaron "${v.subject}". Podés descargar el documento final con su certificado de finalización.`],
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Todas las partes firmaron "${v.subject}". Podés descargar el documento final con su certificado de finalización.`,
+      ],
       cta: "Descargar documento",
     },
     declined: {
@@ -147,7 +156,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     voided: {
       subject: (v) => `"${v.subject}" fue anulado`,
-      lines: (v) => [`Hola ${v.recipientName}:`, `${v.senderName} anuló "${v.subject}". Ya no es necesario que lo firmes.`, v.reason ? `Motivo: ${v.reason}` : ""],
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `${v.senderName} anuló "${v.subject}". Ya no es necesario que lo firmes.`,
+        v.reason ? `Motivo: ${v.reason}` : "",
+      ],
     },
     sender_completed: {
       subject: (v) => `Completado: "${v.subject}"`,
@@ -169,7 +182,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     negotiation_invite: {
       subject: (v) => `${v.organizationName} te invita a revisar "${v.subject}"`,
-      lines: (v) => [`Hola ${v.recipientName}:`, `${v.organizationName} compartió un borrador para que lo revises, comentes y propongas cambios antes de firmarlo.`],
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `${v.organizationName} compartió un borrador para que lo revises, comentes y propongas cambios antes de firmarlo.`,
+      ],
       cta: "Revisar",
     },
     negotiation_version: {
@@ -218,7 +234,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     expiry_warning: {
       subject: (v) => `Prestes a expirar: "${v.subject}" aguarda sua assinatura`,
-      lines: (v) => [`Olá ${v.recipientName},`, `O documento enviado por ${v.senderName} (${v.organizationName}) expira em breve. Assine antes que expire.`],
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `O documento enviado por ${v.senderName} (${v.organizationName}) expira em breve. Assine antes que expire.`,
+      ],
       cta: "Revisar e assinar",
     },
     certificate_request: {
@@ -292,7 +311,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     completed: {
       subject: (v) => `Concluído: "${v.subject}"`,
-      lines: (v) => [`Olá ${v.recipientName},`, `Todas as partes assinaram "${v.subject}". Você pode baixar o documento final com o certificado de conclusão.`],
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `Todas as partes assinaram "${v.subject}". Você pode baixar o documento final com o certificado de conclusão.`,
+      ],
       cta: "Baixar documento",
     },
     declined: {
@@ -301,7 +323,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     voided: {
       subject: (v) => `"${v.subject}" foi anulado`,
-      lines: (v) => [`Olá ${v.recipientName},`, `${v.senderName} anulou "${v.subject}". Não é mais necessário assiná-lo.`, v.reason ? `Motivo: ${v.reason}` : ""],
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `${v.senderName} anulou "${v.subject}". Não é mais necessário assiná-lo.`,
+        v.reason ? `Motivo: ${v.reason}` : "",
+      ],
     },
     sender_completed: {
       subject: (v) => `Concluído: "${v.subject}"`,
@@ -323,7 +349,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     negotiation_invite: {
       subject: (v) => `${v.organizationName} convida você a revisar "${v.subject}"`,
-      lines: (v) => [`Olá ${v.recipientName},`, `${v.organizationName} compartilhou um rascunho para você revisar, comentar e propor mudanças antes de assiná-lo.`],
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `${v.organizationName} compartilhou um rascunho para você revisar, comentar e propor mudanças antes de assiná-lo.`,
+      ],
       cta: "Revisar",
     },
     negotiation_version: {
@@ -372,7 +401,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     expiry_warning: {
       subject: (v) => `Expiring soon: "${v.subject}" is waiting for your signature`,
-      lines: (v) => [`Hi ${v.recipientName},`, `The document ${v.senderName} (${v.organizationName}) sent you expires soon. Please sign it before it expires.`],
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `The document ${v.senderName} (${v.organizationName}) sent you expires soon. Please sign it before it expires.`,
+      ],
       cta: "Review and sign",
     },
     certificate_request: {
@@ -446,7 +478,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     completed: {
       subject: (v) => `Completed: "${v.subject}"`,
-      lines: (v) => [`Hi ${v.recipientName},`, `All parties signed "${v.subject}". You can download the final document with its certificate of completion.`],
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `All parties signed "${v.subject}". You can download the final document with its certificate of completion.`,
+      ],
       cta: "Download document",
     },
     declined: {
@@ -455,7 +490,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     voided: {
       subject: (v) => `"${v.subject}" was voided`,
-      lines: (v) => [`Hi ${v.recipientName},`, `${v.senderName} voided "${v.subject}". You no longer need to sign it.`, v.reason ? `Reason: ${v.reason}` : ""],
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `${v.senderName} voided "${v.subject}". You no longer need to sign it.`,
+        v.reason ? `Reason: ${v.reason}` : "",
+      ],
     },
     sender_completed: {
       subject: (v) => `Completed: "${v.subject}"`,
@@ -477,7 +516,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     negotiation_invite: {
       subject: (v) => `${v.organizationName} invites you to review "${v.subject}"`,
-      lines: (v) => [`Hi ${v.recipientName},`, `${v.organizationName} shared a draft for you to review, comment on and propose changes before signing it.`],
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `${v.organizationName} shared a draft for you to review, comment on and propose changes before signing it.`,
+      ],
       cta: "Review",
     },
     negotiation_version: {
@@ -506,7 +548,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     },
     team_invitation: {
       subject: (v) => `You've been invited to ${v.organizationName} on CalaSign`,
-      lines: (v) => [`${v.senderName} invited you to join ${v.organizationName} on CalaSign as ${v.detail ?? ""}.`, `The invitation expires in ${v.days ?? 0} days.`],
+      lines: (v) => [
+        `${v.senderName} invited you to join ${v.organizationName} on CalaSign as ${v.detail ?? ""}.`,
+        `The invitation expires in ${v.days ?? 0} days.`,
+      ],
       cta: "Accept invitation",
     },
   },
@@ -588,10 +633,15 @@ export function maskVars<V extends object>(v: V): { masked: V; unmask: (s: strin
 const okHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
 const okFont = (f: string | null | undefined): f is string => typeof f === "string" && /^[A-Za-z0-9][A-Za-z0-9 ]{0,59}$/.test(f);
 
-export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
+export function render(
+  kind: TemplateKind | AgreementTemplateKind | OrgNoticeKind,
+  localeIn: string | null | undefined,
+  v: TemplateVars,
+  brand: MailBranding = {},
+) {
   const color = okHex(brand.primaryColor) ? brand.primaryColor : null;
   const accent = okHex(brand.secondaryColor) ? brand.secondaryColor : "#2ec4b6";
-  const btn = okHex(brand.buttonColor) ? brand.buttonColor : color ?? "#0f7c7c";
+  const btn = okHex(brand.buttonColor) ? brand.buttonColor : (color ?? "#0f7c7c");
   // Sin color de texto propio, blanco u oscuro según el fondo del botón (blanco fijo no se leía sobre uno claro).
   const btnText = okHex(brand.buttonTextColor) ? brand.buttonTextColor : contrastText(btn);
   const headBg = color ?? "#0b1f3a";
@@ -607,7 +657,13 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
   // La marca blanca se aplica a la plantilla con los valores enmascarados; después se ponen los valores reales.
   const mv = maskVars(v);
   // finalize_failed: la explicación estándar del fallo (sin el saludo), para {{reason}} en una plantilla propia.
-  const finalizeDetail = kind === "finalize_failed" ? t.lines(mv.masked).slice(1).map((l) => mv.unmask(B(l))) : [];
+  const finalizeDetail =
+    kind === "finalize_failed"
+      ? t
+          .lines(mv.masked)
+          .slice(1)
+          .map((l) => mv.unmask(B(l)))
+      : [];
   const vars: Record<string, string> = {
     recipientName: v.recipientName,
     senderName: v.senderName,
@@ -626,7 +682,10 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
   // {{message}} con o sin espacios (fillTemplate acepta los dos): si la plantilla lo incluye, no se repite el mensaje.
   const tplHasMessage = Boolean(tpl?.body && /\{\{\s*message\s*\}\}/.test(tpl.body));
   const subject = tpl?.subject?.trim()
-    ? mvars.unmask(B(fillTemplate(tpl.subject, mvars.masked))).replace(/[\r\n]+/g, " ").trim()
+    ? mvars
+        .unmask(B(fillTemplate(tpl.subject, mvars.masked)))
+        .replace(/[\r\n]+/g, " ")
+        .trim()
     : mv.unmask(B(t.subject(mv.masked)));
   const lines = (
     tpl?.body?.trim()
@@ -638,7 +697,7 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
   // Plantilla propia de finalize_failed sin {{reason}} ni {{code}} y un documento que no se puede sellar: se agrega la
   // explicación estándar (reintentar no lo resuelve; sin esto, el aviso no decía qué hacer).
   if (tpl?.body?.trim() && v.unsealableCode && finalizeDetail.length && !/\{\{\s*(reason|code)\s*\}\}/.test(tpl.body)) lines.push(...finalizeDetail);
-  const cta = tpl?.cta?.trim() ? tpl.cta.trim() : t.cta ?? null;
+  const cta = tpl?.cta?.trim() ? tpl.cta.trim() : (t.cta ?? null);
   const footer = brand.hidePoweredBy ? null : B(FOOTER[locale]);
   const text = [
     ...lines,
@@ -650,17 +709,18 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
     .filter(Boolean)
     .join("\n");
   const headerName = brand.brandName || v.organizationName;
-  const fontLink = brand.fontCssUrl && /^https:\/\/fonts\.googleapis\.com\//.test(brand.fontCssUrl) ? `<link rel="stylesheet" href="${esc(brand.fontCssUrl)}">` : "";
+  const fontLink =
+    brand.fontCssUrl && /^https:\/\/fonts\.googleapis\.com\//.test(brand.fontCssUrl) ? `<link rel="stylesheet" href="${esc(brand.fontCssUrl)}">` : "";
   const html = `<!doctype html><html><head><meta charset="utf-8">${fontLink}</head><body style="margin:0;background:${bg};font-family:${font};color:${ink}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 12px">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:${Math.max(radius, 4)}px;overflow:hidden">
 ${
-    brand.logoUrl
-      ? `<tr><td style="background:#ffffff;padding:18px 28px;border-top:5px solid ${color ?? "#0b1f3a"};border-bottom:1px solid #e5e9f0"><img src="${esc(brand.logoUrl)}" alt="${esc(headerName)}" style="max-height:44px;max-width:220px;display:block"></td></tr>`
-      : color || brand.productName || brand.hidePoweredBy || brand.brandName
-        ? `<tr><td style="background:${headBg};padding:18px 28px;color:${headText};font-size:18px;font-weight:bold">${esc(headerName || brand.productName || "")}</td></tr>`
-        : `<tr><td style="background:#0b1f3a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">Cala<span style="color:#2ec4b6">Sign</span></td></tr>`
-  }
+  brand.logoUrl
+    ? `<tr><td style="background:#ffffff;padding:18px 28px;border-top:5px solid ${color ?? "#0b1f3a"};border-bottom:1px solid #e5e9f0"><img src="${esc(brand.logoUrl)}" alt="${esc(headerName)}" style="max-height:44px;max-width:220px;display:block"></td></tr>`
+    : color || brand.productName || brand.hidePoweredBy || brand.brandName
+      ? `<tr><td style="background:${headBg};padding:18px 28px;color:${headText};font-size:18px;font-weight:bold">${esc(headerName || brand.productName || "")}</td></tr>`
+      : `<tr><td style="background:#0b1f3a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">Cala<span style="color:#2ec4b6">Sign</span></td></tr>`
+}
 <tr><td style="padding:28px">
 <p style="margin:0 0 6px;font-size:13px;color:#5b6576">${esc(v.organizationName)}</p>
 <h1 style="margin:0 0 18px;font-size:20px">${esc(v.subject)}</h1>
@@ -669,10 +729,10 @@ ${v.message && !tplHasMessage ? `<div style="margin:16px 0;padding:12px 14px;bac
 ${v.link && cta ? `<p style="margin:24px 0"><a href="${esc(v.link)}" style="background:${btn};color:${btnText};text-decoration:none;padding:12px 22px;border-radius:${radius}px;font-weight:bold;display:inline-block">${esc(cta)}</a></p><p style="font-size:12px;color:#5b6576;word-break:break-all">${esc(v.link)}</p>` : ""}
 </td></tr>
 ${
-    brand.footer || footer
-      ? `<tr><td style="padding:16px 28px;border-top:1px solid #e5e9f0;font-size:12px;color:#5b6576">${brand.footer ? `<p style="margin:0 0 8px;white-space:pre-wrap">${esc(brand.footer)}</p>` : ""}${footer ? esc(footer) : ""}</td></tr>`
-      : ""
-  }
+  brand.footer || footer
+    ? `<tr><td style="padding:16px 28px;border-top:1px solid #e5e9f0;font-size:12px;color:#5b6576">${brand.footer ? `<p style="margin:0 0 8px;white-space:pre-wrap">${esc(brand.footer)}</p>` : ""}${footer ? esc(footer) : ""}</td></tr>`
+    : ""
+}
 </table></td></tr></table></body></html>`;
   // platformFooter: el pie exacto que se agregó al texto (los canales que no lo muestran lo sacan solo si está).
   return { subject, text, html, cta, platformFooter: footer ? `\n— ${footer}` : null };

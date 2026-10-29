@@ -104,7 +104,10 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
     return await renewClaimed(d, envelopeId, tsaUrl, actor);
   } finally {
     await d.db
-      .query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1 AND archive_renewing_until = $2::timestamptz`, [envelopeId, claim[0].until])
+      .query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1 AND archive_renewing_until = $2::timestamptz`, [
+        envelopeId,
+        claim[0].until,
+      ])
       .catch(() => {});
   }
 }
@@ -128,54 +131,71 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
   }
   const sha = sha256Hex(r.pdf);
   const fileId = uuidv7();
-  const versionNo = Number((await d.db.one<any>(`SELECT COALESCE(max(version), 1) AS v FROM envelope_signed_versions WHERE envelope_id = $1`, [e.id]))?.v ?? 1) + 1;
+  const versionNo =
+    Number((await d.db.one<any>(`SELECT COALESCE(max(version), 1) AS v FROM envelope_signed_versions WHERE envelope_id = $1`, [e.id]))?.v ?? 1) + 1;
   const key = `tenants/${e.tenant_id}/envelopes/${e.id}/${fileId}-signed-v${versionNo}.pdf`;
   await d.blobs.put(key, r.pdf, "application/pdf");
   // Solo es una renovación de verdad si ya tenía DSS: completar un B-T (upgrade) usa la misma TSA y no es un problema.
   const upgrade = !prev.hasDss;
   const notExtended = !upgrade && new Date(next.last.tsaNotAfter) <= new Date(prev.last.tsaNotAfter);
   // Si el PDF cambió mientras tanto (otra renovación ganó) o la transacción falla, la versión subida no la referencia nada.
-  await discardBlobsOnFailure(d.blobs, [key], () => d.db.tx(async (t) => {
-    const cur = await t.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-    if (cur?.signed_file_id !== e.signed_file_id) throw conflict("archive_changed", "El PDF cambió mientras se renovaba; se reintenta en el próximo barrido");
-    // Como inspectArchive: un B-T (sin DSS) no tenía validez de archivo; su vencimiento no es el de la TSA.
-    await ensureFirstVersion(t, e, prev.hasDss && prev.last ? prev.last.tsaNotAfter : null);
-    // La renovación agrega revisiones al mismo PDF: el certificado (y su hash final) es el del archivo anterior.
-    await t.query(
-      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head)
+  await discardBlobsOnFailure(d.blobs, [key], () =>
+    d.db.tx(async (t) => {
+      const cur = await t.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      if (cur?.signed_file_id !== e.signed_file_id)
+        throw conflict("archive_changed", "El PDF cambió mientras se renovaba; se reintenta en el próximo barrido");
+      // Como inspectArchive: un B-T (sin DSS) no tenía validez de archivo; su vencimiento no es el de la TSA.
+      await ensureFirstVersion(t, e, prev.hasDss && prev.last ? prev.last.tsaNotAfter : null);
+      // La renovación agrega revisiones al mismo PDF: el certificado (y su hash final) es el del archivo anterior.
+      await t.query(
+        `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head)
        VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5,(SELECT chain_head FROM files WHERE id = $6))`,
-      [fileId, e.tenant_id, key, r.pdf.length, sha, e.signed_file_id],
-    );
-    await t.query(
-      `INSERT INTO envelope_signed_versions (id, tenant_id, envelope_id, file_id, version, reason, valid_until) VALUES ($1,$2,$3,$4,$5,'archive_renewal',$6)`,
-      [uuidv7(), e.tenant_id, e.id, fileId, versionNo, next.last!.tsaNotAfter],
-    );
-    await t.query(
-      `UPDATE envelopes SET signed_file_id = $2, archive_valid_until = $3, archive_checked_at = now(), archive_renewed_at = now(),
+        [fileId, e.tenant_id, key, r.pdf.length, sha, e.signed_file_id],
+      );
+      await t.query(
+        `INSERT INTO envelope_signed_versions (id, tenant_id, envelope_id, file_id, version, reason, valid_until) VALUES ($1,$2,$3,$4,$5,'archive_renewal',$6)`,
+        [uuidv7(), e.tenant_id, e.id, fileId, versionNo, next.last!.tsaNotAfter],
+      );
+      await t.query(
+        `UPDATE envelopes SET signed_file_id = $2, archive_valid_until = $3, archive_checked_at = now(), archive_renewed_at = now(),
          archive_renewals = archive_renewals + 1, archive_error = $4, updated_at = ${BUMP_UPDATED_AT} WHERE id = $1`,
-      [e.id, fileId, next.last!.tsaNotAfter, notExtended ? "La TSA actual vence igual o antes que la anterior: conviene renovar con otra TSA" : null],
-    );
-    // El repositorio de acuerdos y los enlaces de descarga vigentes pasan a la versión renovada (si no, seguían
-    // sirviendo la anterior, sin el sello nuevo, y mostrando otro hash que el sobre).
-    await t.query(`UPDATE agreements SET file_id = $3, updated_at = now() WHERE envelope_id = $1 AND file_id = $2`, [e.id, e.signed_file_id, fileId]);
-    await t.query(`UPDATE download_links SET file_id = $3 WHERE envelope_id = $1 AND file_id = $2 AND expires_at > now()`, [e.id, e.signed_file_id, fileId]);
-    await appendEvent(t, {
-      tenantId: e.tenant_id,
-      envelopeId: e.id,
-      type: "envelope.archive_renewed",
-      actor,
-      data: {
-        version: versionNo,
-        previousSha256: e.sha256,
-        signedSha256: sha,
-        tsa: next.last!.tsa,
-        validUntil: next.last!.tsaNotAfter,
-        previousValidUntil: upgrade ? null : prev.last!.tsaNotAfter,
-        ...(upgrade ? { upgrade: true } : {}),
-        dss: { certs: r.report.certs, ocsps: r.report.ocsps, crls: r.report.crls, missingRevocation: r.report.missingRevocation.length },
-      },
-    });
-  }));
+        [
+          e.id,
+          fileId,
+          next.last!.tsaNotAfter,
+          notExtended ? "La TSA actual vence igual o antes que la anterior: conviene renovar con otra TSA" : null,
+        ],
+      );
+      // El repositorio de acuerdos y los enlaces de descarga vigentes pasan a la versión renovada (si no, seguían
+      // sirviendo la anterior, sin el sello nuevo, y mostrando otro hash que el sobre).
+      await t.query(`UPDATE agreements SET file_id = $3, updated_at = now() WHERE envelope_id = $1 AND file_id = $2`, [
+        e.id,
+        e.signed_file_id,
+        fileId,
+      ]);
+      await t.query(`UPDATE download_links SET file_id = $3 WHERE envelope_id = $1 AND file_id = $2 AND expires_at > now()`, [
+        e.id,
+        e.signed_file_id,
+        fileId,
+      ]);
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "envelope.archive_renewed",
+        actor,
+        data: {
+          version: versionNo,
+          previousSha256: e.sha256,
+          signedSha256: sha,
+          tsa: next.last!.tsa,
+          validUntil: next.last!.tsaNotAfter,
+          previousValidUntil: upgrade ? null : prev.last!.tsaNotAfter,
+          ...(upgrade ? { upgrade: true } : {}),
+          dss: { certs: r.report.certs, ocsps: r.report.ocsps, crls: r.report.crls, missingRevocation: r.report.missingRevocation.length },
+        },
+      });
+    }),
+  );
   d.log.info({ envelopeId: e.id, version: versionNo, sha256: sha }, "sello de archivo renovado");
   return { version: versionNo, sha256: sha, validUntil: next.last.tsaNotAfter };
 }
@@ -261,7 +281,10 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
       if (err instanceof AppError && (err.code === "archive_renewal_in_progress" || err.code === "archive_changed")) continue;
       // Queda a la vista y se reintenta una vez por día (la consulta de pendientes toma los que tienen error).
       failed++;
-      await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, `${LTV_PENDING}: ${String(err)}`.slice(0, 500)]);
+      await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [
+        p.id,
+        `${LTV_PENDING}: ${String(err)}`.slice(0, 500),
+      ]);
       break;
     }
   }
@@ -319,7 +342,10 @@ export const TSA_CANNOT_EXTEND =
  * certificado de TSA (tenant_alerts), aviso a propietarios y administradores. Para la plataforma queda en el log.
  */
 async function reportTsaCannotExtend(d: Deps, stuck: { id: string; tenant_id: string; archive_valid_until: string }[], tsaNotAfter: string) {
-  await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = ANY($1::uuid[])`, [stuck.map((e) => e.id), TSA_CANNOT_EXTEND]);
+  await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = ANY($1::uuid[])`, [
+    stuck.map((e) => e.id),
+    TSA_CANNOT_EXTEND,
+  ]);
   const byTenant = new Map<string, { n: number; first: string }>();
   for (const e of stuck) {
     const cur = byTenant.get(e.tenant_id);
@@ -333,9 +359,14 @@ async function reportTsaCannotExtend(d: Deps, stuck: { id: string; tenant_id: st
     try {
       if (!(await claimTenantAlert(d.db, tenantId, "archive_tsa_cannot_extend", key))) continue;
       claimed = true;
-      d.log.error({ tenantId, tsaNotAfter: key, envelopes: info.n }, "sello de archivo: la TSA configurada no puede extender la validez; configurar otra TSA (TSA_URL)");
+      d.log.error(
+        { tenantId, tsaNotAfter: key, envelopes: info.n },
+        "sello de archivo: la TSA configurada no puede extender la validez; configurar otra TSA (TSA_URL)",
+      );
       const date = info.first.slice(0, 10);
-      const r = await alertTenantAdmins(d.db, tenantId, "archive_tsa_cannot_extend", (L, c) => TSA_ALERT[L](c.product, c.name, c.org, date), { log: d.log });
+      const r = await alertTenantAdmins(d.db, tenantId, "archive_tsa_cannot_extend", (L, c) => TSA_ALERT[L](c.product, c.name, c.org, date), {
+        log: d.log,
+      });
       // No salió ninguno por una falla del momento (SMTP caído): se suelta el reclamo para reintentar en el próximo
       // barrido. Si no, el aviso no se mandaba nunca.
       if (r.sent === 0 && r.transient.length) throw new Error(`aviso no entregado (se reintenta): ${r.transient.join("; ")}`);
@@ -375,7 +406,9 @@ const TSA_ALERT: Record<AlertLocale, (p: string, name: string, org: string | nul
 };
 
 export async function archiveInfo(db: Db, envelopeId: string): Promise<ArchiveInfo> {
-  const e = await db.one<any>(`SELECT archive_valid_until, archive_checked_at, archive_renewals, archive_error FROM envelopes WHERE id = $1`, [envelopeId]);
+  const e = await db.one<any>(`SELECT archive_valid_until, archive_checked_at, archive_renewals, archive_error FROM envelopes WHERE id = $1`, [
+    envelopeId,
+  ]);
   const versions = await db.query<any>(
     `SELECT v.version, v.reason, v.valid_until, v.created_at, f.sha256 FROM envelope_signed_versions v JOIN files f ON f.id = v.file_id
      WHERE v.envelope_id = $1 ORDER BY v.version`,
@@ -387,7 +420,13 @@ export async function archiveInfo(db: Db, envelopeId: string): Promise<ArchiveIn
     renewals: Number(e?.archive_renewals ?? 0),
     error: e?.archive_error ?? null,
     errorCode: e?.archive_error === TSA_CANNOT_EXTEND ? "tsa_cannot_extend" : null,
-    versions: versions.map((v) => ({ version: v.version, reason: v.reason, sha256: v.sha256, validUntil: iso(v.valid_until), createdAt: iso(v.created_at)! })),
+    versions: versions.map((v) => ({
+      version: v.version,
+      reason: v.reason,
+      sha256: v.sha256,
+      validUntil: iso(v.valid_until),
+      createdAt: iso(v.created_at)!,
+    })),
   };
 }
 
@@ -410,71 +449,100 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
     return archiveInfo(s.db, e.id);
   });
 
-  app.post<{ Params: { id: string } }>("/v1/envelopes/:id/archive/renew", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
-    let e = await s.db.one<any>(
-      `SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1 AND tenant_id = $2`,
-      [req.params.id, req.auth!.tenantId],
-    );
-    if (!e) throw notFound("Sobre");
-    // Cada renovación pide un sello de tiempo (con costo) y guarda otro PDF, más grande, que no se borra: con tope.
-    if (Number(e.archive_renewals ?? 0) >= MAX_RENEWALS) {
-      throw new AppError(409, "archive_renewal_limit", `El sobre llegó al máximo de ${MAX_RENEWALS} renovaciones del sello de archivo`);
-    }
-    // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir. Si falla el
-    // almacenamiento (BYOK o disco/S3 caídos, p. ej. 503) se propaga: tragarlo terminaba en un 409
-    // archive_not_applicable engañoso. Si lo que falla es el análisis del PDF ya leído (archiveTimestampInfo: PDF
-    // ilegible), no hay sello de archivo que renovar: queda registrado como en el GET y responde 409
-    // archive_not_applicable (no un 500).
-    if (e.status === "completed" && !e.archive_checked_at) {
-      try {
-        await inspectArchive(deps(), e.id);
-      } catch (err) {
-        if (!(err instanceof ArchiveParseError)) throw err;
-        await s.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [e.id, String(err).slice(0, 500)]);
-        req.log.warn({ err: String(err).slice(0, 300), envelopeId: e.id }, "no se pudo analizar el PDF para renovar el sello de archivo");
-        throw new AppError(409, "archive_not_applicable", "No se pudo leer el PDF firmado para calcular su sello de archivo: no hay sello de archivo que renovar");
+  app.post<{ Params: { id: string } }>(
+    "/v1/envelopes/:id/archive/renew",
+    { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (req) => {
+      let e = await s.db.one<any>(
+        `SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1 AND tenant_id = $2`,
+        [req.params.id, req.auth!.tenantId],
+      );
+      if (!e) throw notFound("Sobre");
+      // Cada renovación pide un sello de tiempo (con costo) y guarda otro PDF, más grande, que no se borra: con tope.
+      if (Number(e.archive_renewals ?? 0) >= MAX_RENEWALS) {
+        throw new AppError(409, "archive_renewal_limit", `El sobre llegó al máximo de ${MAX_RENEWALS} renovaciones del sello de archivo`);
       }
-      e = await s.db.one<any>(`SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1`, [e.id]);
-    }
-    // Qué se puede pedir a mano (decisión, docs/EVIDENCIA.md §2):
-    //  - un archivo (PDF con DSS: B-LT/B-LTA) que vence dentro de la ventana de renovación: es justamente un pedido de
-    //    archivo y se renueva con B-LTA aunque hoy la organización use otro nivel (el PDF ya era de archivo);
-    //  - un "LTV pendiente" (B-T que tenía que quedar B-LT/B-LTA), solo si el nivel vigente de la organización lo sigue
-    //    pidiendo: con B-B/B-T no se fuerza B-LTA sobre un PDF que la organización decidió no archivar.
-    // Lo demás es 409: antes cualquier pedido agregaba un sello (con costo) aunque faltaran años para el vencimiento.
-    const ltvPending = !e.archive_valid_until && typeof e.archive_error === "string" && e.archive_error.startsWith(LTV_PENDING);
-    if (ltvPending) {
-      const level = await resolveSealLevel(s.db, req.auth!.tenantId);
-      if (level !== "B-LT" && level !== "B-LTA") {
-        throw new AppError(409, "archive_not_applicable", `La organización usa el nivel ${level}: el PDF no se completa a un sello de archivo (B-LTA)`);
+      // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir. Si falla el
+      // almacenamiento (BYOK o disco/S3 caídos, p. ej. 503) se propaga: tragarlo terminaba en un 409
+      // archive_not_applicable engañoso. Si lo que falla es el análisis del PDF ya leído (archiveTimestampInfo: PDF
+      // ilegible), no hay sello de archivo que renovar: queda registrado como en el GET y responde 409
+      // archive_not_applicable (no un 500).
+      if (e.status === "completed" && !e.archive_checked_at) {
+        try {
+          await inspectArchive(deps(), e.id);
+        } catch (err) {
+          if (!(err instanceof ArchiveParseError)) throw err;
+          await s.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [e.id, String(err).slice(0, 500)]);
+          req.log.warn({ err: String(err).slice(0, 300), envelopeId: e.id }, "no se pudo analizar el PDF para renovar el sello de archivo");
+          throw new AppError(
+            409,
+            "archive_not_applicable",
+            "No se pudo leer el PDF firmado para calcular su sello de archivo: no hay sello de archivo que renovar",
+          );
+        }
+        e = await s.db.one<any>(
+          `SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1`,
+          [e.id],
+        );
       }
-    } else if (!e.archive_valid_until) {
-      throw new AppError(409, "archive_not_applicable", "El PDF no tiene datos de validación a largo plazo (B-LT/B-LTA): no hay sello de archivo que renovar");
-    } else if (new Date(e.archive_valid_until).getTime() > Date.now() + archiveConfig().days * 86_400_000) {
-      throw new AppError(409, "archive_not_due", "El sello de archivo todavía no está por vencer: se renueva solo cuando se acerca su vencimiento", {
-        validUntil: iso(e.archive_valid_until),
-      });
-    } else {
-      // Como el barrido: si el último sello ya es del certificado que la TSA usa hoy (o de uno que vence después), un
-      // sello nuevo no extiende la validez y solo cuesta un sello y otro PDF.
-      const tsaNotAfter = config.seal.tsaUrl ? await currentTsaNotAfter(config.seal.tsaUrl) : null;
-      if (tsaNotAfter && new Date(e.archive_valid_until).getTime() >= new Date(tsaNotAfter).getTime()) {
-        throw new AppError(409, "archive_not_due", "Renovar ahora no extendería la validez: el sello de archivo ya es del certificado vigente de la autoridad de sellado de tiempo", {
-          validUntil: iso(e.archive_valid_until),
-          tsaNotAfter: iso(tsaNotAfter),
-        });
+      // Qué se puede pedir a mano (decisión, docs/EVIDENCIA.md §2):
+      //  - un archivo (PDF con DSS: B-LT/B-LTA) que vence dentro de la ventana de renovación: es justamente un pedido de
+      //    archivo y se renueva con B-LTA aunque hoy la organización use otro nivel (el PDF ya era de archivo);
+      //  - un "LTV pendiente" (B-T que tenía que quedar B-LT/B-LTA), solo si el nivel vigente de la organización lo sigue
+      //    pidiendo: con B-B/B-T no se fuerza B-LTA sobre un PDF que la organización decidió no archivar.
+      // Lo demás es 409: antes cualquier pedido agregaba un sello (con costo) aunque faltaran años para el vencimiento.
+      const ltvPending = !e.archive_valid_until && typeof e.archive_error === "string" && e.archive_error.startsWith(LTV_PENDING);
+      if (ltvPending) {
+        const level = await resolveSealLevel(s.db, req.auth!.tenantId);
+        if (level !== "B-LT" && level !== "B-LTA") {
+          throw new AppError(
+            409,
+            "archive_not_applicable",
+            `La organización usa el nivel ${level}: el PDF no se completa a un sello de archivo (B-LTA)`,
+          );
+        }
+      } else if (!e.archive_valid_until) {
+        throw new AppError(
+          409,
+          "archive_not_applicable",
+          "El PDF no tiene datos de validación a largo plazo (B-LT/B-LTA): no hay sello de archivo que renovar",
+        );
+      } else if (new Date(e.archive_valid_until).getTime() > Date.now() + archiveConfig().days * 86_400_000) {
+        throw new AppError(
+          409,
+          "archive_not_due",
+          "El sello de archivo todavía no está por vencer: se renueva solo cuando se acerca su vencimiento",
+          {
+            validUntil: iso(e.archive_valid_until),
+          },
+        );
+      } else {
+        // Como el barrido: si el último sello ya es del certificado que la TSA usa hoy (o de uno que vence después), un
+        // sello nuevo no extiende la validez y solo cuesta un sello y otro PDF.
+        const tsaNotAfter = config.seal.tsaUrl ? await currentTsaNotAfter(config.seal.tsaUrl) : null;
+        if (tsaNotAfter && new Date(e.archive_valid_until).getTime() >= new Date(tsaNotAfter).getTime()) {
+          throw new AppError(
+            409,
+            "archive_not_due",
+            "Renovar ahora no extendería la validez: el sello de archivo ya es del certificado vigente de la autoridad de sellado de tiempo",
+            {
+              validUntil: iso(e.archive_valid_until),
+              tsaNotAfter: iso(tsaNotAfter),
+            },
+          );
+        }
       }
-    }
-    const recent = await s.db.one<any>(
-      `SELECT count(*)::int AS n FROM envelope_signed_versions WHERE envelope_id = $1 AND reason = 'archive_renewal' AND created_at > now() - interval '1 day'`,
-      [e.id],
-    );
-    if ((recent?.n ?? 0) >= MAX_RENEWALS_PER_DAY) {
-      throw new AppError(429, "archive_recently_renewed", "El sello de archivo de este sobre ya se renovó varias veces hoy");
-    }
-    await renewEnvelopeArchive(deps(), e.id, req.auth!.actor);
-    return archiveInfo(s.db, e.id);
-  });
+      const recent = await s.db.one<any>(
+        `SELECT count(*)::int AS n FROM envelope_signed_versions WHERE envelope_id = $1 AND reason = 'archive_renewal' AND created_at > now() - interval '1 day'`,
+        [e.id],
+      );
+      if ((recent?.n ?? 0) >= MAX_RENEWALS_PER_DAY) {
+        throw new AppError(429, "archive_recently_renewed", "El sello de archivo de este sobre ya se renovó varias veces hoy");
+      }
+      await renewEnvelopeArchive(deps(), e.id, req.auth!.actor);
+      return archiveInfo(s.db, e.id);
+    },
+  );
 
   if (config.environment === "local") {
     // Solo local: fuerza el barrido (pruebas automáticas).

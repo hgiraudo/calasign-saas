@@ -22,7 +22,16 @@ function idToken() {
   const enc = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
   const head = enc({ alg: "RS256", kid: "k1", typ: "JWT" });
-  const body = enc({ iss: ISSUER, aud: CLIENT_ID, sub: idp.email, email: idp.email, email_verified: true, nonce: idp.nonce, iat: now, exp: now + 300 });
+  const body = enc({
+    iss: ISSUER,
+    aud: CLIENT_ID,
+    sub: idp.email,
+    email: idp.email,
+    email_verified: true,
+    nonce: idp.nonce,
+    iat: now,
+    exp: now + 300,
+  });
   return `${head}.${body}.${cryptoSign("sha256", Buffer.from(`${head}.${body}`), privateKey).toString("base64url")}`;
 }
 
@@ -41,8 +50,8 @@ vi.mock("../src/modules/webhooks", async (importOriginal) => {
   };
 });
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -61,7 +70,11 @@ beforeAll(async () => {
   tenant = await newTenant();
   slug = (await db.one<any>(`SELECT slug FROM tenants WHERE id = $1`, [tenant]))!.slug;
   await db.query(`INSERT INTO sso_domains (domain, tenant_id, verification_token, verified_at) VALUES ('link.test', $1, 'tok', now())`, [tenant]);
-  await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim_test',$3)`, [util.uuidv7(), tenant, util.sha256Hex(SCIM)]);
+  await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim_test',$3)`, [
+    util.uuidv7(),
+    tenant,
+    util.sha256Hex(SCIM),
+  ]);
   await db.query(
     `INSERT INTO sso_configs (tenant_id, enabled, protocol, jit_enabled, jit_role, oidc_issuer, oidc_client_id, oidc_client_secret_enc)
      VALUES ($1, true, 'oidc', true, 'member', $2, $3, $4)`,
@@ -88,18 +101,18 @@ async function existingAccount(email: string) {
   await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1,$2,'Ana','scrypt$x')`, [id, email]);
   await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'owner')`, [own, id]);
   await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now(), totp_recovery_hashes = '{h}' WHERE id = $1`, [id]);
-  await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`, [
-    util.sha256Hex(util.randomToken()),
-    id,
-    own,
-  ]);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method) VALUES ($1,$2,$3, now() + interval '14 days', 'password')`,
+    [util.sha256Hex(util.randomToken()), id, own],
+  );
   return { id, own };
 }
 
 const totpOn = async (userId: string) => Boolean((await db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [userId]))!.totp_enabled_at);
 const sessionsIn = async (userId: string, tenantId: string) =>
   Number((await db.one<any>(`SELECT count(*)::int AS n FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, tenantId]))!.n);
-const membership = (userId: string) => db.one<any>(`SELECT role, password_allowed FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenant, userId]);
+const membership = (userId: string) =>
+  db.one<any>(`SELECT role, password_allowed FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenant, userId]);
 
 async function ssoLogin(email: string) {
   const start = await app.inject({ method: "GET", url: `/v1/auth/sso/start?org=${slug}` });
@@ -121,7 +134,10 @@ describe("vincular una cuenta existente no toca su 2FA ni sus sesiones", () => {
     expect(await totpOn(u.id)).toBe(true);
     expect(await sessionsIn(u.id, u.own)).toBe(1);
     expect(await sessionsIn(u.id, tenant)).toBe(1);
-    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'member.jit_provisioned' AND target_id = $2`, [tenant, u.id]);
+    const audit = await db.one<any>(
+      `SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'member.jit_provisioned' AND target_id = $2`,
+      [tenant, u.id],
+    );
     expect(audit.data).toEqual({ email: "jit@link.test", role: "member" });
     // Un segundo SSO sigue funcionando.
     expect((await ssoLogin("jit@link.test")).headers.location).toBe("/app");
@@ -134,7 +150,10 @@ describe("vincular una cuenta existente no toca su 2FA ni sus sesiones", () => {
     expect(await membership(u.id)).toMatchObject({ password_allowed: false });
     expect(await totpOn(u.id)).toBe(true);
     expect(await sessionsIn(u.id, u.own)).toBe(1);
-    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'member.scim_provisioned' AND target_id = $2`, [tenant, u.id]);
+    const audit = await db.one<any>(
+      `SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'member.scim_provisioned' AND target_id = $2`,
+      [tenant, u.id],
+    );
     expect(audit.data).toEqual({ email: "scim@link.test", active: true });
   });
 
@@ -163,9 +182,13 @@ describe("vincular una cuenta existente no toca su 2FA ni sus sesiones", () => {
 
   it("SCIM: borrar (DELETE) y volver a crear no borra la 2FA", async () => {
     const u = await existingAccount("re@link.test");
-    expect((await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "re@link.test" } })).statusCode).toBe(201);
+    expect(
+      (await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "re@link.test" } })).statusCode,
+    ).toBe(201);
     expect((await app.inject({ method: "DELETE", url: `/scim/v2/Users/${u.id}`, headers: scimHeaders })).statusCode).toBe(204);
-    expect((await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "re@link.test" } })).statusCode).toBe(201);
+    expect(
+      (await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "re@link.test" } })).statusCode,
+    ).toBe(201);
     expect(await totpOn(u.id)).toBe(true);
     expect(await sessionsIn(u.id, u.own)).toBe(1);
   });

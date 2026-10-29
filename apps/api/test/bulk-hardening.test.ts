@@ -27,7 +27,7 @@ vi.mock("../src/modules/templates", async (orig) => ({
   }),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let tenant: string;
 let user: string;
@@ -94,12 +94,27 @@ describe("CSV del envío masivo", () => {
   it("separador: el que más aparece en el encabezado (fuera de comillas)", async () => {
     const { parseCsv } = await import("../src/modules/bulk");
     // Líneas vacías al principio: se mira la primera con datos.
-    expect(parseCsv("\n\r\na;b;c\n1;2;3\n")).toEqual([["a", "b", "c"], ["1", "2", "3"]]);
+    expect(parseCsv("\n\r\na;b;c\n1;2;3\n")).toEqual([
+      ["a", "b", "c"],
+      ["1", "2", "3"],
+    ]);
     // Una comilla suelta en medio de un campo sin comillas no esconde los separadores que siguen.
-    expect(parseCsv('Pulg";a;b\n1;2;3\n')).toEqual([['Pulg"', "a", "b"], ["1", "2", "3"]]);
-    expect(parseCsv("a;b\tc\td\n1;2\t3\t4\n")).toEqual([["a;b", "c", "d"], ["1;2", "3", "4"]]);
-    expect(parseCsv('"x,y,z";b;c\n1;2;3\n')).toEqual([["x,y,z", "b", "c"], ["1", "2", "3"]]);
-    expect(parseCsv("a,b\n1,2\n")).toEqual([["a", "b"], ["1", "2"]]);
+    expect(parseCsv('Pulg";a;b\n1;2;3\n')).toEqual([
+      ['Pulg"', "a", "b"],
+      ["1", "2", "3"],
+    ]);
+    expect(parseCsv("a;b\tc\td\n1;2\t3\t4\n")).toEqual([
+      ["a;b", "c", "d"],
+      ["1;2", "3", "4"],
+    ]);
+    expect(parseCsv('"x,y,z";b;c\n1;2;3\n')).toEqual([
+      ["x,y,z", "b", "c"],
+      ["1", "2", "3"],
+    ]);
+    expect(parseCsv("a,b\n1,2\n")).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
   });
 
   it("corta la lectura al pasar el máximo de filas", async () => {
@@ -115,7 +130,8 @@ describe("CSV del envío masivo", () => {
 
   it("filas repetidas: mismos destinatarios y prellenado (sin importar mayúsculas del correo ni el orden)", async () => {
     const { duplicateRows } = await import("../src/modules/bulk");
-    const row = (email: string, plan: string) => ({ templateId: "t", recipients: [{ roleId: "r1", name: "Ana", email }], prefill: { Plan: plan }, send: true }) as any;
+    const row = (email: string, plan: string) =>
+      ({ templateId: "t", recipients: [{ roleId: "r1", name: "Ana", email }], prefill: { Plan: plan }, send: true }) as any;
     expect(
       duplicateRows([
         { row: 1, input: row("ana@x.com", "Oro") },
@@ -137,7 +153,9 @@ describe("worker del envío masivo", () => {
     const { bulk, items } = await bulkWith(3);
     calls = 0;
     behavior.fail = (n) => (n === 2 ? netError() : null);
-    await expect(handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 1, maxAttempts: 8 })).rejects.toThrow("connection reset");
+    await expect(handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 1, maxAttempts: 8 })).rejects.toThrow(
+      "connection reset",
+    );
     expect(await statuses(bulk)).toEqual(["sent", "pending", "pending"]);
     expect(await bulkStatus(bulk)).toBe("running");
     behavior.fail = () => null;
@@ -185,7 +203,9 @@ describe("worker del envío masivo", () => {
     await db.query(`UPDATE bulk_send_items SET retry_round = 1 WHERE id = $1`, [items[2]]);
     behavior.load = () => netError();
     try {
-      await expect(handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 8, maxAttempts: 8 })).rejects.toThrow("connection reset");
+      await expect(
+        handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 8, maxAttempts: 8 }),
+      ).rejects.toThrow("connection reset");
     } finally {
       behavior.load = () => null;
     }
@@ -207,7 +227,11 @@ describe("worker del envío masivo", () => {
     const { bulk, items } = await bulkWith(5);
     calls = 0;
     behavior.fail = (n) =>
-      n === 1 ? new AppError(400, "invalid_prefill", "valor inválido") : n === 3 ? new AppError(402, "plan_limit", "Llegaste al límite de sobres") : null;
+      n === 1
+        ? new AppError(400, "invalid_prefill", "valor inválido")
+        : n === 3
+          ? new AppError(402, "plan_limit", "Llegaste al límite de sobres")
+          : null;
     await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items.slice(0, 4) });
     // La fila 5 (de otro job del mismo envío) también queda fallida: el cupo está agotado.
     expect(await statuses(bulk)).toEqual(["failed", "sent", "failed", "failed", "failed"]);
@@ -239,7 +263,11 @@ describe("POST /v1/bulk-sends/:id/retry-failed", () => {
     const { buildApp } = await import("../src/app");
     const { sha256Hex, uuidv7 } = await import("../src/lib/util");
     const KEY = "cs_test_bulk_retry_key";
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+      uuidv7(),
+      tenant,
+      sha256Hex(KEY),
+    ]);
     const app = await buildApp({ db, blobs: createBlobStore(), logger: false });
     await app.ready();
     const headers = { authorization: `Bearer ${KEY}` };
@@ -254,18 +282,26 @@ describe("POST /v1/bulk-sends/:id/retry-failed", () => {
       await db.query(`UPDATE bulk_sends SET status = 'completed' WHERE id = $1`, [perm.bulk]);
       await db.query(`UPDATE bulk_send_items SET status = 'failed', error = 'x', retryable = false WHERE bulk_send_id = $1`, [perm.bulk]);
       expect((await app.inject({ method: "GET", url: `/v1/bulk-sends/${perm.bulk}`, headers })).json()).toMatchObject({ failed: 1, retryable: 0 });
-      expect((await app.inject({ method: "POST", url: `/v1/bulk-sends/${perm.bulk}/retry-failed`, headers })).json().error.code).toBe("nothing_to_retry");
+      expect((await app.inject({ method: "POST", url: `/v1/bulk-sends/${perm.bulk}/retry-failed`, headers })).json().error.code).toBe(
+        "nothing_to_retry",
+      );
 
       // Business: 1000 sobres por mes; con 999 enviados no entran las 2 filas.
       await db.query(`UPDATE tenants SET billing_plan = 'business' WHERE id = $1`, [tenant]);
-      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at) SELECT gen_random_uuid(), $1, 'x', 'sent', now() FROM generate_series(1, 999)`, [tenant]);
+      await db.query(
+        `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at) SELECT gen_random_uuid(), $1, 'x', 'sent', now() FROM generate_series(1, 999)`,
+        [tenant],
+      );
       const over = await app.inject({ method: "POST", url: `/v1/bulk-sends/${bulk}/retry-failed`, headers });
       expect(over.statusCode).toBe(402);
       expect(over.json().error.code).toBe("plan_limit");
       await db.query(`DELETE FROM envelopes WHERE tenant_id = $1 AND subject = 'x'`, [tenant]);
 
       // Las filas pendientes de otro envío en curso también ocupan el cupo: 998 enviados + 1 pendiente → queda 1.
-      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at) SELECT gen_random_uuid(), $1, 'x', 'sent', now() FROM generate_series(1, 998)`, [tenant]);
+      await db.query(
+        `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at) SELECT gen_random_uuid(), $1, 'x', 'sent', now() FROM generate_series(1, 998)`,
+        [tenant],
+      );
       const other = await bulkWith(1);
       expect((await app.inject({ method: "POST", url: `/v1/bulk-sends/${bulk}/retry-failed`, headers })).statusCode).toBe(402);
       await db.query(`UPDATE bulk_sends SET status = 'completed' WHERE id = $1`, [other.bulk]);

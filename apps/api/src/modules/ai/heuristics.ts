@@ -14,12 +14,7 @@ export interface DocText {
 // ───────────────────────────── Normalización ─────────────────────────────
 
 export function norm(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 // ───────────────────────────── Detección de campos ─────────────────────────────
@@ -80,7 +75,12 @@ export function heuristicFieldSuggestions(doc: DocText): RawSuggestion[] {
           lineId: line.id,
           type: k.type,
           roleHint: roleFromLine(labelText),
-          label: labelText.replace(BLANK, "").replace(/[:\s]+$/, "").trim().slice(0, 80) || null,
+          label:
+            labelText
+              .replace(BLANK, "")
+              .replace(/[:\s]+$/, "")
+              .trim()
+              .slice(0, 80) || null,
           confidence: hasBlank ? 0.8 : 0.55,
           source: "heuristic",
         });
@@ -175,7 +175,8 @@ export function docsToText(docs: DocText[], opts: { lineIds?: boolean } = {}): s
         d.pages
           .map(
             (p) =>
-              `[Página ${p.page + 1}]\n` + p.lines.map((l) => (opts.lineIds ? `[${docLineId(di, l.id)}] ${escapeTags(l.text)}` : escapeTags(l.text))).join("\n"),
+              `[Página ${p.page + 1}]\n` +
+              p.lines.map((l) => (opts.lineIds ? `[${docLineId(di, l.id)}] ${escapeTags(l.text)}` : escapeTags(l.text))).join("\n"),
           )
           .join("\n\n") +
         `\n</documento>`,
@@ -217,7 +218,9 @@ export const QUOTE_SHORT_MIN_CHARS = 6;
  * (no dentro de otro número o palabra). Sin página rige el mínimo de largo.
  */
 export function locateQuote(docs: DocText[], quote: string, page?: number | null): { documentId: string | null; page: number; verified: boolean } {
-  const q = norm(quote).replace(/["“”«»]/g, "").trim();
+  const q = norm(quote)
+    .replace(/["“”«»]/g, "")
+    .trim();
   const fallback = { documentId: null, page: page ?? 1, verified: false };
   const wordCount = q.split(" ").filter(Boolean).length;
   const cited = typeof page === "number" && Number.isInteger(page) && page >= 1 ? page : null;
@@ -257,7 +260,9 @@ function words(s: string): string[] {
 export function mockSummary(docs: DocText[]) {
   const lines = flatten(docs).filter((l) => l.text.length > 25);
   const picked = lines.slice(0, 4);
-  const keyLines = flatten(docs).filter((l) => /\d/.test(l.text) && l.text.length > 10 && !BLANK.test(l.text)).slice(0, 5);
+  const keyLines = flatten(docs)
+    .filter((l) => /\d/.test(l.text) && l.text.length > 10 && !BLANK.test(l.text))
+    .slice(0, 5);
   const summary =
     picked.length > 0
       ? `Este documento (${docs.map((d) => d.name).join(", ")}) trata sobre: ${picked.map((l) => l.text.replace(/\.$/, "")).join(". ")}.`
@@ -315,9 +320,41 @@ export function parseAmount(raw: string): number | null {
 }
 
 const MONTHS: Record<string, number> = {
-  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
-  janeiro: 1, fevereiro: 2, marco: 3, maio: 5, junho: 6, julho: 7, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
-  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+  enero: 1,
+  febrero: 2,
+  marzo: 3,
+  abril: 4,
+  mayo: 5,
+  junio: 6,
+  julio: 7,
+  agosto: 8,
+  septiembre: 9,
+  setiembre: 9,
+  octubre: 10,
+  noviembre: 11,
+  diciembre: 12,
+  janeiro: 1,
+  fevereiro: 2,
+  marco: 3,
+  maio: 5,
+  junho: 6,
+  julho: 7,
+  setembro: 9,
+  outubro: 10,
+  novembro: 11,
+  dezembro: 12,
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12,
 };
 
 /** Fechas dd/mm/aaaa, aaaa-mm-dd o "15 de marzo de 2027" → ISO, con su posición en el texto normalizado. */
@@ -356,13 +393,20 @@ export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; con
   const parties: ContractMetadata["parties"] = [];
   for (const l of lines) {
     const m = /^(?:el|la|o|a|the)?\s*([a-z ]{3,30}?)\s*:\s*(.{3,120})$/i.exec(l.text);
-    if (m && /(cliente|proveedor|contratante|contratista|locador|locatario|arrendador|arrendatario|vendedor|comprador|empleador|trabajador|prestador|client|supplier|contratada|empresa)/i.test(m[1])) {
+    if (
+      m &&
+      /(cliente|proveedor|contratante|contratista|locador|locatario|arrendador|arrendatario|vendedor|comprador|empleador|trabajador|prestador|client|supplier|contratada|empresa)/i.test(
+        m[1],
+      )
+    ) {
       const name = m[2].replace(/[,;].*$/, "").trim();
       if (name && !BLANK.test(name)) parties.push({ name, role: norm(m[1]) });
     }
   }
   if (parties.length === 0) {
-    const m = /\bentre\s+(.{3,80}?)(?:,|\s+con\b|\s+en adelante\b).{0,200}?\by\s+(.{3,80}?)(?:,|\s+con\b|\s+en adelante\b)/i.exec(all.replace(/\n/g, " "));
+    const m = /\bentre\s+(.{3,80}?)(?:,|\s+con\b|\s+en adelante\b).{0,200}?\by\s+(.{3,80}?)(?:,|\s+con\b|\s+en adelante\b)/i.exec(
+      all.replace(/\n/g, " "),
+    );
     if (m) parties.push({ name: m[1].trim(), role: null }, { name: m[2].trim(), role: null });
   }
   if (parties.length) confidence.parties = 0.6;
@@ -395,7 +439,9 @@ export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; con
 
   const amounts: ContractMetadata["amounts"] = [];
   for (const l of lines) {
-    for (const m of l.text.matchAll(/((?:US\$|U\$S|R\$|RD\$|S\/|\$|€|L\.|\b(?:USD|COP|BRL|DOP|HNL|PEN|EUR)\b)\s?[\d.,]*\d|[\d.,]*\d\s?(?:USD|COP|BRL|DOP|HNL|PEN|EUR|d[oó]lares|reais|lempiras|soles|euros))/gi)) {
+    for (const m of l.text.matchAll(
+      /((?:US\$|U\$S|R\$|RD\$|S\/|\$|€|L\.|\b(?:USD|COP|BRL|DOP|HNL|PEN|EUR)\b)\s?[\d.,]*\d|[\d.,]*\d\s?(?:USD|COP|BRL|DOP|HNL|PEN|EUR|d[oó]lares|reais|lempiras|soles|euros))/gi,
+    )) {
       const value = parseAmount(m[1]);
       if (value === null || value === 0) continue;
       const cur = CURRENCIES.find(([re]) => re.test(m[1]) || re.test(l.text));
@@ -405,16 +451,30 @@ export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; con
   if (amounts.length) confidence.amounts = 0.6;
 
   const law =
-    /(?:leyes de|legislacion de|ley aplicable[: ]+|jurisdiccion de los tribunales de|tribunales de|jurisdiccion de|foro da comarca de|leis da|laws of)\s+(?:la\s+|el\s+|the\s+)?([a-z ,]{3,60}?)(?:[.;,\n]|$)/.exec(n);
+    /(?:leyes de|legislacion de|ley aplicable[: ]+|jurisdiccion de los tribunales de|tribunales de|jurisdiccion de|foro da comarca de|leis da|laws of)\s+(?:la\s+|el\s+|the\s+)?([a-z ,]{3,60}?)(?:[.;,\n]|$)/.exec(
+      n,
+    );
   const governingLaw = law ? titleCase(law[1].trim()) : null;
   if (governingLaw) confidence.governingLaw = 0.55;
 
-  const notice = /(\d{1,3})\s*(?:\([a-z ]+\)\s*)?dias?\s+(?:habiles\s+|corridos\s+|naturales\s+)?(?:de\s+)?(?:anticipacion|preaviso|antecedencia|aviso previo|notice)/.exec(n) ?? /notice period of (\d{1,3}) days/.exec(n);
+  const notice =
+    /(\d{1,3})\s*(?:\([a-z ]+\)\s*)?dias?\s+(?:habiles\s+|corridos\s+|naturales\s+)?(?:de\s+)?(?:anticipacion|preaviso|antecedencia|aviso previo|notice)/.exec(
+      n,
+    ) ?? /notice period of (\d{1,3}) days/.exec(n);
   const noticePeriodDays = notice ? Number(notice[1]) : null;
   if (noticePeriodDays !== null) confidence.noticePeriodDays = 0.65;
 
   return {
-    metadata: { parties: parties.slice(0, 10), effectiveDate, expiryDate, renewalDate, autoRenewal, amounts: amounts.slice(0, 10), governingLaw, noticePeriodDays },
+    metadata: {
+      parties: parties.slice(0, 10),
+      effectiveDate,
+      expiryDate,
+      renewalDate,
+      autoRenewal,
+      amounts: amounts.slice(0, 10),
+      governingLaw,
+      noticePeriodDays,
+    },
     confidence,
   };
 }
@@ -436,15 +496,36 @@ export function mockPlaybookReview(docs: DocText[], rules: string[]) {
     const topicWords = words(topicText);
     const hits = lines.filter((l) => topicWords.length > 0 && topicWords.some((w) => l.n.includes(stem(w))));
     if (hits.length === 0) {
-      return { rule, status: "not_found" as const, severity: "medium" as const, explanation: "No se encontró una cláusula sobre este tema.", page: null, quote: null };
+      return {
+        rule,
+        status: "not_found" as const,
+        severity: "medium" as const,
+        explanation: "No se encontró una cláusula sobre este tema.",
+        page: null,
+        quote: null,
+      };
     }
     const first = hits[0];
     if (must) {
       const expected = norm(must[2]).replace(/[.]$/, "");
       const ok = hits.find((h) => h.n.includes(expected));
       return ok
-        ? { rule, status: "ok" as const, severity: "low" as const, explanation: `La cláusula cumple: menciona «${must[2]}».`, page: ok.page + 1, quote: ok.text }
-        : { rule, status: "violation" as const, severity: "high" as const, explanation: `La cláusula no menciona «${must[2]}».`, page: first.page + 1, quote: first.text };
+        ? {
+            rule,
+            status: "ok" as const,
+            severity: "low" as const,
+            explanation: `La cláusula cumple: menciona «${must[2]}».`,
+            page: ok.page + 1,
+            quote: ok.text,
+          }
+        : {
+            rule,
+            status: "violation" as const,
+            severity: "high" as const,
+            explanation: `La cláusula no menciona «${must[2]}».`,
+            page: first.page + 1,
+            quote: first.text,
+          };
     }
     if (limit) {
       const max = Number(limit[2]);
@@ -453,12 +534,33 @@ export function mockPlaybookReview(docs: DocText[], rules: string[]) {
         if (num) {
           const v = Number(num[1]);
           return v <= max
-            ? { rule, status: "ok" as const, severity: "low" as const, explanation: `El valor (${v} ${num[2]}) está dentro del límite (${max}).`, page: h.page + 1, quote: h.text }
-            : { rule, status: "violation" as const, severity: "high" as const, explanation: `El valor (${v} ${num[2]}) supera el límite (${max}).`, page: h.page + 1, quote: h.text };
+            ? {
+                rule,
+                status: "ok" as const,
+                severity: "low" as const,
+                explanation: `El valor (${v} ${num[2]}) está dentro del límite (${max}).`,
+                page: h.page + 1,
+                quote: h.text,
+              }
+            : {
+                rule,
+                status: "violation" as const,
+                severity: "high" as const,
+                explanation: `El valor (${v} ${num[2]}) supera el límite (${max}).`,
+                page: h.page + 1,
+                quote: h.text,
+              };
         }
       }
     }
-    return { rule, status: "not_found" as const, severity: "low" as const, explanation: "Hay una cláusula sobre el tema pero no se pudo evaluar automáticamente.", page: first.page + 1, quote: first.text };
+    return {
+      rule,
+      status: "not_found" as const,
+      severity: "low" as const,
+      explanation: "Hay una cláusula sobre el tema pero no se pudo evaluar automáticamente.",
+      page: first.page + 1,
+      quote: first.text,
+    };
   });
 }
 
@@ -471,10 +573,27 @@ function stem(w: string) {
  * número de regla (ruleIndex) y, si falta, por el texto exacto; una regla sin resultado queda not_found y los
  * resultados de reglas que no se enviaron (inventadas o repetidas) se ignoran.
  */
-export function pairPlaybookFindings<F extends { ruleIndex?: number | null; rule: string; status: "ok" | "violation" | "not_found"; severity: "low" | "medium" | "high"; explanation: string; page: number | null; quote: string | null }>(
+export function pairPlaybookFindings<
+  F extends {
+    ruleIndex?: number | null;
+    rule: string;
+    status: "ok" | "violation" | "not_found";
+    severity: "low" | "medium" | "high";
+    explanation: string;
+    page: number | null;
+    quote: string | null;
+  },
+>(
   rules: string[],
   raw: F[],
-): { rule: string; status: "ok" | "violation" | "not_found"; severity: "low" | "medium" | "high"; explanation: string; page: number | null; quote: string | null }[] {
+): {
+  rule: string;
+  status: "ok" | "violation" | "not_found";
+  severity: "low" | "medium" | "high";
+  explanation: string;
+  page: number | null;
+  quote: string | null;
+}[] {
   const used = new Set<number>();
   const take = (pred: (f: F) => boolean) => {
     const i = raw.findIndex((f, k) => !used.has(k) && pred(f));
@@ -483,8 +602,18 @@ export function pairPlaybookFindings<F extends { ruleIndex?: number | null; rule
     return raw[i];
   };
   return rules.map((rule, i) => {
-    const f = take((x) => x.ruleIndex === i + 1) ?? take((x) => (x.ruleIndex == null || x.ruleIndex < 1 || x.ruleIndex > rules.length) && norm(x.rule) === norm(rule));
-    if (!f) return { rule, status: "not_found" as const, severity: "medium" as const, explanation: "El modelo no devolvió un resultado para esta regla.", page: null, quote: null };
+    const f =
+      take((x) => x.ruleIndex === i + 1) ??
+      take((x) => (x.ruleIndex == null || x.ruleIndex < 1 || x.ruleIndex > rules.length) && norm(x.rule) === norm(rule));
+    if (!f)
+      return {
+        rule,
+        status: "not_found" as const,
+        severity: "medium" as const,
+        explanation: "El modelo no devolvió un resultado para esta regla.",
+        page: null,
+        quote: null,
+      };
     return { rule, status: f.status, severity: f.severity, explanation: f.explanation, page: f.page, quote: f.quote };
   });
 }

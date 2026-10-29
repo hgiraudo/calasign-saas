@@ -37,7 +37,8 @@ export async function api(path, o = {}) {
     });
   };
   // Sin token pero con la sesión guardada: la renovación falló por red o un 5xx (no se cerró la sesión).
-  const noToken = () => (currentTokens()?.refresh_token ? new ApiError(0, "network", "No se pudo renovar la sesión") : new ApiError(401, "unauthorized", "Sesión vencida"));
+  const noToken = () =>
+    currentTokens()?.refresh_token ? new ApiError(0, "network", "No se pudo renovar la sesión") : new ApiError(401, "unauthorized", "Sesión vencida");
   let token = await accessToken();
   if (!token) throw noToken();
   let res;
@@ -66,7 +67,8 @@ export async function api(path, o = {}) {
   } catch {
     body = null;
   }
-  if (!res.ok) throw new ApiError(res.status, body?.error?.code ?? `http_${res.status}`, body?.error?.message ?? `HTTP ${res.status}`, body?.error?.details);
+  if (!res.ok)
+    throw new ApiError(res.status, body?.error?.code ?? `http_${res.status}`, body?.error?.message ?? `HTTP ${res.status}`, body?.error?.details);
   return body;
 }
 

@@ -36,7 +36,13 @@ export function signerReturnKey(kind: ReturnKind, id: string, recipientId: strin
 }
 
 /** URL de vuelta que se le da al proveedor (en el dominio del sobre: ahí vive la cookie). */
-export function signerReturnUrl(base: string, kind: ReturnKind, id: string, recipient: { id: string; access_token_hash: string | null }, extra: Record<string, string> = {}) {
+export function signerReturnUrl(
+  base: string,
+  kind: ReturnKind,
+  id: string,
+  recipient: { id: string; access_token_hash: string | null },
+  extra: Record<string, string> = {},
+) {
   const q = new URLSearchParams({ ...extra, k: signerReturnKey(kind, id, recipient.id, recipient.access_token_hash) });
   return `${base}${signerReturnPath(kind, id)}?${q.toString()}`;
 }
@@ -131,7 +137,10 @@ const NEUTRAL_TEXTS: Record<ReturnLocale, { what: Record<ReturnKind, string>; ti
 /** Idioma de la página neutra: el del destinatario/sobre si se conoce, si no el primero soportado de Accept-Language. */
 export function neutralReturnLocale(preferred: string | null | undefined, acceptLanguage: string | undefined): ReturnLocale {
   const norm = (l: string | null | undefined) => {
-    const b = String(l ?? "").trim().toLowerCase().slice(0, 2);
+    const b = String(l ?? "")
+      .trim()
+      .toLowerCase()
+      .slice(0, 2);
     return b === "es" || b === "en" || b === "pt" ? (b as ReturnLocale) : null;
   };
   const own = norm(preferred);

@@ -51,7 +51,15 @@ async function loadFields(c: CrmConn, t: CrmObjectType): Promise<PdField[]> {
 /** Campo por su key (hash de 40 caracteres en los personalizados) o por su nombre visible. */
 function findField(fields: PdField[], ref: string): PdField | undefined {
   const low = ref.trim().toLowerCase();
-  return fields.find((f) => f.key === ref) ?? fields.find((f) => String(f.name ?? "").trim().toLowerCase() === low);
+  return (
+    fields.find((f) => f.key === ref) ??
+    fields.find(
+      (f) =>
+        String(f.name ?? "")
+          .trim()
+          .toLowerCase() === low,
+    )
+  );
 }
 
 const isOptions = (f: PdField) => (f.field_type === "enum" || f.field_type === "set") && Array.isArray(f.options);
@@ -59,7 +67,9 @@ const isOptions = (f: PdField) => (f.field_type === "enum" || f.field_type === "
 /** Id(s) de opción → etiqueta(s), para que el prellenado muestre "Plan Pro" y no "37". */
 function optionLabels(f: PdField, v: unknown): unknown {
   if (v === null || v === undefined || v === "") return v;
-  const ids = String(v).split(",").map((x) => x.trim());
+  const ids = String(v)
+    .split(",")
+    .map((x) => x.trim());
   const labels = ids.map((id) => f.options!.find((o) => String(o.id) === id)?.label ?? id);
   return labels.join(", ");
 }
@@ -112,7 +122,7 @@ export async function pipedriveFetchRecord(c: CrmConn, t: CrmObjectType, id: str
   const parts = await crmFetch(c, { path: `/api/v1/deals/${enc}/participants?limit=100` });
   const related = parts?.related_objects?.person ?? {};
   for (const x of Array.isArray(parts?.data) ? parts.data : []) {
-    const pid = typeof x?.person_id === "object" && x.person_id ? x.person_id.value : x?.person_id ?? x?.person?.id;
+    const pid = typeof x?.person_id === "object" && x.person_id ? x.person_id.value : (x?.person_id ?? x?.person?.id);
     if (pid === undefined || pid === null || contacts.some((k) => k.id === String(pid))) continue;
     const person = (typeof x.person_id === "object" && x.person_id) || x.person || related[String(pid)] || null;
     const ct = toContact(person ? { ...person, value: pid } : null, false);
@@ -127,7 +137,8 @@ export async function pipedriveWriteStatus(c: CrmConn, t: CrmObjectType, id: str
   assertObject(t);
   const fields = await loadFields(c, t);
   const f = findField(fields, property);
-  if (!f) throw new MappingError("crm_status_field", `Pipedrive no tiene un campo "${property}" en ${objPath(t)} (usá la key del campo personalizado)`);
+  if (!f)
+    throw new MappingError("crm_status_field", `Pipedrive no tiene un campo "${property}" en ${objPath(t)} (usá la key del campo personalizado)`);
   let v: string | number = value;
   if (isOptions(f)) {
     const opt = f.options!.find((o) => o.label.trim().toLowerCase() === value.trim().toLowerCase());
@@ -153,13 +164,17 @@ export async function pipedriveAttach(c: CrmConn, t: CrmObjectType, id: string, 
     `<a href="${html(a.url)}">${html(a.url)}</a></p>`;
   // La nota es un extra: si falla, el PDF ya quedó en el registro (relanzar reintentaría el trabajo y lo subiría dos
   // veces), como en Zoho, RD Station y Kommo.
-  const note = await crmFetch(c, { method: "POST", path: "/api/v1/notes", json: { content, [idField]: Number.isFinite(Number(id)) ? Number(id) : id } }).catch(() => null);
+  const note = await crmFetch(c, {
+    method: "POST",
+    path: "/api/v1/notes",
+    json: { content, [idField]: Number.isFinite(Number(id)) ? Number(id) : id },
+  }).catch(() => null);
   return `file:${file?.data?.id ?? "?"} note:${note?.data?.id ?? "?"}`;
 }
 
 /** Prueba de la conexión: el usuario del token y su compañía. */
 export async function pipedriveTest(c: CrmConn): Promise<{ label: string | null; config: Record<string, unknown> }> {
   const me = (await crmFetch(c, { path: "/api/v1/users/me" }))?.data ?? {};
-  const label = me.company_domain ? `${me.company_domain}.pipedrive.com` : me.company_name ?? me.email ?? null;
+  const label = me.company_domain ? `${me.company_domain}.pipedrive.com` : (me.company_name ?? me.email ?? null);
   return { label, config: { companyId: me.company_id != null ? String(me.company_id) : null, companyDomain: me.company_domain ?? null } };
 }

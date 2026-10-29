@@ -8,9 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-evidence-ao-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
-type Blobs = ReturnType<typeof import("../src/infra/storage")["createBlobStore"]>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
+type Blobs = ReturnType<(typeof import("../src/infra/storage"))["createBlobStore"]>;
 let db: Db;
 let app: App;
 let blobs: Blobs;
@@ -27,7 +27,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   blobs = createBlobStore();
   app = await buildApp({ db, blobs, logger: false });
   await app.ready();
@@ -124,7 +128,10 @@ describe("evidencia append-only (0072)", () => {
     const res = await app.inject({ method: "DELETE", url: `/v1/envelopes/${draft}`, headers });
     expect(res.statusCode).toBe(204);
     expect((await db.query(`SELECT 1 FROM envelope_events WHERE envelope_id = $1`, [draft])).length).toBe(0);
-    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.deleted' AND target_id = $2`, [tenant, draft]);
+    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.deleted' AND target_id = $2`, [
+      tenant,
+      draft,
+    ]);
     expect(audit?.data).toEqual({ subject: "Contrato" });
   });
 });
@@ -172,16 +179,19 @@ describe("verificación pública atada al certificado del PDF", () => {
     const file = uuidv7();
     const key = `tenants/${tenant}/envelopes/${env}/${file}-signed.pdf`;
     await blobs.put(key, pdf, "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
-      file,
-      tenant,
-      key,
-      pdf.length,
-      sha256Hex(pdf),
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`,
+      [file, tenant, key, pdf.length, sha256Hex(pdf)],
+    );
     await db.tx(async (t) => {
       await t.query(`UPDATE envelopes SET status = 'completed', completed_at = now(), signed_file_id = $2 WHERE id = $1`, [env, file]);
-      await appendEvent(t, { tenantId: tenant, envelopeId: env, type: "envelope.completed", actor: SYSTEM, data: { signedSha256: sha256Hex(pdf), certificateChainHead: head } });
+      await appendEvent(t, {
+        tenantId: tenant,
+        envelopeId: env,
+        type: "envelope.completed",
+        actor: SYSTEM,
+        data: { signedSha256: sha256Hex(pdf), certificateChainHead: head },
+      });
     });
     return { env, pdf };
   }
@@ -206,7 +216,16 @@ describe("verificación pública atada al certificado del PDF", () => {
       await t.query(`UPDATE envelope_events SET data = '{"i":99}' WHERE envelope_id = $1 AND seq = 1`, [env]);
       const rows = await t.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [env]);
       for (const r of rows) {
-        const body = { seq: r.seq, type: r.type, actor_type: r.actor_type, actor_id: r.actor_id, ip: r.ip, user_agent: r.user_agent, data: r.data, occurred_at: new Date(r.occurred_at).toISOString() };
+        const body = {
+          seq: r.seq,
+          type: r.type,
+          actor_type: r.actor_type,
+          actor_id: r.actor_id,
+          ip: r.ip,
+          user_agent: r.user_agent,
+          data: r.data,
+          occurred_at: new Date(r.occurred_at).toISOString(),
+        };
         const h = sha256Hex(`${prev}\n${canonicalJson(body)}`);
         await t.query(`UPDATE envelope_events SET prev_hash = $2, hash = $3 WHERE id = $1`, [r.id, prev, h]);
         prev = h;
@@ -239,7 +258,10 @@ describe("verificación pública atada al certificado del PDF", () => {
     // También el hash guardado en envelope.completed (el último evento: se recalcula después) y la cache del archivo.
     await db.tx(async (t) => {
       await t.query(`SET LOCAL calasign.allow_evidence_write = 'on'`);
-      await t.query(`UPDATE envelope_events SET data = jsonb_set(data, '{certificateChainHead}', to_jsonb($2::text)) WHERE envelope_id = $1 AND type = 'envelope.completed'`, [env, head]);
+      await t.query(
+        `UPDATE envelope_events SET data = jsonb_set(data, '{certificateChainHead}', to_jsonb($2::text)) WHERE envelope_id = $1 AND type = 'envelope.completed'`,
+        [env, head],
+      );
     });
     const newHead = await rewriteChain(env);
     await db.query(`UPDATE files SET chain_head = $2 WHERE sha256 = $1`, [sha256Hex(pdf), newHead]);
@@ -258,7 +280,9 @@ describe("verificación pública atada al certificado del PDF", () => {
     await db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "f".repeat(64)]);
     expect((await upload(pdf)).json().chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
     // Una vez fijada no cambia.
-    await expect(db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "e".repeat(64)])).rejects.toThrow(/evidence_append_only/);
+    await expect(db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "e".repeat(64)])).rejects.toThrow(
+      /evidence_append_only/,
+    );
     await expect(db.query(`UPDATE files SET chain_head = NULL WHERE id = $1`, [(await file()).id])).rejects.toThrow(/evidence_append_only/);
   }, 60_000);
 
@@ -267,7 +291,11 @@ describe("verificación pública atada al certificado del PDF", () => {
     const { env, pdf } = await sealedEnvelope({ legacy: true });
     const { findChainHeadKeyword } = await import("@calasign/pdf");
     expect(findChainHeadKeyword(pdf)).toBeNull();
-    const head = (await db.one<any>(`SELECT data->>'certificateChainHead' AS h FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed'`, [env])).h;
+    const head = (
+      await db.one<any>(`SELECT data->>'certificateChainHead' AS h FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed'`, [
+        env,
+      ])
+    ).h;
     const file = () => db.one<any>(`SELECT id, chain_head FROM files WHERE sha256 = $1`, [sha256Hex(pdf)]);
     expect((await file()).chain_head).toBeNull();
     expect((await upload(pdf)).json().chain).toMatchObject({ ok: true });
@@ -328,21 +356,23 @@ describe("verificación pública atada al certificado del PDF", () => {
     // El documento: el visor (sin ?download=1) no es una descarga; el botón (?download=1) sí.
     const doc = uuidv7();
     const fileId = (await db.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1`, [env])).signed_file_id;
-    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`, [
-      doc,
-      tenant,
-      env,
-      fileId,
-    ]);
+    await db.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`,
+      [doc, tenant, env, fileId],
+    );
     expect((await app.inject({ method: "GET", url: `/v1/signing/${token}/documents/${doc}/file` })).statusCode).toBe(200);
     const kinds = async () =>
-      (await db.query<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'document.downloaded' ORDER BY seq`, [env])).map((r) => r.data.kind);
+      (await db.query<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'document.downloaded' ORDER BY seq`, [env])).map(
+        (r) => r.data.kind,
+      );
     expect(await kinds()).toEqual(["signed"]);
     expect((await app.inject({ method: "GET", url: `/v1/signing/${token}/documents/${doc}/file?download=1` })).statusCode).toBe(200);
     expect(await kinds()).toEqual(["signed", "document"]);
 
     for (let i = 0; i < 2; i++) expect((await app.inject({ method: "GET", url: `/v1/envelopes/${env}/signed.pdf`, headers })).statusCode).toBe(200);
-    const audit = await db.query<any>(`SELECT target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.signed_pdf_downloaded'`, [tenant]);
+    const audit = await db.query<any>(`SELECT target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.signed_pdf_downloaded'`, [
+      tenant,
+    ]);
     expect(audit).toEqual([{ target_id: env }]);
   }, 60_000);
 });
@@ -374,15 +404,17 @@ describe("auditoría", () => {
   it("un ajuste que el handler ya auditó no se registra dos veces (settings.changed)", async () => {
     const res = await app.inject({ method: "PATCH", url: "/v1/settings/evidence", headers, payload: { sealLevel: "auto" } });
     expect(res.statusCode).toBe(200);
-    const rows = await db.query<any>(`SELECT action FROM account_audit_log WHERE tenant_id = $1 AND action IN ('settings.evidence_updated','settings.changed')`, [tenant]);
+    const rows = await db.query<any>(
+      `SELECT action FROM account_audit_log WHERE tenant_id = $1 AND action IN ('settings.evidence_updated','settings.changed')`,
+      [tenant],
+    );
     expect(rows.map((r) => r.action)).toEqual(["settings.evidence_updated"]);
   });
 
   it("CSV: más de 50000 filas se avisa con X-Truncated y una fila final", async () => {
-    await db.query(
-      `INSERT INTO account_audit_log (tenant_id, actor_type, action) SELECT $1, 'system', 'bulk.test' FROM generate_series(1, 50001)`,
-      [tenant],
-    );
+    await db.query(`INSERT INTO account_audit_log (tenant_id, actor_type, action) SELECT $1, 'system', 'bulk.test' FROM generate_series(1, 50001)`, [
+      tenant,
+    ]);
     const res = await app.inject({ method: "GET", url: "/v1/audit-log.csv?action=bulk.test", headers });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-truncated"]).toBe("true");

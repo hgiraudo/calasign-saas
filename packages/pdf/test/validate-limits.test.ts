@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PDFDocument, PDFHexString, PDFName } from "pdf-lib";
 import { MAX_VALIDATE_SIGNATURES, validatePdf } from "../src/validate";
 describe("validación pública de PDF: tope de firmas", () => {
-    it("un PDF con más firmas que el tope se rechaza antes de validarlas", async () => {
+  it("un PDF con más firmas que el tope se rechaza antes de validarlas", async () => {
     const doc = await PDFDocument.create();
     doc.addPage();
     const ctx = doc.context;

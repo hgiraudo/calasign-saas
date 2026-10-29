@@ -5,7 +5,8 @@ import { dropboxContentHash, uploadDropbox, uploadGdrive } from "../src/modules/
 
 const sha = (b: Uint8Array | Buffer) => createHash("sha256").update(b).digest();
 const creds = { access_token: "tok", expires_at: Date.now() + 3_600_000 };
-const json = (status: number, body: unknown) => new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const json = (status: number, body: unknown) =>
+  new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const real = globalThis.fetch;
 afterEach(() => {
@@ -61,7 +62,11 @@ describe("Dropbox: nunca pisa a ciegas", () => {
   });
 
   it("reintento con el mismo contenido en la ruta: lo reutiliza sin subir", async () => {
-    const calls = mockFetch((url) => (url.endsWith("/get_metadata") ? json(200, { ".tag": "file", path_display: "/F/C.pdf", content_hash: dropboxContentHash(bytes) }) : json(500, "no")));
+    const calls = mockFetch((url) =>
+      url.endsWith("/get_metadata")
+        ? json(200, { ".tag": "file", path_display: "/F/C.pdf", content_hash: dropboxContentHash(bytes) })
+        : json(500, "no"),
+    );
     const r = await uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, opts);
     expect(r.ref).toBe("dropbox:/F/C.pdf");
     expect(calls.every((c) => c.url.endsWith("/get_metadata"))).toBe(true);
@@ -71,7 +76,9 @@ describe("Dropbox: nunca pisa a ciegas", () => {
     const calls = mockFetch((url, init) => {
       if (url.endsWith("/get_metadata")) {
         const p = JSON.parse(String(init.body)).path;
-        return p === "/F/C.pdf" ? json(200, { ".tag": "file", path_display: p, content_hash: "otro" }) : json(409, { error_summary: "path/not_found/.." });
+        return p === "/F/C.pdf"
+          ? json(200, { ".tag": "file", path_display: p, content_hash: "otro" })
+          : json(409, { error_summary: "path/not_found/.." });
       }
       return json(200, { path_display: "/F/C (1).pdf" });
     });
@@ -87,7 +94,9 @@ describe("Dropbox: nunca pisa a ciegas", () => {
     mockFetch((url, init) => {
       if (!url.endsWith("/get_metadata")) return json(500, "no");
       const p = JSON.parse(String(init.body)).path;
-      return p === "/F/C - 0199aaaa.pdf" ? json(200, { ".tag": "file", path_display: p, content_hash: dropboxContentHash(bytes) }) : json(409, { error_summary: "path/not_found/" });
+      return p === "/F/C - 0199aaaa.pdf"
+        ? json(200, { ".tag": "file", path_display: p, content_hash: dropboxContentHash(bytes) })
+        : json(409, { error_summary: "path/not_found/" });
     });
     const r = await uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, opts);
     expect(r.ref).toBe("dropbox:/F/C - 0199aaaa.pdf");
@@ -100,7 +109,10 @@ describe("Dropbox: conexión sin files.metadata.read", () => {
 
   it.each([
     [401, { error_summary: "missing_scope/..", error: { ".tag": "missing_scope", required_scope: "files.metadata.read" } }],
-    [400, "Error in call to API function \"files/get_metadata\": Your app is not permitted to access this endpoint because it does not have the required scope 'files.metadata.read'."],
+    [
+      400,
+      "Error in call to API function \"files/get_metadata\": Your app is not permitted to access this endpoint because it does not have the required scope 'files.metadata.read'.",
+    ],
   ])("get_metadata %i por scope: sube igual (add + autorename) en vez de fallar", async (status, body) => {
     const calls = mockFetch((url) => (url.endsWith("/get_metadata") ? json(status, body) : json(200, { path_display: "/F/C.pdf" })));
     const r = await uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, opts);
@@ -130,7 +142,11 @@ describe("Drive: reintento reutiliza solo si coincide el sha256", () => {
 
   it("otro contenido (o sin sha256): reemplaza el contenido de ese archivo, sin crear otro", async () => {
     const calls = mockFetch((url, init) =>
-      init.method === "PATCH" ? json(200, { id: "f1", webViewLink: "https://d/f1" }) : url.includes("/upload/") ? json(500, "no") : json(200, { files: [{ id: "f1", appProperties: {} }] }),
+      init.method === "PATCH"
+        ? json(200, { id: "f1", webViewLink: "https://d/f1" })
+        : url.includes("/upload/")
+          ? json(500, "no")
+          : json(200, { files: [{ id: "f1", appProperties: {} }] }),
     );
     const r = await uploadGdrive(creds, { folderId: "fold" }, "C.pdf", bytes, "application/pdf", undefined, opts);
     expect(r.ref).toBe("https://d/f1");
@@ -167,7 +183,9 @@ describe("OneDrive/SharePoint: reintento reutiliza por ruta si el hash coincide"
   it("mismo quickXorHash en la ruta (empresas): reutiliza sin subir", async () => {
     const { quickXorHash, uploadSharepoint } = await import("../src/modules/storage-export");
     const calls = mockFetch((url, init) =>
-      !init.method || init.method === "GET" ? json(200, { id: "i1", webUrl: "https://sp/i1", size: bytes.length, file: { hashes: { quickXorHash: quickXorHash(bytes) } } }) : json(500, "no"),
+      !init.method || init.method === "GET"
+        ? json(200, { id: "i1", webUrl: "https://sp/i1", size: bytes.length, file: { hashes: { quickXorHash: quickXorHash(bytes) } } })
+        : json(500, "no"),
     );
     const r = await uploadSharepoint(creds, { driveId: "d1", folder: "F/2026" }, "C.pdf", bytes, "application/pdf", undefined, opts);
     expect(r.ref).toBe("https://sp/i1");
@@ -179,11 +197,16 @@ describe("OneDrive/SharePoint: reintento reutiliza por ruta si el hash coincide"
     const { uploadOnedrive } = await import("../src/modules/storage-export");
     const calls = mockFetch((url, init) => {
       if (init.method === "PUT") return json(201, { id: "n1", webUrl: "https://od/n1" });
-      return url.includes("/C.pdf?") ? json(200, { id: "o1", size: bytes.length, file: { hashes: { sha256Hash: "ABC" } } }) : json(404, { error: { code: "itemNotFound" } });
+      return url.includes("/C.pdf?")
+        ? json(200, { id: "o1", size: bytes.length, file: { hashes: { sha256Hash: "ABC" } } })
+        : json(404, { error: { code: "itemNotFound" } });
     });
     const r = await uploadOnedrive(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, opts);
     expect(r.ref).toBe("https://od/n1");
-    expect(calls.filter((c) => !c.init.method).map((c) => decodeURIComponent(c.url.split("root:/")[1].split("?")[0]))).toEqual(["F/C.pdf", "F/C - 0199aaaa.pdf"]);
+    expect(calls.filter((c) => !c.init.method).map((c) => decodeURIComponent(c.url.split("root:/")[1].split("?")[0]))).toEqual([
+      "F/C.pdf",
+      "F/C - 0199aaaa.pdf",
+    ]);
     expect(calls.find((c) => c.init.method === "PUT")!.url).toContain("conflictBehavior=rename");
   });
 
@@ -214,7 +237,9 @@ describe("Box: nombre ocupado por el mismo archivo", () => {
   it("409 con otro contenido: sube con sufijo", async () => {
     const { uploadBox } = await import("../src/modules/storage-export");
     let n = 0;
-    const calls = mockFetch(() => (n++ === 0 ? json(409, { context_info: { conflicts: [{ id: "77", sha1: "otro" }] } }) : json(201, { entries: [{ id: "78" }] })));
+    const calls = mockFetch(() =>
+      n++ === 0 ? json(409, { context_info: { conflicts: [{ id: "77", sha1: "otro" }] } }) : json(201, { entries: [{ id: "78" }] }),
+    );
     const r = await uploadBox(creds, { folderId: "5", folder: "F" }, "C.pdf", bytes, "application/pdf");
     expect(r.ref).toBe("box:78");
     expect(calls).toHaveLength(2);
@@ -250,7 +275,9 @@ describe("Drive: carpeta como ruta o como id", () => {
     const { uploadGdrive } = await import("../src/modules/storage-export");
     const id = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345";
     let calls = mockFetch((url) =>
-      url.includes(`/files/${id}?`) ? json(200, { id, mimeType: "application/vnd.google-apps.folder", trashed: false }) : json(200, { id: "up", webViewLink: "https://d/up" }),
+      url.includes(`/files/${id}?`)
+        ? json(200, { id, mimeType: "application/vnd.google-apps.folder", trashed: false })
+        : json(200, { id: "up", webViewLink: "https://d/up" }),
     );
     let r = await uploadGdrive(creds, { folder: id }, "C.pdf", bytes, "application/pdf");
     expect(r.config).toEqual({ folderId: id });
@@ -268,7 +295,9 @@ describe("Drive: carpeta como ruta o como id", () => {
     expect(calls.some((c) => c.url.includes("?q="))).toBe(true);
     calls = mockFetch((url) => (url.includes(`/files/${id}?`) ? json(404, { error: { message: "not found" } }) : json(500, "no")));
     // Como URL (…/folders/<id>): si la app no la ve, falla en vez de crear carpetas con los pedazos de la URL.
-    await expect(uploadGdrive(creds, { folder: `https://drive.google.com/drive/folders/${id}` }, "C.pdf", bytes, "application/pdf")).rejects.toThrow(/no tiene acceso/);
+    await expect(uploadGdrive(creds, { folder: `https://drive.google.com/drive/folders/${id}` }, "C.pdf", bytes, "application/pdf")).rejects.toThrow(
+      /no tiene acceso/,
+    );
   });
 });
 

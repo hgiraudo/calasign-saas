@@ -78,7 +78,10 @@ export class Pkcs11Source implements CertSource {
     try {
       this.lib.C_Login(this.session, this.mod.CKU_USER, this.pin);
     } catch (e) {
-      if (!/ALREADY_LOGGED_IN/.test(String(e))) throw new Error(/PIN_INCORRECT|PIN_LEN|PIN_INVALID/.test(String(e)) ? "PIN incorrecto" : `No se pudo abrir el token: ${(e as Error).message}`);
+      if (!/ALREADY_LOGGED_IN/.test(String(e)))
+        throw new Error(
+          /PIN_INCORRECT|PIN_LEN|PIN_INVALID/.test(String(e)) ? "PIN incorrecto" : `No se pudo abrir el token: ${(e as Error).message}`,
+        );
     }
     return this.session;
   }
@@ -96,10 +99,16 @@ export class Pkcs11Source implements CertSource {
     const m = this.mod;
     const certs = this.find([{ type: m.CKA_CLASS, value: m.CKO_CERTIFICATE }]).map((h) => {
       const [value, id, label] = this.lib.C_GetAttributeValue(this.open(), h, [{ type: m.CKA_VALUE }, { type: m.CKA_ID }, { type: m.CKA_LABEL }]);
-      return { der: new Uint8Array(value.value as Buffer), id: Buffer.from((id.value as Buffer) ?? []).toString("hex"), label: String(label.value ?? "") };
+      return {
+        der: new Uint8Array(value.value as Buffer),
+        id: Buffer.from((id.value as Buffer) ?? []).toString("hex"),
+        label: String(label.value ?? ""),
+      };
     });
     const withKey = new Set(
-      this.find([{ type: m.CKA_CLASS, value: m.CKO_PRIVATE_KEY }]).map((h) => Buffer.from((this.lib.C_GetAttributeValue(this.open(), h, [{ type: m.CKA_ID }])[0].value as Buffer) ?? []).toString("hex")),
+      this.find([{ type: m.CKA_CLASS, value: m.CKO_PRIVATE_KEY }]).map((h) =>
+        Buffer.from((this.lib.C_GetAttributeValue(this.open(), h, [{ type: m.CKA_ID }])[0].value as Buffer) ?? []).toString("hex"),
+      ),
     );
     const parsed = certs.map((c) => ({ ...c, x: new X509Certificate(Buffer.from(c.der)) }));
     return parsed
@@ -114,7 +123,20 @@ export class Pkcs11Source implements CertSource {
           chain.push(up.der);
           cur = up.x;
         }
-        return { id: c.id, label: c.label || c.x.subject.split("\n").find((l) => l.startsWith("CN="))?.slice(3) || c.id, subject: c.x.subject.replace(/\n/g, ", "), issuer: c.x.issuer.replace(/\n/g, ", "), notAfter: new Date(c.x.validTo).toISOString(), chainDer: chain };
+        return {
+          id: c.id,
+          label:
+            c.label ||
+            c.x.subject
+              .split("\n")
+              .find((l) => l.startsWith("CN="))
+              ?.slice(3) ||
+            c.id,
+          subject: c.x.subject.replace(/\n/g, ", "),
+          issuer: c.x.issuer.replace(/\n/g, ", "),
+          notAfter: new Date(c.x.validTo).toISOString(),
+          chainDer: chain,
+        };
       });
   }
 

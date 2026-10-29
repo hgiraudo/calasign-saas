@@ -144,7 +144,12 @@ export interface CloneWarning {
 }
 
 /** Clona un sobre como borrador nuevo. Devuelve el id y los avisos. Corre dentro de la transacción del llamador. */
-export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId: string, input: CloneEnvelopeInput): Promise<{ id: string; warnings: CloneWarning[] }> {
+export async function cloneEnvelope(
+  t: Services["db"],
+  a: AuthContext,
+  sourceId: string,
+  input: CloneEnvelopeInput,
+): Promise<{ id: string; warnings: CloneWarning[] }> {
   // FOR SHARE: espera a una purga por retención en curso (que bloquea el sobre) y ve su purged_at.
   const src = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR SHARE`, [sourceId, a.tenantId]);
   if (!src) throw notFound("Sobre");
@@ -155,7 +160,11 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
   const id = uuidv7();
   // Sin las claves del sistema que lo atan a un proceso del original (workflow, formulario, envío masivo, CRM…): el clon
   // no es parte de ellos. Las que describen el documento (plantilla, acuerdo) se conservan.
-  const keep = Object.fromEntries(["templateId", "documentTemplateId", "documentProvenance", "agreement"].filter((k) => src.metadata && k in src.metadata).map((k) => [k, src.metadata[k]]));
+  const keep = Object.fromEntries(
+    ["templateId", "documentTemplateId", "documentProvenance", "agreement"]
+      .filter((k) => src.metadata && k in src.metadata)
+      .map((k) => [k, src.metadata[k]]),
+  );
   // Con metadata propia, las claves reservadas que describen el documento y clonedFrom se conservan igual (como en
   // PATCH, que no deja pisar las reservadas): el integrador no puede borrar ni falsificar la procedencia.
   const metadata = input.metadata
@@ -188,7 +197,10 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
   // El sello de empresa del original pudo borrarse después (el borrado solo lo quita de borradores y enviados): un
   // borrador que apunta a un certificado sin clave no podría finalizar nunca. Se relee con FOR SHARE, como evidence.ts.
   if (src.company_seal_certificate_id) {
-    const cert = await t.one(`SELECT 1 FROM tenant_certificates WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR SHARE`, [src.company_seal_certificate_id, a.tenantId]);
+    const cert = await t.one(`SELECT 1 FROM tenant_certificates WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR SHARE`, [
+      src.company_seal_certificate_id,
+      a.tenantId,
+    ]);
     if (!cert) await t.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE id = $1`, [id]);
   }
   const warnings: CloneWarning[] = [];
@@ -201,7 +213,9 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     data: {
       subject: input.subject ?? src.subject,
       clonedFrom: src.id,
-      ...(warnings.length ? { warnings: warnings.map(({ code, recipientId, reason, telegramOnly }) => ({ code, recipientId, reason, telegramOnly })) } : {}),
+      ...(warnings.length
+        ? { warnings: warnings.map(({ code, recipientId, reason, telegramOnly }) => ({ code, recipientId, reason, telegramOnly })) }
+        : {}),
     },
   });
 
@@ -210,10 +224,16 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
   for (const d of await loadDocuments(t, src.id)) {
     const nd = uuidv7();
     docMap.set(d.id, nd);
-    await t.query(
-      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [nd, a.tenantId, id, d.position, d.name, d.file_id, d.page_count, JSON.stringify(d.pages)],
-    );
+    await t.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [
+      nd,
+      a.tenantId,
+      id,
+      d.position,
+      d.name,
+      d.file_id,
+      d.page_count,
+      JSON.stringify(d.pages),
+    ]);
     await appendEvent(t, {
       tenantId: a.tenantId,
       envelopeId: id,
@@ -240,7 +260,10 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     if (f.read_only) keptValue = f.value;
     else if (input.includeValues && VALUE_FIELD_TYPES.includes(f.type) && !f.formula) {
       try {
-        keptValue = checkSenderValue({ type: f.type, label: f.label, options: f.options ?? null, min: f.min_value ?? null, max: f.max_value ?? null, value: f.value }, "Campo");
+        keptValue = checkSenderValue(
+          { type: f.type, label: f.label, options: f.options ?? null, min: f.min_value ?? null, max: f.max_value ?? null, value: f.value },
+          "Campo",
+        );
       } catch {
         keptValue = null;
       }
@@ -283,10 +306,11 @@ async function cloneRecipients(t: Services["db"], a: AuthContext, srcId: string,
   for (const r of recips) {
     const nr = uuidv7();
     recMap.set(r.id, nr);
-    await t.query(
-      `INSERT INTO recipients (id, tenant_id, envelope_id, ${cols}) SELECT $1, tenant_id, $2, ${cols} FROM recipients WHERE id = $3`,
-      [nr, id, r.id],
-    );
+    await t.query(`INSERT INTO recipients (id, tenant_id, envelope_id, ${cols}) SELECT $1, tenant_id, $2, ${cols} FROM recipients WHERE id = $3`, [
+      nr,
+      id,
+      r.id,
+    ]);
   }
   // El anfitrión de una firma en persona del original pudo dejar la organización: sin él nadie abre la sesión y ese
   // firmante no recibe invitación, así que el sobre quedaba trabado al enviarlo. Como en replaceRecipient, firma por link.
@@ -322,7 +346,13 @@ async function cloneRecipients(t: Services["db"], a: AuthContext, srcId: string,
   const hasKyc = withIdv.length > 0 && (await tenantPlan(t, a.tenantId)).plan.features.includes("kyc");
   const idv: { id: string; role: string; idVerification: { provider: any; level?: any } }[] = [];
   for (const r of withIdv) {
-    const reason = !hasKyc ? "plan_without_kyc" : !providerReady(r.id_verification_provider, r.id_verification_level ?? "document_selfie") ? "provider_unavailable" : r.role === "cc" ? "not_applicable" : null;
+    const reason = !hasKyc
+      ? "plan_without_kyc"
+      : !providerReady(r.id_verification_provider, r.id_verification_level ?? "document_selfie")
+        ? "provider_unavailable"
+        : r.role === "cc"
+          ? "not_applicable"
+          : null;
     if (!reason) {
       idv.push({ id: r.id, role: r.role, idVerification: { provider: r.id_verification_provider, level: r.id_verification_level ?? undefined } });
       continue;
@@ -365,7 +395,10 @@ async function cloneRecipients(t: Services["db"], a: AuthContext, srcId: string,
 }
 
 /** Operación individual que ejecuta cada elemento de un lote (misma política, auditoría y validaciones). */
-const BATCH_ROUTE: Record<EnvelopeBatchInput["action"], (id: string, input: EnvelopeBatchInput) => { method: "GET" | "POST" | "DELETE"; url: string; body?: unknown }> = {
+const BATCH_ROUTE: Record<
+  EnvelopeBatchInput["action"],
+  (id: string, input: EnvelopeBatchInput) => { method: "GET" | "POST" | "DELETE"; url: string; body?: unknown }
+> = {
   get: (id) => ({ method: "GET", url: `/v1/envelopes/${id}` }),
   void: (id, i) => ({ method: "POST", url: `/v1/envelopes/${id}/void`, body: { reason: i.reason } }),
   remind: (id) => ({ method: "POST", url: `/v1/envelopes/${id}/remind` }),
@@ -389,10 +422,18 @@ export async function envelopeOpsRoutes(app: FastifyInstance, s: Services) {
     );
     if (!r) throw notFound("Adjunto");
     const ext = r.content_type === "application/pdf" ? "pdf" : r.content_type === "image/png" ? "png" : "jpg";
-    const base = String(r.value ?? "adjunto").replace(/[^\p{L}\p{N} ._-]+/gu, "").replace(/\.(pdf|png|jpe?g)$/i, "").trim().slice(0, 80) || "adjunto";
+    const base =
+      String(r.value ?? "adjunto")
+        .replace(/[^\p{L}\p{N} ._-]+/gu, "")
+        .replace(/\.(pdf|png|jpe?g)$/i, "")
+        .trim()
+        .slice(0, 80) || "adjunto";
     reply
       .header("content-type", r.content_type)
-      .header("content-disposition", `attachment; filename="${base.replace(/[^\x20-\x7e]/g, "_")}.${ext}"; filename*=UTF-8''${encodeURIComponent(base)}.${ext}`)
+      .header(
+        "content-disposition",
+        `attachment; filename="${base.replace(/[^\x20-\x7e]/g, "_")}.${ext}"; filename*=UTF-8''${encodeURIComponent(base)}.${ext}`,
+      )
       .header("cache-control", "private, no-store")
       .header("x-content-type-options", "nosniff");
     return reply.send(Buffer.from(await s.blobs.get(r.storage_key)));
@@ -422,7 +463,12 @@ export async function envelopeOpsRoutes(app: FastifyInstance, s: Services) {
     const results: EnvelopeBatchResult[] = [];
     for (const id of input.ids) {
       const r = BATCH_ROUTE[input.action](id, input);
-      const res = await app.inject({ method: r.method, url: r.url, headers: { ...headers, ...(r.body ? { "content-type": "application/json" } : {}) }, payload: r.body ? JSON.stringify(r.body) : undefined });
+      const res = await app.inject({
+        method: r.method,
+        url: r.url,
+        headers: { ...headers, ...(r.body ? { "content-type": "application/json" } : {}) },
+        payload: r.body ? JSON.stringify(r.body) : undefined,
+      });
       let data: any = undefined;
       try {
         data = res.body ? JSON.parse(res.body) : undefined;
@@ -433,7 +479,12 @@ export async function envelopeOpsRoutes(app: FastifyInstance, s: Services) {
       results.push(
         ok
           ? { id, ok, status: res.statusCode, ...(data !== undefined ? { data } : {}) }
-          : { id, ok, status: res.statusCode, error: { code: data?.error?.code ?? `http_${res.statusCode}`, message: data?.error?.message ?? "Error" } },
+          : {
+              id,
+              ok,
+              status: res.statusCode,
+              error: { code: data?.error?.code ?? `http_${res.statusCode}`, message: data?.error?.message ?? "Error" },
+            },
       );
     }
     const succeeded = results.filter((r) => r.ok).length;

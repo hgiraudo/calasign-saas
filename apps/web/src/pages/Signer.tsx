@@ -28,7 +28,19 @@ type Adopted = SignatureImageInput & { dataUrl: string };
  * Descarga del PDF por fetch: con un <a href>, un error (sesión vencida, sobre anulado, copia ocupada) reemplazaba la
  * página por el JSON de la API y el firmante quedaba fuera de la app. Con 401 se recarga la sesión (vuelve el OTP).
  */
-function SignerDownload({ path, name, label, primary, onAuth }: { path: string; name: string; label: string; primary?: boolean; onAuth: () => unknown }) {
+function SignerDownload({
+  path,
+  name,
+  label,
+  primary,
+  onAuth,
+}: {
+  path: string;
+  name: string;
+  label: string;
+  primary?: boolean;
+  onAuth: () => unknown;
+}) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const go = async () => {
@@ -46,7 +58,10 @@ function SignerDownload({ path, name, label, primary, onAuth }: { path: string; 
       }
       const blob = await readBody(res.blob());
       const url = URL.createObjectURL(blob);
-      const a = Object.assign(document.createElement("a"), { href: url, download: `${(name || "document").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 120)}.pdf` });
+      const a = Object.assign(document.createElement("a"), {
+        href: url,
+        download: `${(name || "document").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 120)}.pdf`,
+      });
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -560,7 +575,8 @@ const VALUE_TYPES = ["text", "number", "dropdown", "company", "title"];
 const STAMP_LEGIBLE_SIZE = 6;
 const STAMP_MIN_WRAP_SIZE = 4;
 const STAMP_LINE_HEIGHT = 1.15;
-const STAMP_NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}]/u;
+const STAMP_NO_SPACE_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}]/u;
 let measureCtx: CanvasRenderingContext2D | null | undefined;
 function stampLegible(text: string, boxW: number, boxH: number): boolean {
   if (measureCtx === undefined) measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
@@ -632,7 +648,12 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
   const sizes: number[] = [];
   for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
   sizes.push(minSize);
-  for (const [splitWords, numbersWhole] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+  for (const [splitWords, numbersWhole] of [
+    [false, true],
+    [false, false],
+    [true, true],
+    [true, false],
+  ] as const) {
     for (const s of sizes) {
       const n = lineCount(s, splitWords, numbersWhole, Math.floor((boxH + 1e-6) / (s * STAMP_LINE_HEIGHT)) + 1);
       if (n !== null && n * s * STAMP_LINE_HEIGHT <= boxH + 1e-6) return s >= legible;
@@ -750,7 +771,8 @@ function SigningFlow({
     for (const f of interactive) {
       if (!VALUE_TYPES.includes(f.type) && f.type !== "attachment") continue;
       const v = (values[f.id] ?? "").replace(/\s+/g, " ").trim();
-      const text = f.type === "attachment" && v ? `${STAMP_ATTACHMENT_PREFIX[session.envelope.locale ?? "es"] ?? STAMP_ATTACHMENT_PREFIX.es}: ${v}` : v;
+      const text =
+        f.type === "attachment" && v ? `${STAMP_ATTACHMENT_PREFIX[session.envelope.locale ?? "es"] ?? STAMP_ATTACHMENT_PREFIX.es}: ${v}` : v;
       const page = session.documents.find((d) => d.id === f.documentId)?.pages[f.page];
       if (text && page && !stampLegible(text, f.width * page.width, f.height * page.height)) out.add(f.id);
     }
@@ -928,9 +950,10 @@ function SigningFlow({
 
   // Deja de marcarse apenas se completa (o se corrige el número), o si el error mostrado ya es otro.
   const invalidNow =
-    error && invalidId && (pending.some((f) => f.id === invalidId) || badNumber?.id === invalidId || serverProblems.has(invalidId)) ? invalidId : null;
-  const errProps = (f: Field) =>
-    invalidNow === f.id ? { "aria-invalid": true as const, "aria-describedby": "sign-finish-error" } : {};
+    error && invalidId && (pending.some((f) => f.id === invalidId) || badNumber?.id === invalidId || serverProblems.has(invalidId))
+      ? invalidId
+      : null;
+  const errProps = (f: Field) => (invalidNow === f.id ? { "aria-invalid": true as const, "aria-describedby": "sign-finish-error" } : {});
 
   const renderField = (f: Field, pageHeightPx: number) => {
     const hPx = f.height * pageHeightPx;
@@ -1005,10 +1028,19 @@ function SigningFlow({
           {name ? (
             <span
               className="attach-chip"
-              style={{ fontSize: Math.max(9, Math.min(fontSize, 14)), ...(overflowing.has(f.id) ? { outline: "2px solid var(--warn, #d97706)", outlineOffset: -2 } : null) }}
+              style={{
+                fontSize: Math.max(9, Math.min(fontSize, 14)),
+                ...(overflowing.has(f.id) ? { outline: "2px solid var(--warn, #d97706)", outlineOffset: -2 } : null),
+              }}
             >
               📎 <span className="attach-name">{name}</span>
-              <button type="button" className="attach-x" aria-label={t("common.delete")} disabled={uploading !== null} onClick={() => removeAttachment(f)}>
+              <button
+                type="button"
+                className="attach-x"
+                aria-label={t("common.delete")}
+                disabled={uploading !== null}
+                onClick={() => removeAttachment(f)}
+              >
                 ×
               </button>
             </span>
@@ -1195,7 +1227,15 @@ function SigningFlow({
         />
       )}
 
-      {delegating && <DelegateModal base={base} authMethod={session.recipient.authMethod} onClose={() => setDelegating(false)} onDone={(name) => onDelegated(name)} onStale={onStale} />}
+      {delegating && (
+        <DelegateModal
+          base={base}
+          authMethod={session.recipient.authMethod}
+          onClose={() => setDelegating(false)}
+          onDone={(name) => onDelegated(name)}
+          onStale={onStale}
+        />
+      )}
 
       {declining && <DeclineModal base={base} onClose={() => setDeclining(false)} onDone={onDone} onStale={onStale} />}
     </div>

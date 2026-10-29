@@ -52,7 +52,6 @@ export class LocalKeyProvider implements SignatureProvider {
     const digestInfo = Buffer.concat([SHA1_DIGEST_INFO_PREFIX, Buffer.from(digest)]);
     return new Uint8Array(privateEncrypt({ key: this.key, padding: constants.RSA_PKCS1_PADDING }, digestInfo));
   }
-
 }
 
 export function pemToDerList(pem: string): Uint8Array[] {
@@ -64,7 +63,9 @@ export function pemToDerList(pem: string): Uint8Array[] {
 }
 
 export function derToPem(der: Uint8Array, label = "CERTIFICATE"): string {
-  const b64 = Buffer.from(der).toString("base64").replace(/(.{64})/g, "$1\n");
+  const b64 = Buffer.from(der)
+    .toString("base64")
+    .replace(/(.{64})/g, "$1\n");
   return `-----BEGIN ${label}-----\n${b64.trim()}\n-----END ${label}-----\n`;
 }
 
@@ -122,13 +123,7 @@ export async function issueSealCertificate(
   opts: { commonName: string; subjectPublicKeySpki?: Uint8Array; years?: number },
 ): Promise<{ certPem: string; keyPem: string | null; chainPem: string }> {
   const caCert = new x509.X509Certificate(ca.certPem);
-  const caKey = await webcrypto.subtle.importKey(
-    "pkcs8",
-    pemBody(ca.keyPem),
-    RSA_ALG,
-    false,
-    ["sign"],
-  );
+  const caKey = await webcrypto.subtle.importKey("pkcs8", pemBody(ca.keyPem), RSA_ALG, false, ["sign"]);
   let publicKey: CryptoKey;
   let keyPem: string | null = null;
   if (opts.subjectPublicKeySpki) {

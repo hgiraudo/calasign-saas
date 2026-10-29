@@ -126,7 +126,8 @@ const es = {
   "edit.err.formulaDupLabel": "hay dos campos número con la etiqueta {label} y la fórmula la usa.",
   "edit.err.condition": "una condición cita un campo que no existe o al mismo campo.",
   "edit.err.conditionValue": "a una condición le falta el valor a comparar.",
-  "edit.fieldKeysHint": "Con el teclado: elegí un tipo de campo y la página y tocá \"Agregar a la página\" (queda en el centro de la parte visible); Tab llega a cada campo, Enter lo selecciona, las flechas lo mueven, Shift + flechas cambian el tamaño y Supr lo elimina.",
+  "edit.fieldKeysHint":
+    'Con el teclado: elegí un tipo de campo y la página y tocá "Agregar a la página" (queda en el centro de la parte visible); Tab llega a cada campo, Enter lo selecciona, las flechas lo mueven, Shift + flechas cambian el tamaño y Supr lo elimina.',
   "detail.telegramLinked": "Telegram vinculado",
   "detail.telegramPending": "Telegram sin vincular",
   "sign.telegram": "Recibir avisos por Telegram",
@@ -218,7 +219,8 @@ const es = {
   "sign.missing": "Completá los campos obligatorios",
   "sign.doneTitle": "¡Listo! Firmaste el documento",
   "sign.doneText": "Cuando todos firmen vas a recibir una copia del documento final.",
-  "sign.doneTextDownload": "Guardá el link de esta página: cuando todos firmen vas a poder descargar el documento final desde acá (no te lo mandamos por correo porque no validaste tu dirección).",
+  "sign.doneTextDownload":
+    "Guardá el link de esta página: cuando todos firmen vas a poder descargar el documento final desde acá (no te lo mandamos por correo porque no validaste tu dirección).",
   "sign.doneAvailable": "El documento está completo y sellado.",
   "sign.downloadSigned": "Descargar documento firmado",
   "sign.downloadCopy": "Descargar copia con tu firma",
@@ -270,7 +272,8 @@ const ptBR: Dict = {
   "common.none": "—",
   "common.confirmAction": "Tem certeza? Esta ação não pode ser desfeita.",
   "common.needsViewAll": "Somente leitura: alterar estas configurações requer também a permissão de ver todos os envelopes da organização.",
-  "common.notInPlan": "Não incluído no seu plano ({plan}): você pode ver, pausar ou remover o que já está configurado, mas não criar nem ativar nada novo.",
+  "common.notInPlan":
+    "Não incluído no seu plano ({plan}): você pode ver, pausar ou remover o que já está configurado, mas não criar nem ativar nada novo.",
   "common.seePlans": "Ver planos",
   "common.askAdminPlan": "Peça a um administrador da sua organização para revisar o plano.",
   "common.notInPlanShort": "Não incluído no seu plano",
@@ -362,7 +365,8 @@ const ptBR: Dict = {
   "edit.err.formulaDupLabel": "há dois campos número com a etiqueta {label} e a fórmula a usa.",
   "edit.err.condition": "uma condição cita um campo que não existe ou o próprio campo.",
   "edit.err.conditionValue": "falta o valor a comparar em uma condição.",
-  "edit.fieldKeysHint": "Pelo teclado: escolha um tipo de campo e a página e use \"Adicionar à página\" (fica no centro da parte visível); Tab chega a cada campo, Enter o seleciona, as setas o movem, Shift + setas mudam o tamanho e Delete o exclui.",
+  "edit.fieldKeysHint":
+    'Pelo teclado: escolha um tipo de campo e a página e use "Adicionar à página" (fica no centro da parte visível); Tab chega a cada campo, Enter o seleciona, as setas o movem, Shift + setas mudam o tamanho e Delete o exclui.',
   "detail.telegramLinked": "Telegram vinculado",
   "detail.telegramPending": "Telegram não vinculado",
   "sign.telegram": "Receber avisos pelo Telegram",
@@ -450,7 +454,8 @@ const ptBR: Dict = {
   "sign.missing": "Preencha os campos obrigatórios",
   "sign.doneTitle": "Pronto! Você assinou o documento",
   "sign.doneText": "Quando todos assinarem, você receberá uma cópia do documento final.",
-  "sign.doneTextDownload": "Guarde o link desta página: quando todos assinarem, você poderá baixar o documento final aqui (não o enviamos por e-mail porque você não validou seu endereço).",
+  "sign.doneTextDownload":
+    "Guarde o link desta página: quando todos assinarem, você poderá baixar o documento final aqui (não o enviamos por e-mail porque você não validou seu endereço).",
   "sign.doneAvailable": "O documento está concluído e selado.",
   "sign.downloadSigned": "Baixar documento assinado",
   "sign.downloadCopy": "Baixar cópia com sua assinatura",
@@ -498,7 +503,8 @@ const en: Dict = {
   "common.none": "—",
   "common.confirmAction": "Are you sure? This action cannot be undone.",
   "common.needsViewAll": "Read-only: changing these settings also requires the permission to view all of the organization's envelopes.",
-  "common.notInPlan": "Not included in your plan ({plan}): you can view, pause or remove what is already configured, but not create or enable anything new.",
+  "common.notInPlan":
+    "Not included in your plan ({plan}): you can view, pause or remove what is already configured, but not create or enable anything new.",
   "common.seePlans": "See plans",
   "common.askAdminPlan": "Ask an administrator of your organization to review the plan.",
   "common.notInPlanShort": "Not included in your plan",
@@ -590,7 +596,8 @@ const en: Dict = {
   "edit.err.formulaDupLabel": "there are two number fields labeled {label} and the formula uses it.",
   "edit.err.condition": "a condition references a field that doesn't exist or the field itself.",
   "edit.err.conditionValue": "a condition is missing the value to compare.",
-  "edit.fieldKeysHint": "With the keyboard: pick a field type and the page and press \"Add to page\" (it lands in the center of the visible part); Tab reaches each field, Enter selects it, arrow keys move it, Shift + arrows resize it and Delete removes it.",
+  "edit.fieldKeysHint":
+    'With the keyboard: pick a field type and the page and press "Add to page" (it lands in the center of the visible part); Tab reaches each field, Enter selects it, arrow keys move it, Shift + arrows resize it and Delete removes it.',
   "detail.telegramLinked": "Telegram linked",
   "detail.telegramPending": "Telegram not linked",
   "sign.telegram": "Get notifications on Telegram",
@@ -678,7 +685,8 @@ const en: Dict = {
   "sign.missing": "Complete the required fields",
   "sign.doneTitle": "Done! You signed the document",
   "sign.doneText": "You'll get a copy of the final document once everyone signs.",
-  "sign.doneTextDownload": "Save this page's link: once everyone signs you can download the final document here (we don't email it because you didn't verify your address).",
+  "sign.doneTextDownload":
+    "Save this page's link: once everyone signs you can download the final document here (we don't email it because you didn't verify your address).",
   "sign.doneAvailable": "The document is complete and sealed.",
   "sign.downloadSigned": "Download signed document",
   "sign.downloadCopy": "Download a copy with your signature",

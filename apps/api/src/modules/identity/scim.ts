@@ -116,8 +116,19 @@ const ScimUserInput = z
     userName: z.string().trim().toLowerCase().email().optional(),
     externalId: z.string().max(500).optional().nullable(),
     displayName: z.string().max(200).optional().nullable(),
-    name: z.object({ givenName: z.string().max(200).optional().nullable(), familyName: z.string().max(200).optional().nullable(), formatted: z.string().max(400).optional().nullable() }).partial().optional().nullable(),
-    emails: z.array(z.object({ value: z.string(), primary: z.union([z.boolean(), z.string()]).optional(), type: z.string().optional() }).passthrough()).optional().nullable(),
+    name: z
+      .object({
+        givenName: z.string().max(200).optional().nullable(),
+        familyName: z.string().max(200).optional().nullable(),
+        formatted: z.string().max(400).optional().nullable(),
+      })
+      .partial()
+      .optional()
+      .nullable(),
+    emails: z
+      .array(z.object({ value: z.string(), primary: z.union([z.boolean(), z.string()]).optional(), type: z.string().optional() }).passthrough())
+      .optional()
+      .nullable(),
     active: z.union([z.boolean(), z.string()]).optional(),
   })
   .passthrough();
@@ -168,7 +179,11 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     const { plan } = await tenantPlan(db, tenantId);
     // Su propia invitación pendiente (si la hay) no cuenta como un lugar más: la acepta esta alta.
     if (plan.users !== null && (await usersCount(db, tenantId, email)) >= plan.users) {
-      throw new ScimError(402, `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`, "plan_limit");
+      throw new ScimError(
+        402,
+        `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`,
+        "plan_limit",
+      );
     }
     // Acá se vincula la cuenta a la organización (alta activa, reactivación o PATCH/PUT active = true). Una cuenta YA
     // existente se vincula tal cual: su 2FA y sus sesiones no se tocan (ver "Cuentas pre-registradas con un correo
@@ -182,7 +197,10 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     // Los propietarios se administran desde la consola (allí solo otro propietario puede quitarlos): un token SCIM,
     // que puede crear un administrador, no puede desactivarlos.
     if (m.role === "owner") throw new ScimError(409, "Los propietarios no se pueden desactivar por SCIM", "mutability");
-    await db.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [tenantId, userId]);
+    await db.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [
+      tenantId,
+      userId,
+    ]);
     await db.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     await db.query(`DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     // Como la baja desde la consola: API keys, invitaciones que mandó, tokens OAuth y secretos de sus apps de servicio.
@@ -243,7 +261,9 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
   if (sets.length) await db.query(`UPDATE scim_users SET ${sets.join(", ")}, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, params);
 
   const membership = await db.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
-  const otherOrgs = Number((await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE user_id = $1 AND tenant_id <> $2`, [userId, tenantId]))?.n ?? 0);
+  const otherOrgs = Number(
+    (await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE user_id = $1 AND tenant_id <> $2`, [userId, tenantId]))?.n ?? 0,
+  );
 
   let display = typeof attrs.displayName === "string" ? attrs.displayName.trim() : null;
   if (!display && ("name.givenName" in attrs || "name.familyName" in attrs)) {
@@ -265,7 +285,11 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
       // permisos y no más; cambiar el correo de un administrador por uno propio (y restablecer la contraseña) sería
       // quedarse con su cuenta. Esos correos se cambian desde el IdP con el rol por defecto adecuado o desde la consola.
       if (membership && (await exceedsScimDefaultRole(db, tenantId, membership.role, membership.role_id))) {
-        throw new ScimError(409, "El correo de un usuario con más permisos que el rol por defecto de SCIM no se puede cambiar por SCIM", "mutability");
+        throw new ScimError(
+          409,
+          "El correo de un usuario con más permisos que el rol por defecto de SCIM no se puede cambiar por SCIM",
+          "mutability",
+        );
       }
       const taken = await db.one(`SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2`, [email, userId]);
       if (taken) throw new ScimError(409, "Ya existe un usuario con ese correo", "uniqueness");
@@ -313,7 +337,11 @@ export function userPatchToAttrs(ops: z.infer<typeof PatchInput>["Operations"]):
   const assign = (path: string, value: unknown) => {
     const p = path.replace(/^urn:ietf:params:scim:schemas:core:2\.0:User:/i, "");
     if (/^emails(\[.*\])?(\.value)?$/i.test(p)) {
-      const v = Array.isArray(value) ? (value.find((x: any) => asBool(x?.primary)) ?? value[0])?.value : typeof value === "object" && value ? (value as any).value : value;
+      const v = Array.isArray(value)
+        ? (value.find((x: any) => asBool(x?.primary)) ?? value[0])?.value
+        : typeof value === "object" && value
+          ? (value as any).value
+          : value;
       if (typeof v === "string") attrs.userName = v.trim().toLowerCase();
       return;
     }
@@ -324,7 +352,16 @@ export function userPatchToAttrs(ops: z.infer<typeof PatchInput>["Operations"]):
       if (n.formatted) attrs.displayName = n.formatted;
       return;
     }
-    const key = ({ username: "userName", externalid: "externalId", displayname: "displayName", active: "active", "name.givenname": "name.givenName", "name.familyname": "name.familyName" } as Record<string, string>)[p.toLowerCase()];
+    const key = (
+      {
+        username: "userName",
+        externalid: "externalId",
+        displayname: "displayName",
+        active: "active",
+        "name.givenname": "name.givenName",
+        "name.familyname": "name.familyName",
+      } as Record<string, string>
+    )[p.toLowerCase()];
     if (key) attrs[key] = value;
   };
   for (const op of ops) {
@@ -353,7 +390,12 @@ async function toScimGroup(db: Db, g: any) {
     externalId: g.external_id ?? undefined,
     displayName: g.name,
     members: members.map((m) => ({ value: m.id, display: m.name, $ref: `${scimBase()}/Users/${m.id}` })),
-    meta: { resourceType: "Group", created: iso(g.created_at), lastModified: iso(g.updated_at ?? g.created_at), location: `${scimBase()}/Groups/${g.id}` },
+    meta: {
+      resourceType: "Group",
+      created: iso(g.created_at),
+      lastModified: iso(g.updated_at ?? g.created_at),
+      location: `${scimBase()}/Groups/${g.id}`,
+    },
   };
 }
 
@@ -391,7 +433,9 @@ function assertCanGrantScimRole(a: AuthContext, role: string) {
   const perms = BUILTIN_ROLE_PERMISSIONS[role as keyof typeof BUILTIN_ROLE_PERMISSIONS] ?? [];
   const missing = perms.filter((p) => !hasPerm(a, p));
   if (missing.length) {
-    throw new AppError(403, "forbidden", `No podés aprovisionar usuarios con el rol ${role}: te faltan permisos (${missing.join(", ")})`, { missing });
+    throw new AppError(403, "forbidden", `No podés aprovisionar usuarios con el rol ${role}: te faltan permisos (${missing.join(", ")})`, {
+      missing,
+    });
   }
 }
 
@@ -503,12 +547,18 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       // Carrera con otro alta del mismo correo o grupo (índice único): 409 SCIM en vez de 500.
       if (e?.code === "23505") e = new ScimError(409, "Ya existe un recurso con ese valor", "uniqueness");
       const status = e instanceof ScimError ? e.status : e instanceof z.ZodError ? 400 : e.statusCode && e.statusCode < 500 ? e.statusCode : 500;
-      const detail = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : status === 500 ? "Error interno" : e.message;
+      const detail =
+        e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : status === 500 ? "Error interno" : e.message;
       if (status === 500) _req.log.error({ err }, "error SCIM");
       reply
         .code(status)
         .header("content-type", "application/scim+json")
-        .send({ schemas: [SCHEMA_ERROR], status: String(status), detail, ...(e.scimType ? { scimType: e.scimType } : e instanceof z.ZodError ? { scimType: "invalidValue" } : {}) });
+        .send({
+          schemas: [SCHEMA_ERROR],
+          status: String(status),
+          detail,
+          ...(e.scimType ? { scimType: e.scimType } : e instanceof z.ZodError ? { scimType: "invalidValue" } : {}),
+        });
     });
 
     // Autenticación por token Bearer de la organización.
@@ -563,7 +613,11 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       schemas: [SCHEMA_LIST],
       totalResults: 2,
       Resources: [
-        { id: SCHEMA_USER, name: "User", attributes: ["userName", "name", "displayName", "emails", "active", "externalId", "groups"].map((n) => ({ name: n })) },
+        {
+          id: SCHEMA_USER,
+          name: "User",
+          attributes: ["userName", "name", "displayName", "emails", "active", "externalId", "groups"].map((n) => ({ name: n })),
+        },
         { id: SCHEMA_GROUP, name: "Group", attributes: ["displayName", "members", "externalId"].map((n) => ({ name: n })) },
       ],
     }));
@@ -582,7 +636,10 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       }
       const total = await s.db.one<any>(`SELECT count(*)::int AS n FROM (${USERS_SQL}${where}) x`, params);
       params.push(count, startIndex - 1);
-      const rows = await s.db.query<UserRow>(`${USERS_SQL}${where} ORDER BY u.created_at, u.id LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+      const rows = await s.db.query<UserRow>(
+        `${USERS_SQL}${where} ORDER BY u.created_at, u.id LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      );
       return {
         schemas: [SCHEMA_LIST],
         totalResults: Number(total?.n ?? 0),
@@ -592,7 +649,9 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       };
     });
 
-    sub.get<{ Params: { id: string } }>(`${BASE}/Users/:id`, async (req) => toScimUser(s.db, T(req).tenantId, await findUser(s.db, T(req).tenantId, req.params.id)));
+    sub.get<{ Params: { id: string } }>(`${BASE}/Users/:id`, async (req) =>
+      toScimUser(s.db, T(req).tenantId, await findUser(s.db, T(req).tenantId, req.params.id)),
+    );
 
     sub.post(`${BASE}/Users`, async (req, reply: FastifyReply) => {
       const { tenantId } = T(req);
@@ -614,7 +673,11 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
           // (active = false) todavía no se vincula: la membresía se crea al activarla después.
         } else {
           u = { id: uuidv7() };
-          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'scim-provisioned','es')`, [u.id, email, displayNameOf(input, email)]);
+          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'scim-provisioned','es')`, [
+            u.id,
+            email,
+            displayNameOf(input, email),
+          ]);
         }
         await t.query(
           `INSERT INTO scim_users (tenant_id, user_id, external_id, given_name, family_name, active) VALUES ($1,$2,$3,$4,$5,$6)
@@ -629,7 +692,9 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
         email,
         active,
         // Entró aceptando una invitación pendiente: con su rol (no el rol por defecto de SCIM).
-        ...(joined?.invitationId ? { invitationId: joined.invitationId, role: joined.role, ...(joined.roleId ? { roleId: joined.roleId } : {}) } : {}),
+        ...(joined?.invitationId
+          ? { invitationId: joined.invitationId, role: joined.role, ...(joined.roleId ? { roleId: joined.roleId } : {}) }
+          : {}),
       });
       reply.code(201).header("location", `${scimBase()}/Users/${userId}`);
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, userId));
@@ -652,10 +717,16 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       const input = PatchInput.parse(req.body);
       const attrs = userPatchToAttrs(input.Operations);
       const r = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
-      await audit(req, "active" in attrs ? (asBool(attrs.active) ? "member.scim_activated" : "member.scim_deactivated") : "member.scim_updated", "user", req.params.id, {
-        fields: Object.keys(attrs),
-        ...revokedData(r?.revoked),
-      });
+      await audit(
+        req,
+        "active" in attrs ? (asBool(attrs.active) ? "member.scim_activated" : "member.scim_deactivated") : "member.scim_updated",
+        "user",
+        req.params.id,
+        {
+          fields: Object.keys(attrs),
+          ...revokedData(r?.revoked),
+        },
+      );
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, req.params.id));
     });
 
@@ -667,7 +738,10 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
         const r = (await setActive(t, tenantId, req.params.id, false)).revoked;
         // La fila queda (active = false, deleted_at): sin ella el alta JIT por SSO lo volvía a sumar. GET y listados
         // SCIM ya no lo muestran (404).
-        await t.query(`UPDATE scim_users SET active = false, deleted_at = now(), updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, req.params.id]);
+        await t.query(`UPDATE scim_users SET active = false, deleted_at = now(), updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [
+          tenantId,
+          req.params.id,
+        ]);
         return r;
       });
       await audit(req, "member.scim_deleted", "user", req.params.id, revokedData(revoked));
@@ -688,7 +762,10 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       }
       const total = await s.db.one<any>(`SELECT count(*)::int AS n FROM (${GROUPS_SQL}${where}) x`, params);
       params.push(count, startIndex - 1);
-      const rows = await s.db.query<any>(`${GROUPS_SQL}${where} ORDER BY g.created_at, g.id LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+      const rows = await s.db.query<any>(
+        `${GROUPS_SQL}${where} ORDER BY g.created_at, g.id LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      );
       const noMembers = /members/.test(req.query.excludedAttributes ?? "");
       const resources = await Promise.all(rows.map((g) => toScimGroup(s.db, g)));
       return {
@@ -700,10 +777,16 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       };
     });
 
-    sub.get<{ Params: { id: string } }>(`${BASE}/Groups/:id`, async (req) => toScimGroup(s.db, await findGroup(s.db, T(req).tenantId, req.params.id)));
+    sub.get<{ Params: { id: string } }>(`${BASE}/Groups/:id`, async (req) =>
+      toScimGroup(s.db, await findGroup(s.db, T(req).tenantId, req.params.id)),
+    );
 
     const GroupInput = z
-      .object({ displayName: z.string().trim().min(1).max(200), externalId: z.string().max(500).optional().nullable(), members: z.array(z.any()).optional() })
+      .object({
+        displayName: z.string().trim().min(1).max(200),
+        externalId: z.string().max(500).optional().nullable(),
+        members: z.array(z.any()).optional(),
+      })
       .passthrough();
 
     sub.post(`${BASE}/Groups`, async (req, reply: FastifyReply) => {
@@ -765,7 +848,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
           } else if (/^externalId$/i.test(path)) {
             await t.query(
               `INSERT INTO scim_groups (group_id, tenant_id, external_id) VALUES ($1,$2,$3) ON CONFLICT (group_id) DO UPDATE SET external_id = EXCLUDED.external_id`,
-              [g.id, tenantId, kind === "remove" ? null : op.value ?? null],
+              [g.id, tenantId, kind === "remove" ? null : (op.value ?? null)],
             );
           } else if (!path && op.value && typeof op.value === "object") {
             const v = op.value as any;

@@ -7,15 +7,7 @@ import * as z from "zod/v4";
 import type { ContractMetadata, SuggestedFieldType } from "@calasign/shared";
 import { config } from "../../config";
 import { AppError } from "../../lib/errors";
-import {
-  docsToText,
-  estimateTokens,
-  mockAnswer,
-  mockMetadata,
-  mockPlaybookReview,
-  mockSummary,
-  type DocText,
-} from "./heuristics";
+import { docsToText, estimateTokens, mockAnswer, mockMetadata, mockPlaybookReview, mockSummary, type DocText } from "./heuristics";
 
 export interface ProviderUsage {
   provider: "anthropic" | "mock";
@@ -49,15 +41,13 @@ export interface RawFinding {
 export interface AiProvider {
   readonly name: "anthropic" | "mock";
   readonly model: string;
-  detectFields(docs: DocText[]): Promise<AiResult<{ lineId: string; type: SuggestedFieldType; roleHint: string | null; label: string | null; confidence: number }[]>>;
+  detectFields(
+    docs: DocText[],
+  ): Promise<AiResult<{ lineId: string; type: SuggestedFieldType; roleHint: string | null; label: string | null; confidence: number }[]>>;
   summarize(docs: DocText[], locale: string): Promise<AiResult<{ summary: string; keyPoints: string[]; citations: RawCitation[] }>>;
   answer(docs: DocText[], question: string, locale: string): Promise<AiResult<{ answered: boolean; answer: string; citations: RawCitation[] }>>;
   extractMetadata(docs: DocText[]): Promise<AiResult<{ metadata: ContractMetadata; confidence: Record<string, number> }>>;
-  reviewPlaybook(
-    docs: DocText[],
-    rules: string[],
-    locale: string,
-  ): Promise<AiResult<RawFinding[]>>;
+  reviewPlaybook(docs: DocText[], rules: string[], locale: string): Promise<AiResult<RawFinding[]>>;
 }
 
 /**
@@ -89,7 +79,13 @@ class MockProvider implements AiProvider {
   readonly model = "calasign-mock-1";
 
   private usage(prompt: string, out: unknown): ProviderUsage {
-    return { provider: "mock", model: this.model, inputTokens: estimateTokens(prompt), outputTokens: estimateTokens(JSON.stringify(out)), promptSha256: sha(prompt) };
+    return {
+      provider: "mock",
+      model: this.model,
+      inputTokens: estimateTokens(prompt),
+      outputTokens: estimateTokens(JSON.stringify(out)),
+      promptSha256: sha(prompt),
+    };
   }
 
   async detectFields(docs: DocText[]) {
@@ -169,7 +165,9 @@ const MetadataSchema = z.object({
   noticePeriodDays: z.number().int().nullable(),
   confidence: z
     .array(z.object({ field: z.string(), value: z.number() }))
-    .describe("Confianza 0..1 por campo extraído (parties, effectiveDate, expiryDate, renewalDate, autoRenewal, amounts, governingLaw, noticePeriodDays)."),
+    .describe(
+      "Confianza 0..1 por campo extraído (parties, effectiveDate, expiryDate, renewalDate, autoRenewal, amounts, governingLaw, noticePeriodDays).",
+    ),
 });
 
 const ReviewSchema = z.object({
@@ -262,7 +260,10 @@ class AnthropicProvider implements AiProvider {
     let res: Anthropic.Beta.BetaMessage | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
-        res = (await this.client.beta.messages.create(body as Anthropic.Beta.MessageCreateParamsNonStreaming, { timeout, maxRetries: 0 })) as Anthropic.Beta.BetaMessage;
+        res = (await this.client.beta.messages.create(body as Anthropic.Beta.MessageCreateParamsNonStreaming, {
+          timeout,
+          maxRetries: 0,
+        })) as Anthropic.Beta.BetaMessage;
         break;
       } catch (e) {
         if (e instanceof Anthropic.APIConnectionTimeoutError) {
@@ -344,7 +345,10 @@ si se renueva automáticamente, montos con su moneda (ISO 4217), ley o jurisdicc
 Usá null para lo que no figure. No calcules fechas que el documento no da explícitamente.`,
     );
     const { confidence, ...metadata } = r.result;
-    return { result: { metadata, confidence: Object.fromEntries(confidence.map((c) => [c.field, Math.max(0, Math.min(1, c.value))])) }, usage: r.usage };
+    return {
+      result: { metadata, confidence: Object.fromEntries(confidence.map((c) => [c.field, Math.max(0, Math.min(1, c.value))])) },
+      usage: r.usage,
+    };
   }
 
   async reviewPlaybook(docs: DocText[], rules: string[], locale: string) {
@@ -380,7 +384,9 @@ function resolveProvider(): AiProvider | null {
   } else if (forced === "mock" || (!hasKey && forced !== "anthropic")) {
     cached = new MockProvider();
   } else {
-    const effort = (EFFORTS as readonly string[]).includes(process.env.AI_EFFORT ?? "") ? (process.env.AI_EFFORT as (typeof EFFORTS)[number]) : "medium";
+    const effort = (EFFORTS as readonly string[]).includes(process.env.AI_EFFORT ?? "")
+      ? (process.env.AI_EFFORT as (typeof EFFORTS)[number])
+      : "medium";
     cached = new AnthropicProvider(process.env.AI_MODEL || "claude-opus-5-5", effort, process.env.AI_FALLBACKS !== "off");
   }
   return cached;
@@ -402,7 +408,10 @@ export function getAiProvider(): AiProvider {
 /** Al arrancar: en producción sin clave la IA queda deshabilitada; se avisa en el log (error de configuración). */
 export function checkAiProviderConfig(log: { error(o: object, m?: string): void }) {
   if (!resolveProvider()) {
-    log.error({ ai: "none" }, "IA deshabilitada: producción sin ANTHROPIC_API_KEY (ni ANTHROPIC_AUTH_TOKEN) o con AI_PROVIDER=mock; las funciones de IA responden 503 ai_unavailable");
+    log.error(
+      { ai: "none" },
+      "IA deshabilitada: producción sin ANTHROPIC_API_KEY (ni ANTHROPIC_AUTH_TOKEN) o con AI_PROVIDER=mock; las funciones de IA responden 503 ai_unavailable",
+    );
   }
 }
 

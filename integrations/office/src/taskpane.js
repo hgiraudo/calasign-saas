@@ -48,7 +48,8 @@ function errorText(e) {
     if (e.status === 0) return t("errNetwork");
     if (e.code === "anchor_not_found") return t("errAnchorNotFound", { anchor: e.details?.anchor ?? "" });
     if (e.status === 401) return t("errSession");
-    if (e.code === "envelope_incomplete" && Array.isArray(e.details?.problems)) return e.details.problems.map((p) => (p && typeof p === "object" ? p.message : String(p))).join(". ");
+    if (e.code === "envelope_incomplete" && Array.isArray(e.details?.problems))
+      return e.details.problems.map((p) => (p && typeof p === "object" ? p.message : String(p))).join(". ");
     return e.message;
   }
   return String(e?.message ?? e);
@@ -99,7 +100,9 @@ function addSigner(name = "", email = "") {
   row.querySelector(".s-name").value = name;
   row.querySelector(".s-email").placeholder = t("email");
   row.querySelector(".s-email").value = email;
-  row.querySelector(".s-order").value = String(n === 1 ? 1 : Math.max(...[...$("signers").querySelectorAll(".s-order")].map((i) => Number(i.value) || 1)) + 1);
+  row.querySelector(".s-order").value = String(
+    n === 1 ? 1 : Math.max(...[...$("signers").querySelectorAll(".s-order")].map((i) => Number(i.value) || 1)) + 1,
+  );
   // Primer ancla libre: con la cantidad de filas, quitar una del medio y agregar otra repetía el ancla de la última
   // (y los dos campos de firma caían en el mismo lugar).
   const used = new Set([...$("signers").querySelectorAll(".s-anchor")].map((i) => i.value.trim()));
@@ -343,7 +346,14 @@ async function onSend() {
       locale: envelopeLocale(),
       metadata: { source: `office-${host}` },
       documents: [{ file: "document", name }],
-      recipients: p.signers.map((s) => ({ role: "signer", routingOrder: s.order, name: s.name, email: s.email, channels: ["email"], locale: envelopeLocale() })),
+      recipients: p.signers.map((s) => ({
+        role: "signer",
+        routingOrder: s.order,
+        name: s.name,
+        email: s.email,
+        channels: ["email"],
+        locale: envelopeLocale(),
+      })),
       fields,
       send: true,
     };
@@ -409,7 +419,10 @@ async function loadRecent() {
 // ───────── Arranque ─────────
 
 function init(info) {
-  host = (info?.host && info.host === globalThis.Office?.HostType?.Outlook) || new URLSearchParams(location.search).get("host") === "outlook" ? "outlook" : "word";
+  host =
+    (info?.host && info.host === globalThis.Office?.HostType?.Outlook) || new URLSearchParams(location.search).get("host") === "outlook"
+      ? "outlook"
+      : "word";
   setLanguage(globalThis.Office?.context?.displayLanguage || navigator.language);
   applyTranslations();
 

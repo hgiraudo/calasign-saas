@@ -19,7 +19,11 @@ function onePage(pageDict: string) {
   return new Uint8Array(Buffer.from(out, "latin1"));
 }
 const page = (extra: string) => onePage(`<< /Type /Page /Parent 2 0 R ${extra} /Contents 4 0 R >>`);
-const codeOf = (p: Promise<unknown>) => p.then(() => "ok", (e) => (e instanceof InvalidPdfError ? e.code : `otro: ${e}`));
+const codeOf = (p: Promise<unknown>) =>
+  p.then(
+    () => "ok",
+    (e) => (e instanceof InvalidPdfError ? e.code : `otro: ${e}`),
+  );
 
 describe("geometría de las páginas", () => {
   it.each([
@@ -59,11 +63,15 @@ describe("geometría de las páginas", () => {
       const s = Buffer.from(pdf).toString("latin1");
       const at = s.indexOf("xref\n");
       const obj = "5 0 obj\nnull\nendobj\n";
-      const fixed = s.slice(0, at) + obj + s.slice(at)
-        .replace("xref\n0 5\n", "xref\n0 6\n")
-        .replace("trailer", String(at).padStart(10, "0") + " 00000 n \ntrailer")
-        .replace("/Size 5", "/Size 6")
-        .replace(/startxref\n\d+/, `startxref\n${at + obj.length}`);
+      const fixed =
+        s.slice(0, at) +
+        obj +
+        s
+          .slice(at)
+          .replace("xref\n0 5\n", "xref\n0 6\n")
+          .replace("trailer", String(at).padStart(10, "0") + " 00000 n \ntrailer")
+          .replace("/Size 5", "/Size 6")
+          .replace(/startxref\n\d+/, `startxref\n${at + obj.length}`);
       return new Uint8Array(Buffer.from(fixed, "latin1"));
     };
     const pdf = withNull(page(box));

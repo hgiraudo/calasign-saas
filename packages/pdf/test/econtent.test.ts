@@ -26,7 +26,12 @@ describe("CMS con contenido incrustado", () => {
     // La víctima firma (legítimamente) otro documento.
     const other = await prepareExternalSignature(await pdfWith("Algo que la víctima firmó"), [victimDer], { fieldName: "Firma1" });
     const signature = new Uint8Array(sign("sha256", Buffer.from(other.signedAttrsDer), victim.keyPem!));
-    const cms = await assembleCms({ signedAttrsDer: other.signedAttrsDer, chainDer: [victimDer], signature, signatureAlgorithm: "RSASSA-PKCS1-v1_5" });
+    const cms = await assembleCms({
+      signedAttrsDer: other.signedAttrsDer,
+      chainDer: [victimDer],
+      signature,
+      signatureAlgorithm: "RSASSA-PKCS1-v1_5",
+    });
     // Se incrusta el contenido que sí firmó.
     const ci = pkijs.ContentInfo.fromBER(toAB(cms));
     const sd = new pkijs.SignedData({ schema: ci.content });
@@ -40,7 +45,13 @@ describe("CMS con contenido incrustado", () => {
     const target = await prepareExternalSignature(await pdfWith("Deuda a favor del atacante"), [victimDer], { fieldName: "Firma1" });
     const [, start, end] = target.byteRange;
     const buf = Buffer.from(target.preparedPdf);
-    buf.write(Buffer.from(forged).toString("hex").padEnd(end - start - 2, "0"), start + 1, "latin1");
+    buf.write(
+      Buffer.from(forged)
+        .toString("hex")
+        .padEnd(end - start - 2, "0"),
+      start + 1,
+      "latin1",
+    );
 
     const report = await validatePdf(new Uint8Array(buf), { trustAnchors: pemToDerList(ca.certPem) });
     expect(report.signatures[0].integrity.valid).toBe(false);

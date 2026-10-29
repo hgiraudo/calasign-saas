@@ -45,7 +45,15 @@ export function validateKommoDomain(raw: string): string {
   const u = parseUrl(raw, "dominio de la cuenta");
   if (isLocalDev(u)) return u.origin;
   const sub = u.hostname.split(".")[0]!.toLowerCase();
-  if (u.protocol !== "https:" || u.port || u.username || u.password || !KOMMO_HOST.test(u.hostname) || RESERVED.has(sub) || sub.startsWith("drive-")) {
+  if (
+    u.protocol !== "https:" ||
+    u.port ||
+    u.username ||
+    u.password ||
+    !KOMMO_HOST.test(u.hostname) ||
+    RESERVED.has(sub) ||
+    sub.startsWith("drive-")
+  ) {
     throw new CrmError(`dominio de Kommo inesperado: ${u.hostname}`);
   }
   return u.origin;
@@ -55,7 +63,8 @@ export function validateKommoDomain(raw: string): string {
 export function validateKommoDrive(raw: string): URL {
   const u = parseUrl(raw, "servidor de archivos");
   if (isLocalDev(u)) return u;
-  if (u.protocol !== "https:" || u.port || u.username || u.password || !KOMMO_DRIVE_HOST.test(u.hostname)) throw new CrmError(`servidor de archivos de Kommo inesperado: ${u.hostname}`);
+  if (u.protocol !== "https:" || u.port || u.username || u.password || !KOMMO_DRIVE_HOST.test(u.hostname))
+    throw new CrmError(`servidor de archivos de Kommo inesperado: ${u.hostname}`);
   return u;
 }
 
@@ -98,7 +107,12 @@ function findField(fields: KField[], ref: string): KField | undefined {
   return (
     fields.find((f) => String(f.id) === r) ??
     fields.find((f) => f.code && String(f.code).toLowerCase() === low) ??
-    fields.find((f) => String(f.name ?? "").trim().toLowerCase() === low)
+    fields.find(
+      (f) =>
+        String(f.name ?? "")
+          .trim()
+          .toLowerCase() === low,
+    )
   );
 }
 
@@ -107,7 +121,7 @@ const ENUM_TYPES = new Set(["select", "radiobutton", "multiselect", "category"])
 /** Valores de un custom_fields_values como texto ("a, b"). */
 const cfText = (x: any) =>
   (Array.isArray(x?.values) ? x.values : [])
-    .map((v: any) => (v && typeof v === "object" ? v.value ?? v.enum_code : v))
+    .map((v: any) => (v && typeof v === "object" ? (v.value ?? v.enum_code) : v))
     .filter((v: unknown) => v !== undefined && v !== null && v !== "")
     .join(", ");
 
@@ -167,7 +181,8 @@ export async function kommoWriteStatus(c: CrmConn, t: CrmObjectType, id: string,
   const lid = leadId(id);
   const fields = await loadLeadFields(c);
   const f = findField(fields, property);
-  if (!f) throw new MappingError("crm_status_field", `Kommo no tiene un campo "${property}" en los leads (usá el id, el código o el nombre del campo)`);
+  if (!f)
+    throw new MappingError("crm_status_field", `Kommo no tiene un campo "${property}" en los leads (usá el id, el código o el nombre del campo)`);
   let values: Record<string, unknown>[] = [{ value }];
   if (ENUM_TYPES.has(f.type)) {
     const opt = (f.enums ?? []).find((o) => String(o.value).trim().toLowerCase() === value.trim().toLowerCase());
@@ -197,7 +212,13 @@ async function uploadToDrive(c: CrmConn, a: AttachInput): Promise<string> {
     const u = validateKommoDrive(next);
     // Las URLs de subida son del mismo servidor de archivos (no se sigue una URL a otro host).
     if (u.origin !== drive.origin) throw new CrmError(`kommo: URL de subida fuera del servidor de archivos (${u.hostname})`);
-    const r = await crmFetch(c, { method: "POST", base: u.origin, path: `${u.pathname}${u.search}`, raw: pdf.subarray(off, off + part), headers: { "content-type": "application/octet-stream" } });
+    const r = await crmFetch(c, {
+      method: "POST",
+      base: u.origin,
+      path: `${u.pathname}${u.search}`,
+      raw: pdf.subarray(off, off + part),
+      headers: { "content-type": "application/octet-stream" },
+    });
     if (r?.uuid) return String(r.uuid);
     next = r?.next_url ? String(r.next_url) : null;
     if (off + part >= pdf.length && !next) break;
@@ -243,6 +264,6 @@ export async function kommoTest(c: CrmConn): Promise<{ label: string | null; con
   const acc = (await crmFetch(c, { path: "/api/v4/account" })) ?? {};
   const host = c.cfg.baseDomain ? new URL(String(c.cfg.baseDomain)).host : null;
   // Cuentas viejas de amoCRM conservan su host (<cuenta>.amocrm.com).
-  const label = acc.subdomain ? (host?.endsWith(".amocrm.com") ? host : `${acc.subdomain}.kommo.com`) : host ?? acc.name ?? null;
+  const label = acc.subdomain ? (host?.endsWith(".amocrm.com") ? host : `${acc.subdomain}.kommo.com`) : (host ?? acc.name ?? null);
   return { label, config: { accountId: acc.id != null ? String(acc.id) : null } };
 }

@@ -78,8 +78,18 @@ await api("POST", "/v1/auth/signup", {
 });
 step("alta de cuenta y sesión");
 
-const { envelope } = await api("POST", "/v1/envelopes", { subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" }, { headers: { "idempotency-key": `e2e-${stamp}` } });
-const again = await api("POST", "/v1/envelopes", { subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" }, { headers: { "idempotency-key": `e2e-${stamp}` } });
+const { envelope } = await api(
+  "POST",
+  "/v1/envelopes",
+  { subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" },
+  { headers: { "idempotency-key": `e2e-${stamp}` } },
+);
+const again = await api(
+  "POST",
+  "/v1/envelopes",
+  { subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" },
+  { headers: { "idempotency-key": `e2e-${stamp}` } },
+);
 if (again.envelope.id !== envelope.id) throw new Error("idempotencia rota");
 // La clave vale por credencial: otra integración de la misma organización que use la misma clave y el mismo cuerpo
 // (p. ej. el id de un pedido) crea su propio sobre; no recibe la respuesta guardada de la sesión.
@@ -109,8 +119,24 @@ const signer1 = `José Pérez ${stamp}`;
 const signer2 = `Maria Gonçalves ${stamp}`;
 await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
   recipients: [
-    { id: s1, name: signer1, email: `jose+${stamp}@example.com`, routingOrder: 1, channels: ["email"], idDocumentType: "cedula", idDocumentNumber: "001-1234567-8" },
-    { id: s2, name: signer2, email: `maria+${stamp}@example.com`, phone: "+5511999990000", routingOrder: 2, locale: "pt-BR", channels: ["email", "whatsapp", "telegram"] },
+    {
+      id: s1,
+      name: signer1,
+      email: `jose+${stamp}@example.com`,
+      routingOrder: 1,
+      channels: ["email"],
+      idDocumentType: "cedula",
+      idDocumentNumber: "001-1234567-8",
+    },
+    {
+      id: s2,
+      name: signer2,
+      email: `maria+${stamp}@example.com`,
+      phone: "+5511999990000",
+      routingOrder: 2,
+      locale: "pt-BR",
+      channels: ["email", "whatsapp", "telegram"],
+    },
     { id: cc, name: `Copia ${stamp}`, email: `cc+${stamp}@example.com`, role: "cc", routingOrder: 3, channels: ["email"] },
   ],
 });
@@ -149,7 +175,12 @@ sess = await api("GET", `/v1/signing/${t2}`);
 if (sess.recipient.locale !== "pt-BR") throw new Error("locale del firmante 2");
 await api("POST", `/v1/signing/${t2}/consent`);
 const fields2 = sess.fields.filter((f) => f.type === "text").map((f) => ({ id: f.id, value: "Diretora Financeira" }));
-const bad = await api("POST", `/v1/signing/${t2}/complete`, { fields: [] , signature: { kind: "typed", imagePng: PNG, text: "Maria" } }, { raw: true });
+const bad = await api(
+  "POST",
+  `/v1/signing/${t2}/complete`,
+  { fields: [], signature: { kind: "typed", imagePng: PNG, text: "Maria" } },
+  { raw: true },
+);
 if (bad.status !== 422) throw new Error(`faltaba validar el campo obligatorio (HTTP ${bad.status})`);
 sess = await api("POST", `/v1/signing/${t2}/complete`, { fields: fields2, signature: { kind: "typed", imagePng: PNG, text: "Maria" } });
 step("firmante 2 firmó (y se rechazó un intento incompleto)");

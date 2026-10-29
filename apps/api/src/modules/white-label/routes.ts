@@ -30,7 +30,15 @@ import { render, type TemplateKind } from "../../notifications/templates";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { requireFeature, tenantPlan } from "../billing/plans";
-import { assertClaimableDomain, invalidateDomainCache, isPlatformHost, resolveTxt, routesToPlatform, servingFields, webDomainLockKey } from "../custom-domains";
+import {
+  assertClaimableDomain,
+  invalidateDomainCache,
+  isPlatformHost,
+  resolveTxt,
+  routesToPlatform,
+  servingFields,
+  webDomainLockKey,
+} from "../custom-domains";
 import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   brandForHost,
@@ -77,7 +85,11 @@ async function requireWhiteLabel(db: Db, tenantId: string) {
 
 /** La configuración propia guardada de una marca (la por defecto en tenants.branding.whiteLabel). */
 async function storedBrandConfig(db: Db, tenantId: string, brandId: string | null): Promise<Record<string, unknown>> {
-  if (brandId) return ((await db.one<any>(`SELECT config FROM brands WHERE id = $1 AND tenant_id = $2`, [brandId, tenantId]))?.config ?? {}) as Record<string, unknown>;
+  if (brandId)
+    return ((await db.one<any>(`SELECT config FROM brands WHERE id = $1 AND tenant_id = $2`, [brandId, tenantId]))?.config ?? {}) as Record<
+      string,
+      unknown
+    >;
   // Con el color y el pie históricos (PATCH /v1/settings/branding), como la configuración que muestra la consola: si
   // no, reenviar el color que ya estaba contaba como agregarlo.
   const b = (await db.one<any>(`SELECT branding FROM tenants WHERE id = $1`, [tenantId]))?.branding ?? {};
@@ -87,8 +99,7 @@ async function storedBrandConfig(db: Db, tenantId: string, brandId: string | nul
 /** Si la configuración nueva agrega o cambia algo respecto de lo guardado (vaciar, apagar o dejar igual no cuenta). */
 function addsBrandConfig(next: unknown, prev: unknown, literal = false): boolean {
   // En textos y plantillas un "" sí es un valor (reemplaza al texto original por uno vacío): no cuenta como quitar.
-  const unset = (v: unknown) =>
-    v === undefined || v === null || (v === "" && !literal) || v === false || (Array.isArray(v) && v.length === 0);
+  const unset = (v: unknown) => v === undefined || v === null || (v === "" && !literal) || v === false || (Array.isArray(v) && v.length === 0);
   if (unset(next)) return false;
   if (Array.isArray(next) || typeof next !== "object") return JSON.stringify(next) !== JSON.stringify(prev);
   const p = prev && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {};
@@ -197,7 +208,8 @@ function sniff(buf: Buffer): string | null {
   return null;
 }
 
-const unsafeSvg = (svg: string) => /<script|\bon[a-z]{1,40}\s*=|javascript:|<foreignObject|xlink:href\s*=\s*["'](?!#)|href\s*=\s*["'](?!#)|<!ENTITY/i.test(svg);
+const unsafeSvg = (svg: string) =>
+  /<script|\bon[a-z]{1,40}\s*=|javascript:|<foreignObject|xlink:href\s*=\s*["'](?!#)|href\s*=\s*["'](?!#)|<!ENTITY/i.test(svg);
 
 function allowedType(kind: BrandAssetKind, type: string): boolean {
   if (kind === "font") return type.startsWith("font/");
@@ -217,7 +229,13 @@ const EXT: Record<string, string> = {
 };
 
 /** Lee y escribe las referencias a archivos de una marca (default: tenants.branding; sub-marca: brands.assets). */
-async function setAsset(db: Db, tenantId: string, brandId: string, kind: BrandAssetKind, ref: { fileId: string; contentType: string } | null): Promise<string | null> {
+async function setAsset(
+  db: Db,
+  tenantId: string,
+  brandId: string,
+  kind: BrandAssetKind,
+  ref: { fileId: string; contentType: string } | null,
+): Promise<string | null> {
   if (brandId === DEFAULT_BRAND) {
     const cur = await db.one<{ branding: StoredTenantBranding }>(`SELECT branding FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
     const b = cur?.branding ?? {};
@@ -233,7 +251,10 @@ async function setAsset(db: Db, tenantId: string, brandId: string, kind: BrandAs
     const assets: BrandAssetRefs = { ...(b.whiteLabelAssets ?? {}) };
     const prev = assets[kind]?.fileId ?? null;
     assets[kind] = ref;
-    await db.query(`UPDATE tenants SET branding = COALESCE(branding,'{}'::jsonb) || $2::jsonb WHERE id = $1`, [tenantId, JSON.stringify({ whiteLabelAssets: assets })]);
+    await db.query(`UPDATE tenants SET branding = COALESCE(branding,'{}'::jsonb) || $2::jsonb WHERE id = $1`, [
+      tenantId,
+      JSON.stringify({ whiteLabelAssets: assets }),
+    ]);
     return prev;
   }
   const row = await db.one<any>(`SELECT assets FROM brands WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [brandId, tenantId]);
@@ -249,13 +270,41 @@ async function setAsset(db: Db, tenantId: string, brandId: string, kind: BrandAs
 
 function emailDomainRecords(r: any, found?: { own: boolean; dkim: boolean; spf: boolean | null; dmarc: boolean | null }): EmailDomainRecord[] {
   const recs: EmailDomainRecord[] = [
-    { purpose: "ownership", type: "TXT", name: mailTxtName(r.domain), value: mailTxtValue(r.verification_token), ok: found?.own ?? null, required: true },
-    { purpose: "dkim", type: "TXT", name: `${r.dkim_selector}._domainkey.${r.domain}`, value: `v=DKIM1; k=rsa; p=${r.dkim_public_key}`, ok: found?.dkim ?? null, required: true },
+    {
+      purpose: "ownership",
+      type: "TXT",
+      name: mailTxtName(r.domain),
+      value: mailTxtValue(r.verification_token),
+      ok: found?.own ?? null,
+      required: true,
+    },
+    {
+      purpose: "dkim",
+      type: "TXT",
+      name: `${r.dkim_selector}._domainkey.${r.domain}`,
+      value: `v=DKIM1; k=rsa; p=${r.dkim_public_key}`,
+      ok: found?.dkim ?? null,
+      required: true,
+    },
   ];
   if (config.mail.spfInclude) {
-    recs.push({ purpose: "spf", type: "TXT", name: r.domain, value: `v=spf1 include:${config.mail.spfInclude} ~all`, ok: found?.spf ?? r.spf_ok ?? null, required: false });
+    recs.push({
+      purpose: "spf",
+      type: "TXT",
+      name: r.domain,
+      value: `v=spf1 include:${config.mail.spfInclude} ~all`,
+      ok: found?.spf ?? r.spf_ok ?? null,
+      required: false,
+    });
   }
-  recs.push({ purpose: "dmarc", type: "TXT", name: `_dmarc.${r.domain}`, value: "v=DMARC1; p=none;", ok: found?.dmarc ?? r.dmarc_ok ?? null, required: false });
+  recs.push({
+    purpose: "dmarc",
+    type: "TXT",
+    name: `_dmarc.${r.domain}`,
+    value: "v=DMARC1; p=none;",
+    ok: found?.dmarc ?? r.dmarc_ok ?? null,
+    required: false,
+  });
   return recs;
 }
 
@@ -313,7 +362,9 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
     // contaba como falta y una caída de los resolvers (SERVFAIL, timeout) de 12 h desverificaba todas las sub-marcas.
     let points = 2;
     try {
-      ok = (await resolveTxt(brandTxtName(r.domain))).includes(brandTxtValue(r.verification_token)) && (isLocalEnv() || (await routesToPlatform(r.domain)));
+      ok =
+        (await resolveTxt(brandTxtName(r.domain))).includes(brandTxtValue(r.verification_token)) &&
+        (isLocalEnv() || (await routesToPlatform(r.domain)));
     } catch (e) {
       points = 1;
       d.log.warn({ domain: r.domain, err: String(e) }, "no se pudo re-verificar el dominio de la marca");
@@ -325,9 +376,19 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
         "Re-verificación: el registro TXT o el CNAME ya no están publicados",
       ]);
       invalidateDomainCache();
-      await recordAudit(d.db, { tenantId: r.tenant_id, action: "brand.domain_unverified", actor: { type: "system", label: "Re-verificación de dominio" }, targetType: "domain", targetId: r.domain });
+      await recordAudit(d.db, {
+        tenantId: r.tenant_id,
+        action: "brand.domain_unverified",
+        actor: { type: "system", label: "Re-verificación de dominio" },
+        targetType: "domain",
+        targetId: r.domain,
+      });
     } else {
-      await d.db.query(`UPDATE brand_domains SET recheck_failures = $2, last_checked_at = now(), last_error = $3 WHERE id = $1`, [r.id, failures, ok ? null : "Re-verificación fallida"]);
+      await d.db.query(`UPDATE brand_domains SET recheck_failures = $2, last_checked_at = now(), last_error = $3 WHERE id = $1`, [
+        r.id,
+        failures,
+        ok ? null : "Re-verificación fallida",
+      ]);
     }
   }
   const mails = await d.db.query<any>(
@@ -341,7 +402,10 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
       return null;
     });
     if (f && (!f.own || !f.dkim)) {
-      await d.db.query(`UPDATE email_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Re-verificación: falta el TXT de propiedad o la clave DKIM"]);
+      await d.db.query(`UPDATE email_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1`, [
+        r.id,
+        "Re-verificación: falta el TXT de propiedad o la clave DKIM",
+      ]);
     } else if (f) {
       // El aviso de rechazo de SES no se toca: el DNS no dice nada de la identidad en SES. Lo borra el primer correo con
       // DKIM que SES acepte y solo lo anota un rechazo real de SES (outbound.noteDkimSendResult).
@@ -381,9 +445,17 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const input = CreateBrandInput.parse(req.body);
     if (input.config) await validateConfig(s.db, a.tenantId, input.config);
     const id = uuidv7();
-    const slug = `${slugify(input.name).slice(0, 40) || "marca"}-${randomToken(4).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+    const slug = `${slugify(input.name).slice(0, 40) || "marca"}-${randomToken(4)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")}`;
     try {
-      await s.db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,$3,$4,$5)`, [id, a.tenantId, input.name, slug, JSON.stringify(input.config ?? {})]);
+      await s.db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,$3,$4,$5)`, [
+        id,
+        a.tenantId,
+        input.name,
+        slug,
+        JSON.stringify(input.config ?? {}),
+      ]);
     } catch (e) {
       if ((e as { code?: string }).code === "23505") throw conflict("brand_exists", "Ya hay una marca con ese nombre");
       throw e;
@@ -429,7 +501,11 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
         throw e;
       }
     }
-    await auditFromRequest(s.db, req, a, "brand.updated", { targetType: "brand", targetId: cur.brandId ?? DEFAULT_BRAND, data: { fields: Object.keys((req.body as object) ?? {}) } });
+    await auditFromRequest(s.db, req, a, "brand.updated", {
+      targetType: "brand",
+      targetId: cur.brandId ?? DEFAULT_BRAND,
+      data: { fields: Object.keys((req.body as object) ?? {}) },
+    });
     return toApi(s.db, await loadBrand(s.db, a.tenantId, req.params.id));
   });
 
@@ -459,7 +535,12 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       senderName: "Juan García",
       organizationName: b.name,
       subject: input.locale === "en" ? "Service agreement" : input.locale === "pt-BR" ? "Contrato de serviços" : "Contrato de servicios",
-      message: input.locale === "en" ? "Hi Ana, please sign before Friday." : input.locale === "pt-BR" ? "Olá Ana, assine antes de sexta." : "Hola Ana, firmalo antes del viernes.",
+      message:
+        input.locale === "en"
+          ? "Hi Ana, please sign before Friday."
+          : input.locale === "pt-BR"
+            ? "Olá Ana, assine antes de sexta."
+            : "Hola Ana, firmalo antes del viernes.",
       link: `${b.baseUrl}/s/EJEMPLO`,
       reason: "—",
       declinedBy: "Ana Pérez",
@@ -467,7 +548,12 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const sender = await senderFor(s.db, b);
     if (input.event === "otp_code") {
       const m = OTP_MESSAGES(b, input.locale, "123456", vars.subject);
-      return { subject: m.subject, text: m.text, html: `<pre style="font-family:sans-serif;white-space:pre-wrap">${m.text.replace(/[<&]/g, (c) => (c === "<" ? "&lt;" : "&amp;"))}</pre>`, from: sender.from } satisfies BrandEmailPreview;
+      return {
+        subject: m.subject,
+        text: m.text,
+        html: `<pre style="font-family:sans-serif;white-space:pre-wrap">${m.text.replace(/[<&]/g, (c) => (c === "<" ? "&lt;" : "&amp;"))}</pre>`,
+        from: sender.from,
+      } satisfies BrandEmailPreview;
     }
     const m = render(input.event as TemplateKind, input.locale, vars, mailBranding(b, input.event as TemplateKind, input.locale));
     return { subject: m.subject, html: m.html, text: m.text, from: sender.from } satisfies BrandEmailPreview;
@@ -486,8 +572,10 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const buf = await file.toBuffer();
     if (file.file.truncated) throw new AppError(413, "file_too_large", `El archivo supera los ${Math.round(max / 1024)} KB`, { limit: "file" });
     const type = sniff(buf);
-    if (!type || !allowedType(kind, type)) throw badRequest("invalid_asset", kind === "font" ? "La fuente tiene que ser WOFF2, WOFF, TTF u OTF" : "Formato de imagen no admitido");
-    if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8"))) throw badRequest("invalid_asset", "El SVG contiene scripts o referencias externas");
+    if (!type || !allowedType(kind, type))
+      throw badRequest("invalid_asset", kind === "font" ? "La fuente tiene que ser WOFF2, WOFF, TTF u OTF" : "Formato de imagen no admitido");
+    if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8")))
+      throw badRequest("invalid_asset", "El SVG contiene scripts o referencias externas");
     // El logo se incrusta en el certificado de cada sobre: un PNG que declara dimensiones enormes reservaría GB al sellar.
     if (type === "image/png") {
       try {
@@ -531,7 +619,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
   app.put<P>("/v1/settings/brands/:id/domain", { preHandler: auth }, async (req) => {
     const a = A(req);
     await requireWhiteLabel(s.db, a.tenantId);
-    if (req.params.id === DEFAULT_BRAND) throw badRequest("use_custom_domain", "La marca de la organización usa Ajustes → Dominio propio (/v1/domains)");
+    if (req.params.id === DEFAULT_BRAND)
+      throw badRequest("use_custom_domain", "La marca de la organización usa Ajustes → Dominio propio (/v1/domains)");
     const b = await loadBrand(s.db, a.tenantId, req.params.id);
     const { domain } = SetDomainInput.parse(req.body);
     assertClaimable(domain);
@@ -545,7 +634,13 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       const cur = await t.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
       if (cur?.domain === domain) return false;
       await t.query(`DELETE FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
-      await t.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token) VALUES ($1,$2,$3,$4,$5)`, [uuidv7(), a.tenantId, b.brandId, domain, randomToken(18)]);
+      await t.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token) VALUES ($1,$2,$3,$4,$5)`, [
+        uuidv7(),
+        a.tenantId,
+        b.brandId,
+        domain,
+        randomToken(18),
+      ]);
       return true;
     });
     if (changed) {
@@ -555,54 +650,61 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     return { domain: domainToApi(await s.db.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId])) };
   });
 
-  app.post<P>("/v1/settings/brands/:id/domain/verify", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
-    const a = A(req);
-    // Verificar (o re-verificar uno que se desverificó) exige el plan, como darlo de alta; quitarlo no.
-    await requireWhiteLabel(s.db, a.tenantId);
-    const b = await loadBrand(s.db, a.tenantId, req.params.id);
-    const r = b.brandId ? await s.db.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId]) : null;
-    if (!r) throw notFound("Dominio");
-    let ok = false;
-    let error: string | null = null;
-    try {
-      const values = await resolveTxt(brandTxtName(r.domain));
-      ok = values.includes(brandTxtValue(r.verification_token));
-      if (!ok) error = `No se encontró el registro TXT ${brandTxtName(r.domain)}`;
-    } catch (e) {
-      error = `No se pudo consultar el DNS: ${String((e as Error).message ?? e)}`;
-    }
-    if (ok && !isLocalEnv() && !(await routesToPlatform(r.domain).catch(() => false))) {
-      ok = false;
-      error = `El dominio todavía no apunta a la plataforma: creá el CNAME ${r.domain} → ${appHost()}`;
-    }
-    // Cruce con los dominios propios y marca de verificado bajo el lock por dominio (el mismo que custom-domains.ts):
-    // dos verificaciones simultáneas (sub-marca y dominio propio) quedaban las dos verificadas.
-    try {
-      ok = await s.db.tx(async (t) => {
-        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [webDomainLockKey(r.domain)]);
-        let okT = ok;
-        if (okT && (await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
-          okT = false;
-          error = "Ese dominio ya está en uso";
-        }
-        await t.query(
-          `UPDATE brand_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
+  app.post<P>(
+    "/v1/settings/brands/:id/domain/verify",
+    { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (req) => {
+      const a = A(req);
+      // Verificar (o re-verificar uno que se desverificó) exige el plan, como darlo de alta; quitarlo no.
+      await requireWhiteLabel(s.db, a.tenantId);
+      const b = await loadBrand(s.db, a.tenantId, req.params.id);
+      const r = b.brandId ? await s.db.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId]) : null;
+      if (!r) throw notFound("Dominio");
+      let ok = false;
+      let error: string | null = null;
+      try {
+        const values = await resolveTxt(brandTxtName(r.domain));
+        ok = values.includes(brandTxtValue(r.verification_token));
+        if (!ok) error = `No se encontró el registro TXT ${brandTxtName(r.domain)}`;
+      } catch (e) {
+        error = `No se pudo consultar el DNS: ${String((e as Error).message ?? e)}`;
+      }
+      if (ok && !isLocalEnv() && !(await routesToPlatform(r.domain).catch(() => false))) {
+        ok = false;
+        error = `El dominio todavía no apunta a la plataforma: creá el CNAME ${r.domain} → ${appHost()}`;
+      }
+      // Cruce con los dominios propios y marca de verificado bajo el lock por dominio (el mismo que custom-domains.ts):
+      // dos verificaciones simultáneas (sub-marca y dominio propio) quedaban las dos verificadas.
+      try {
+        ok = await s.db.tx(async (t) => {
+          await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [webDomainLockKey(r.domain)]);
+          let okT = ok;
+          if (okT && (await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
+            okT = false;
+            error = "Ese dominio ya está en uso";
+          }
+          await t.query(
+            `UPDATE brand_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
              last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
-          // Un intento fallido no pone el contador en cero: si no, reintentar a mano mantenía verificado para siempre un
-          // dominio que la re-verificación ya estaba por bajar (como en custom-domains.ts).
-          [r.id, okT, error],
-        );
-        return okT;
-      });
-    } catch (e) {
-      if ((e as { code?: string }).code !== "23505") throw e;
-      ok = false;
-      await s.db.query(`UPDATE brand_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
-    }
-    invalidateDomainCache();
-    if (ok) await auditFromRequest(s.db, req, a, "brand.domain_verified", { targetType: "domain", targetId: r.domain });
-    return { domain: domainToApi(await s.db.one<any>(`SELECT * FROM brand_domains WHERE id = $1`, [r.id])) };
-  });
+            // Un intento fallido no pone el contador en cero: si no, reintentar a mano mantenía verificado para siempre un
+            // dominio que la re-verificación ya estaba por bajar (como en custom-domains.ts).
+            [r.id, okT, error],
+          );
+          return okT;
+        });
+      } catch (e) {
+        if ((e as { code?: string }).code !== "23505") throw e;
+        ok = false;
+        await s.db.query(`UPDATE brand_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [
+          r.id,
+          "Ese dominio ya lo verificó otra organización",
+        ]);
+      }
+      invalidateDomainCache();
+      if (ok) await auditFromRequest(s.db, req, a, "brand.domain_verified", { targetType: "domain", targetId: r.domain });
+      return { domain: domainToApi(await s.db.one<any>(`SELECT * FROM brand_domains WHERE id = $1`, [r.id])) };
+    },
+  );
 
   app.delete<P>("/v1/settings/brands/:id/domain", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
@@ -629,62 +731,82 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const pub = publicKey.export({ type: "spki", format: "der" }).toString("base64");
     const priv = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-    const selector = `s${randomToken(6).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6) || "1"}`;
+    const selector = `s${
+      randomToken(6)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .slice(0, 6) || "1"
+    }`;
     await s.db.query(
       `INSERT INTO email_domains (id, tenant_id, domain, verification_token, dkim_selector, dkim_public_key, dkim_private_key_enc) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [uuidv7(), a.tenantId, domain, randomToken(18), selector, pub, encrypt(priv)],
     );
     await auditFromRequest(s.db, req, a, "email_domain.added", { targetType: "domain", targetId: domain });
-    return reply.code(201).send(emailDomainToApi(await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [a.tenantId, domain])));
+    return reply
+      .code(201)
+      .send(emailDomainToApi(await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [a.tenantId, domain])));
   });
 
-  app.post<P>("/v1/settings/email-domains/:domain/verify", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
-    const a = A(req);
-    // Verificar (o re-verificar uno que se desverificó) exige el plan, como darlo de alta; quitarlo no.
-    await requireWhiteLabel(s.db, a.tenantId);
-    const r = await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [a.tenantId, String(req.params.domain).toLowerCase()]);
-    if (!r) throw notFound("Dominio de correo");
-    // Primero estricto: si el DNS no responde, un dominio ya verificado no pasa a pendiente por apretar "verificar"
-    // (como la re-verificación periódica y los dominios web); antes un SERVFAIL contaba como "falta el TXT".
-    let dnsError: string | null = null;
-    const f =
-      (await checkEmailDomain(r, { strict: true }).catch((e) => {
-        dnsError = String((e as Error).message ?? e).slice(0, 200);
-        return null;
-      })) ?? (await checkEmailDomain(r));
-    let ok = f.own && f.dkim;
-    // Sin respuesta del DNS (y sin poder confirmarlo con la segunda consulta) no se sabe nada de los registros: se
-    // conservan estado, SPF y DMARC guardados (si no, quedaban en "no publicados" hasta la próxima consulta buena).
-    const unknown = dnsError !== null && !ok;
-    const error = ok
-      ? null
-      : dnsError
-        ? `No se pudo consultar el DNS: ${dnsError}`
-        : !f.own
-          ? `Falta el TXT ${mailTxtName(r.domain)}`
-          : `Falta la clave DKIM ${r.dkim_selector}._domainkey.${r.domain}`;
-    try {
-      await s.db.query(
-        `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' WHEN $6 THEN status ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
+  app.post<P>(
+    "/v1/settings/email-domains/:domain/verify",
+    { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (req) => {
+      const a = A(req);
+      // Verificar (o re-verificar uno que se desverificó) exige el plan, como darlo de alta; quitarlo no.
+      await requireWhiteLabel(s.db, a.tenantId);
+      const r = await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [
+        a.tenantId,
+        String(req.params.domain).toLowerCase(),
+      ]);
+      if (!r) throw notFound("Dominio de correo");
+      // Primero estricto: si el DNS no responde, un dominio ya verificado no pasa a pendiente por apretar "verificar"
+      // (como la re-verificación periódica y los dominios web); antes un SERVFAIL contaba como "falta el TXT".
+      let dnsError: string | null = null;
+      const f =
+        (await checkEmailDomain(r, { strict: true }).catch((e) => {
+          dnsError = String((e as Error).message ?? e).slice(0, 200);
+          return null;
+        })) ?? (await checkEmailDomain(r));
+      let ok = f.own && f.dkim;
+      // Sin respuesta del DNS (y sin poder confirmarlo con la segunda consulta) no se sabe nada de los registros: se
+      // conservan estado, SPF y DMARC guardados (si no, quedaban en "no publicados" hasta la próxima consulta buena).
+      const unknown = dnsError !== null && !ok;
+      const error = ok
+        ? null
+        : dnsError
+          ? `No se pudo consultar el DNS: ${dnsError}`
+          : !f.own
+            ? `Falta el TXT ${mailTxtName(r.domain)}`
+            : `Falta la clave DKIM ${r.dkim_selector}._domainkey.${r.domain}`;
+      try {
+        await s.db.query(
+          `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' WHEN $6 THEN status ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
            spf_ok = CASE WHEN $6 THEN spf_ok ELSE $3 END, dmarc_ok = CASE WHEN $6 THEN dmarc_ok ELSE $4 END, last_checked_at = now(),
            last_error = $5 WHERE id = $1`,
-        // El aviso de rechazo de SES (ses_identity_error_at) no se toca: el DNS no dice nada de la identidad en SES (solo
-        // lo borra un correo con DKIM aceptado; ver outbound.noteDkimSendResult).
-        [r.id, ok, f.spf, f.dmarc, error, unknown],
-      );
-    } catch (e) {
-      if ((e as { code?: string }).code !== "23505") throw e;
-      // Lo verificó otra organización: no quedó verificado (ni se audita como tal).
-      ok = false;
-      await s.db.query(`UPDATE email_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
-    }
-    if (ok) await auditFromRequest(s.db, req, a, "email_domain.verified", { targetType: "domain", targetId: r.domain });
-    return emailDomainToApi(await s.db.one<any>(`SELECT * FROM email_domains WHERE id = $1`, [r.id]), unknown ? undefined : f);
-  });
+          // El aviso de rechazo de SES (ses_identity_error_at) no se toca: el DNS no dice nada de la identidad en SES (solo
+          // lo borra un correo con DKIM aceptado; ver outbound.noteDkimSendResult).
+          [r.id, ok, f.spf, f.dmarc, error, unknown],
+        );
+      } catch (e) {
+        if ((e as { code?: string }).code !== "23505") throw e;
+        // Lo verificó otra organización: no quedó verificado (ni se audita como tal).
+        ok = false;
+        await s.db.query(`UPDATE email_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [
+          r.id,
+          "Ese dominio ya lo verificó otra organización",
+        ]);
+      }
+      if (ok) await auditFromRequest(s.db, req, a, "email_domain.verified", { targetType: "domain", targetId: r.domain });
+      return emailDomainToApi(await s.db.one<any>(`SELECT * FROM email_domains WHERE id = $1`, [r.id]), unknown ? undefined : f);
+    },
+  );
 
   app.delete<P>("/v1/settings/email-domains/:domain", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
-    const r = await s.db.one<any>(`DELETE FROM email_domains WHERE tenant_id = $1 AND domain = $2 RETURNING domain`, [a.tenantId, String(req.params.domain).toLowerCase()]);
+    const r = await s.db.one<any>(`DELETE FROM email_domains WHERE tenant_id = $1 AND domain = $2 RETURNING domain`, [
+      a.tenantId,
+      String(req.params.domain).toLowerCase(),
+    ]);
     if (r) await auditFromRequest(s.db, req, a, "email_domain.removed", { targetType: "domain", targetId: r.domain });
     return reply.code(204).send();
   });
@@ -742,7 +864,11 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
 }
 
 /** Marca por clave pública (id de sub-marca o slug de organización) o, sin clave, por el Host. */
-export async function brandFromKeyOrHost(db: Db, key: string | undefined, host: string | undefined): Promise<{ tenantId: string; brandId: string | null } | null> {
+export async function brandFromKeyOrHost(
+  db: Db,
+  key: string | undefined,
+  host: string | undefined,
+): Promise<{ tenantId: string; brandId: string | null } | null> {
   if (key) {
     if (/^[0-9a-f-]{36}$/i.test(key)) {
       const b = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM brands WHERE id = $1`, [key]);

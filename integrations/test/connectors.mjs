@@ -132,10 +132,14 @@ await test("power automate: reglas de certificación en cada operación y parám
       for (const p of op.parameters ?? []) {
         if (p.in === "body") continue;
         assert.ok(p["x-ms-summary"] && p.description, `${where}: parámetro ${p.name} sin x-ms-summary/description`);
-        if (p.required && p["x-ms-visibility"] === "internal") assert.ok(p.default !== undefined, `${where}: ${p.name} interno y obligatorio sin default`);
+        if (p.required && p["x-ms-visibility"] === "internal")
+          assert.ok(p.default !== undefined, `${where}: ${p.name} interno y obligatorio sin default`);
       }
       for (const p of (path.match(/\{(\w+)\}/g) ?? []).map((x) => x.slice(1, -1))) {
-        assert.ok((op.parameters ?? []).some((q) => q.in === "path" && q.name === p && q.required), `${where}: falta el parámetro de ruta ${p}`);
+        assert.ok(
+          (op.parameters ?? []).some((q) => q.in === "path" && q.name === p && q.required),
+          `${where}: falta el parámetro de ruta ${p}`,
+        );
       }
     }
   }
@@ -189,24 +193,34 @@ await test("quicksend: crea, sube, destinatarios, firmas en la última página y
     subject: "Contrato",
     fileName: 'con"trato.pdf',
     fileBytes: pdf,
-    signers: [{ name: "Ana", email: "ana@x.com" }, { name: "Beto", phone: "+18095551234" }, { name: "Cami", email: "c@x.com" }],
+    signers: [
+      { name: "Ana", email: "ana@x.com" },
+      { name: "Beto", phone: "+18095551234" },
+      { name: "Cami", email: "c@x.com" },
+    ],
     metadata: { externalId: "X1" },
   });
   assert.equal(res.envelope.status, "sent");
-  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), [
-    "POST /v1/envelopes",
-    "POST /v1/envelopes/env1/documents",
-    "PUT /v1/envelopes/env1/recipients",
-    "PUT /v1/envelopes/env1/fields",
-    "POST /v1/envelopes/env1/send",
-    "GET /v1/envelopes/env1",
-  ]);
+  assert.deepEqual(
+    calls.map((c) => `${c.method} ${c.path}`),
+    [
+      "POST /v1/envelopes",
+      "POST /v1/envelopes/env1/documents",
+      "PUT /v1/envelopes/env1/recipients",
+      "PUT /v1/envelopes/env1/fields",
+      "POST /v1/envelopes/env1/send",
+      "GET /v1/envelopes/env1",
+    ],
+  );
   assert.deepEqual(calls[0].opts.json.metadata, { externalId: "X1" });
   const up = calls[1].opts;
   assert.match(up.headers["content-type"], /^multipart\/form-data; boundary=/);
   const boundary = up.headers["content-type"].split("boundary=")[1];
   assert.ok(up.body.includes(pdf) && up.body.toString().includes(`--${boundary}--`) && up.body.toString().includes('filename="con_trato.pdf"'));
-  assert.deepEqual(calls[2].opts.json.recipients.map((r) => r.channels), [["email"], ["whatsapp"], ["email"]]);
+  assert.deepEqual(
+    calls[2].opts.json.recipients.map((r) => r.channels),
+    [["email"], ["whatsapp"], ["email"]],
+  );
   const fields = calls[3].opts.json.fields;
   assert.equal(fields.length, 3);
   for (const f of fields) {
@@ -218,9 +232,26 @@ await test("quicksend: crea, sube, destinatarios, firmas en la última página y
 
 await test("quicksend: anclas \\firmaN\\, borrador sin enviar y validaciones", async () => {
   const { calls, request } = fakeApi();
-  await qs.quickSend(request, { subject: "S", fileName: "a.pdf", fileBytes: Buffer.from("%PDF"), signers: [{ name: "A", email: "a@x.com" }, { name: "B", email: "b@x.com" }], placement: "anchors", sequential: true, send: false });
-  assert.deepEqual(calls[2].opts.json.recipients.map((r) => r.routingOrder), [1, 2]);
-  assert.deepEqual(calls[3].opts.json.fields.map((f) => f.anchor.text), ["\\firma1\\", "\\firma2\\"]);
+  await qs.quickSend(request, {
+    subject: "S",
+    fileName: "a.pdf",
+    fileBytes: Buffer.from("%PDF"),
+    signers: [
+      { name: "A", email: "a@x.com" },
+      { name: "B", email: "b@x.com" },
+    ],
+    placement: "anchors",
+    sequential: true,
+    send: false,
+  });
+  assert.deepEqual(
+    calls[2].opts.json.recipients.map((r) => r.routingOrder),
+    [1, 2],
+  );
+  assert.deepEqual(
+    calls[3].opts.json.fields.map((f) => f.anchor.text),
+    ["\\firma1\\", "\\firma2\\"],
+  );
   assert.ok(!calls.some((c) => c.path.endsWith("/send")));
   await assert.rejects(qs.quickSend(request, { subject: "S", fileBytes: Buffer.from("%PDF"), signers: [] }), /firmante/);
   await assert.rejects(qs.quickSend(request, { subject: "S", fileBytes: Buffer.from("%PDF"), signers: [{ name: "A" }] }), /email o teléfono/);
@@ -257,7 +288,13 @@ await test("quicksend: con idempotencyKey un reintento no duplica el sobre, el P
     if (method === "GET") return { envelope: { id: "env1", status: state.status }, documents: state.documents };
     throw new Error(`inesperado ${method} ${path}`);
   };
-  const input = { subject: "S", fileName: "a.pdf", fileBytes: Buffer.from("%PDF"), signers: [{ name: "A", email: "a@x.com" }], idempotencyKey: "zap-1-abc" };
+  const input = {
+    subject: "S",
+    fileName: "a.pdf",
+    fileBytes: Buffer.from("%PDF"),
+    signers: [{ name: "A", email: "a@x.com" }],
+    idempotencyKey: "zap-1-abc",
+  };
   await assert.rejects(qs.quickSend(request, input), /504/);
   assert.equal(calls[0].headers["Idempotency-Key"], "zap-1-abc:create");
   assert.equal(calls.find((c) => c.path.endsWith("/send")).headers["Idempotency-Key"], "zap-1-abc:send");
@@ -273,7 +310,12 @@ await test("quicksend: con idempotencyKey un reintento no duplica el sobre, el P
 });
 
 await test("quicksend: flattenEvent", () => {
-  const f = qs.flattenEvent({ id: "e1", type: "recipient.signed", createdAt: "t", data: { envelope: { id: "env1", status: "sent", recipients: [{ id: "r1", name: "Ana", email: "a@x.com" }] }, recipientId: "r1" } });
+  const f = qs.flattenEvent({
+    id: "e1",
+    type: "recipient.signed",
+    createdAt: "t",
+    data: { envelope: { id: "env1", status: "sent", recipients: [{ id: "r1", name: "Ana", email: "a@x.com" }] }, recipientId: "r1" },
+  });
   assert.equal(f.envelope_id, "env1");
   assert.equal(f.recipient_email, "a@x.com");
 });
@@ -309,7 +351,15 @@ function fakeZ(routes, bundle) {
       const route = routes[key] ?? routes[`${req.method} ${req.url}`];
       if (!route) throw new Error(`zapier: sin ruta para ${key}`);
       const [status, data] = typeof route === "function" ? route(req) : route;
-      let res = { status, data, json: data, content: JSON.stringify(data), request: req, throwForStatus() {}, buffer: async () => Buffer.from("%PDF-zap") };
+      let res = {
+        status,
+        data,
+        json: data,
+        content: JSON.stringify(data),
+        request: req,
+        throwForStatus() {},
+        buffer: async () => Buffer.from("%PDF-zap"),
+      };
       for (const mw of zapApp.afterResponse) res = mw(res, z, bundle);
       return res;
     },
@@ -348,7 +398,10 @@ await test("zapier: suscripción, evento, datos de prueba y desuscripción", asy
         return [201, { webhook: { id: "wh1" }, secret: "whsec_x" }];
       },
       "DELETE /v1/webhooks/wh1": [204, null],
-      "GET /v1/webhooks/samples?event=envelope.completed&limit=3": [200, { items: [{ id: "s1", type: "envelope.completed", data: { envelope: { id: "env9", status: "completed", recipients: [] } } }] }],
+      "GET /v1/webhooks/samples?event=envelope.completed&limit=3": [
+        200,
+        { items: [{ id: "s1", type: "envelope.completed", data: { envelope: { id: "env9", status: "completed", recipients: [] } } }] },
+      ],
     },
     bundle,
   );
@@ -357,7 +410,10 @@ await test("zapier: suscripción, evento, datos de prueba y desuscripción", asy
   assert.deepEqual(subscribed.events, ["envelope.completed"]);
   assert.equal(subscribed.url, bundle.targetUrl);
   assert.equal(log[0].headers.Authorization, "Bearer cs_test_k");
-  const rows = op.perform(z, { ...bundle, cleanedRequest: { id: "e1", type: "envelope.completed", data: { envelope: { id: "env1", status: "completed", recipients: [] } } } });
+  const rows = op.perform(z, {
+    ...bundle,
+    cleanedRequest: { id: "e1", type: "envelope.completed", data: { envelope: { id: "env1", status: "completed", recipients: [] } } },
+  });
   assert.equal(rows[0].envelope_id, "env1");
   assert.equal(rows[0].signed_pdf, "hydrate:env1");
   assert.deepEqual(op.perform(z, { ...bundle, cleanedRequest: { type: "webhook.test" } }), []);
@@ -396,37 +452,74 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
   );
   const dyn = zapApp.creates.send_from_template.operation.inputFields.find((f) => typeof f === "function");
   const fields = await dyn(z, { ...bundle, inputData: { templateId: T } });
-  assert.deepEqual(fields.map((f) => f.key), [`role_${R}_name`, `role_${R}_email`, `role_${R}_phone`, `prefill_${F}`]);
+  assert.deepEqual(
+    fields.map((f) => f.key),
+    [`role_${R}_name`, `role_${R}_email`, `role_${R}_phone`, `prefill_${F}`],
+  );
   const out = await zapApp.creates.send_from_template.operation.perform(z, {
     ...bundle,
-    inputData: { templateId: T, subject: "Hola", [`role_${R}_name`]: "Ana", [`role_${R}_email`]: "ana@x.com", [`role_${R}_phone`]: "", [`prefill_${F}`]: 150, external_id: "CRM-1" },
+    inputData: {
+      templateId: T,
+      subject: "Hola",
+      [`role_${R}_name`]: "Ana",
+      [`role_${R}_email`]: "ana@x.com",
+      [`role_${R}_phone`]: "",
+      [`prefill_${F}`]: 150,
+      external_id: "CRM-1",
+    },
   });
   assert.equal(out.envelope_id, "env1");
-  assert.deepEqual(sentBody, { subject: "Hola", roles: { [R]: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { [F]: "150" }, metadata: { externalId: "CRM-1" }, send: true });
+  assert.deepEqual(sentBody, {
+    subject: "Hola",
+    roles: { [R]: { name: "Ana", email: "ana@x.com", phone: null } },
+    prefill: { [F]: "150" },
+    metadata: { externalId: "CRM-1" },
+    send: true,
+  });
   // Idempotency-Key: estable para los mismos datos (un reintento de Zapier no crea otro sobre) y reemplazable.
   const tplReqs = log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`));
   assert.match(tplReqs[0].headers["Idempotency-Key"], /^zap-x-send_from_template-[0-9a-f]{32}-\d{4}-\d{2}-\d{2}$/);
   await zapApp.creates.send_from_template.operation.perform(z, {
     ...bundle,
-    inputData: { templateId: T, subject: "Hola", [`role_${R}_name`]: "Ana", [`role_${R}_email`]: "ana@x.com", [`role_${R}_phone`]: "", [`prefill_${F}`]: 150, external_id: "CRM-1" },
+    inputData: {
+      templateId: T,
+      subject: "Hola",
+      [`role_${R}_name`]: "Ana",
+      [`role_${R}_email`]: "ana@x.com",
+      [`role_${R}_phone`]: "",
+      [`prefill_${F}`]: 150,
+      external_id: "CRM-1",
+    },
   });
   const again = log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`));
   assert.equal(again[1].headers["Idempotency-Key"], again[0].headers["Idempotency-Key"]);
   await zapApp.creates.send_from_template.operation.perform(z, { ...bundle, inputData: { templateId: T, idempotency_key: "deal-42" } });
   assert.equal(log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`))[2].headers["Idempotency-Key"], "zap-deal-42");
 
-  const doc = await zapApp.creates.send_document.operation.perform(z, { ...bundle, inputData: { file: "https://files.example.org/a.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] } });
+  const doc = await zapApp.creates.send_document.operation.perform(z, {
+    ...bundle,
+    inputData: { file: "https://files.example.org/a.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] },
+  });
   assert.equal(doc.status, "sent");
-  assert.match(log.find((r) => r.url.endsWith("/v1/envelopes") && r.method === "POST").headers["Idempotency-Key"], /^zap-x-send_document-[0-9a-f]{32}-.*:create$/);
+  assert.match(
+    log.find((r) => r.url.endsWith("/v1/envelopes") && r.method === "POST").headers["Idempotency-Key"],
+    /^zap-x-send_document-[0-9a-f]{32}-.*:create$/,
+  );
   assert.match(log.find((r) => r.url.endsWith("/env2/send")).headers["Idempotency-Key"], /:send$/);
   const fileReq = log.find((r) => r.url === "https://files.example.org/a.pdf");
   assert.equal(fileReq.headers.Authorization, undefined, "la API key no va a URLs de terceros");
   // Un 401 del host del archivo no es "CalaSign rejected the API key".
   await assert.rejects(
-    zapApp.creates.send_document.operation.perform(z, { ...bundle, inputData: { file: "https://files.example.org/gone.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] } }),
+    zapApp.creates.send_document.operation.perform(z, {
+      ...bundle,
+      inputData: { file: "https://files.example.org/gone.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] },
+    }),
     /Could not download the file \(HTTP 401\)/,
   );
-  await assert.rejects(zapApp.creates.void_envelope.operation.perform(z, { ...bundle, inputData: { envelope_id: "bad", reason: "x" } }), /no está enviado/);
+  await assert.rejects(
+    zapApp.creates.void_envelope.operation.perform(z, { ...bundle, inputData: { envelope_id: "bad", reason: "x" } }),
+    /no está enviado/,
+  );
 });
 
 // ───────── 5. n8n ─────────
@@ -491,7 +584,14 @@ function n8nCtx(params, routes, extra = {}) {
     continueOnFail: () => false,
     logs: [],
     // En n8n real, this.logger existe en todos los contextos (los catch de los webhooks lo usan).
-    logger: { debug(msg, meta) { ctx.logs.push(["debug", msg, meta]); }, warn(msg, meta) { ctx.logs.push(["warn", msg, meta]); } },
+    logger: {
+      debug(msg, meta) {
+        ctx.logs.push(["debug", msg, meta]);
+      },
+      warn(msg, meta) {
+        ctx.logs.push(["warn", msg, meta]);
+      },
+    },
     helpers: {
       httpRequestWithAuthentication: async (cred, opts) => {
         calls.push({ cred, ...opts });
@@ -542,7 +642,11 @@ await test("n8n: trigger crea y borra el webhook y verifica la firma HMAC", asyn
   await node.webhookMethods.default.delete.call(ctx);
   assert.equal(ctx.calls.at(-1).method, "DELETE");
   assert.equal(ctx.staticData.webhookId, undefined);
-  assert.deepEqual(ctx.logs.filter(([, m]) => /borrar/.test(m)), [], `el borrado no debe fallar: ${JSON.stringify(ctx.logs)}`);
+  assert.deepEqual(
+    ctx.logs.filter(([, m]) => /borrar/.test(m)),
+    [],
+    `el borrado no debe fallar: ${JSON.stringify(ctx.logs)}`,
+  );
 });
 
 await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", async () => {
@@ -562,25 +666,49 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
     { getExecutionId: () => "exec-7", getNode: () => ({ id: "node-abc", name: "CalaSign" }), getWorkflowDataProxy: () => ({ $thisRunIndex: 3 }) },
   );
   const [out] = await node.execute.call(ctx);
-  assert.equal(ctx.calls[0].headers["Idempotency-Key"], "n8n-exec-7-node-abc-3-sendFromTemplate-0", "clave de ejecución + nodo + corrida (vuelta de un bucle) + item");
+  assert.equal(
+    ctx.calls[0].headers["Idempotency-Key"],
+    "n8n-exec-7-node-abc-3-sendFromTemplate-0",
+    "clave de ejecución + nodo + corrida (vuelta de un bucle) + item",
+  );
   assert.equal(out[0].json.envelope.id, "env1");
   assert.equal(ctx.calls[0].cred, "calaSignOAuth2Api");
-  assert.deepEqual(body, { roles: { r1: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { f1: "ACME" }, send: true, metadata: { externalId: "X9" } });
+  assert.deepEqual(body, {
+    roles: { r1: { name: "Ana", email: "ana@x.com", phone: null } },
+    prefill: { f1: "ACME" },
+    send: true,
+    metadata: { externalId: "X9" },
+  });
 
   const ctx2 = n8nCtx(
-    { authentication: "apiKey", resource: "envelope", operation: "sendDocument", binaryPropertyName: "data", subject: "PDF", signers: { signer: [{ name: "Ana", email: "a@x.com" }] }, placement: "auto", additionalFields: {} },
+    {
+      authentication: "apiKey",
+      resource: "envelope",
+      operation: "sendDocument",
+      binaryPropertyName: "data",
+      subject: "PDF",
+      signers: { signer: [{ name: "Ana", email: "a@x.com" }] },
+      placement: "auto",
+      additionalFields: {},
+    },
     {
       "POST /v1/envelopes": { envelope: { id: "e2" } },
       "POST /v1/envelopes/e2/documents": (o) => (assert.ok(Buffer.isBuffer(o.body) && o.json === false), { id: "d", pageCount: 2 }),
       "PUT /v1/envelopes/e2/recipients": (o) => ({ recipients: o.body.recipients.map((r) => ({ ...r, id: "r1" })) }),
       "PUT /v1/envelopes/e2/fields": {},
       "POST /v1/envelopes/e2/send": {},
-      "GET /v1/envelopes/e2": () => ({ envelope: { id: "e2", status: ctx2.calls.some((c) => c.url.endsWith("/e2/send")) ? "sent" : "draft" }, documents: [] }),
+      "GET /v1/envelopes/e2": () => ({
+        envelope: { id: "e2", status: ctx2.calls.some((c) => c.url.endsWith("/e2/send")) ? "sent" : "draft" },
+        documents: [],
+      }),
     },
     { getExecutionId: () => "exec-8", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
   );
   const [out2] = await node.execute.call(ctx2);
-  assert.equal(ctx2.calls.find((c) => c.url.endsWith("/v1/envelopes") && c.method === "POST").headers["Idempotency-Key"], "n8n-exec-8-node-abc-0-sendDocument-0:create");
+  assert.equal(
+    ctx2.calls.find((c) => c.url.endsWith("/v1/envelopes") && c.method === "POST").headers["Idempotency-Key"],
+    "n8n-exec-8-node-abc-0-sendDocument-0:create",
+  );
   assert.equal(out2[0].json.envelope.status, "sent");
 
   const ctx3 = n8nCtx(
@@ -624,24 +752,55 @@ await test("make: funciones IML (formulario de plantilla, destinatarios y campos
   const sandbox = {};
   vm.createContext(sandbox);
   for (const code of Object.values(make.functionsCode)) vm.runInContext(code, sandbox);
-  const form = sandbox.calasignTemplateForm({ roles: [{ id: "r1", name: "Cliente" }], fields: [{ id: "f1", label: "Plan", type: "dropdown", options: ["A", "B"], roleName: "Cliente" }] });
+  const form = sandbox.calasignTemplateForm({
+    roles: [{ id: "r1", name: "Cliente" }],
+    fields: [{ id: "f1", label: "Plan", type: "dropdown", options: ["A", "B"], roleName: "Cliente" }],
+  });
   assert.equal(form[0].name, "roles");
   assert.equal(form[0].spec[0].name, "r1");
   assert.equal(form[1].spec[0].type, "select");
-  const recips = sandbox.calasignRecipients([{ name: "A", email: "a@x.com" }, { name: "B", phone: "+18095551234" }], true);
-  assert.deepEqual(JSON.parse(JSON.stringify(recips.map((r) => [r.routingOrder, r.channels]))), [[1, ["email"]], [2, ["whatsapp"]]]);
-  const fields = sandbox.calasignFields([{ id: "r1", role: "signer" }, { id: "c", role: "cc" }, { id: "r2", role: "signer" }], "d1", 4, "auto");
+  const recips = sandbox.calasignRecipients(
+    [
+      { name: "A", email: "a@x.com" },
+      { name: "B", phone: "+18095551234" },
+    ],
+    true,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(recips.map((r) => [r.routingOrder, r.channels]))), [
+    [1, ["email"]],
+    [2, ["whatsapp"]],
+  ]);
+  const fields = sandbox.calasignFields(
+    [
+      { id: "r1", role: "signer" },
+      { id: "c", role: "cc" },
+      { id: "r2", role: "signer" },
+    ],
+    "d1",
+    4,
+    "auto",
+  );
   assert.equal(fields.length, 2);
   assert.ok(fields.every((f) => f.page === 3 && f.x + f.width <= 1 && f.y + f.height <= 1));
   assert.equal(sandbox.calasignFields([{ id: "r1", role: "signer" }], "d1", 1, "anchors")[0].anchor.text, "\\firma1\\");
-  assert.equal(sandbox.calasignFlattenEvent({ id: "e", type: "envelope.completed", data: { envelope: { id: "x", recipients: [] } } }).envelope_id, "x");
+  assert.equal(
+    sandbox.calasignFlattenEvent({ id: "e", type: "envelope.completed", data: { envelope: { id: "x", recipients: [] } } }).envelope_id,
+    "x",
+  );
   // Idempotency-Key: estable para los mismos parámetros (sin el PDF), distinta con otros datos, reemplazable.
   const k1 = sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate");
   assert.match(k1, /^make-sendFromTemplate-[0-9a-f]{16}-\d{4}-\d{2}-\d{2}$/);
   assert.equal(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate"), k1);
   assert.notEqual(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "B" } } }, "sendFromTemplate"), k1);
-  assert.equal(sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"), sandbox.calasignIdempotencyKey({ subject: "S", data: "BBB" }, "sendDocument"));
-  assert.notEqual(sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"), sandbox.calasignIdempotencyKey({ subject: "S", data: "AAAA" }, "sendDocument"), "otro PDF (otro tamaño), otra clave");
+  assert.equal(
+    sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"),
+    sandbox.calasignIdempotencyKey({ subject: "S", data: "BBB" }, "sendDocument"),
+  );
+  assert.notEqual(
+    sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"),
+    sandbox.calasignIdempotencyKey({ subject: "S", data: "AAAA" }, "sendDocument"),
+    "otro PDF (otro tamaño), otra clave",
+  );
   assert.equal(sandbox.calasignIdempotencyKey({ idempotencyKey: "deal-42" }, "x"), "make-deal-42");
   assert.equal(sandbox.calasignDocumentId([{ id: "d1", pageCount: 3 }]), "d1");
   assert.equal(sandbox.calasignDocumentPages([]), null);
@@ -701,7 +860,8 @@ await test("dynamics 365: setup-dataverse crea publicador, solución, columnas y
     calls.push({ method, path, body, headers });
     if (method === "GET" && path.startsWith("/publishers")) return { value: state.publisher ? [{ publisherid: "p1" }] : [] };
     if (method === "GET" && path.startsWith("/solutions")) return { value: state.solution ? [{ solutionid: "s1" }] : [] };
-    if (method === "GET" && path.includes("/Attributes(")) return state.attrs.has(path.match(/Attributes\(LogicalName='(\w+)'\)/)[1]) ? { LogicalName: "x" } : null;
+    if (method === "GET" && path.includes("/Attributes("))
+      return state.attrs.has(path.match(/Attributes\(LogicalName='(\w+)'\)/)[1]) ? { LogicalName: "x" } : null;
     if (method === "GET" && path.startsWith("/webresourceset")) return { value: state.wr ? [{ webresourceid: "w1" }] : [] };
     if (method === "POST" && path === "/publishers") return (state.publisher = true), {};
     if (method === "POST" && path === "/solutions") return (state.solution = true), {};
@@ -726,10 +886,18 @@ await test("dynamics 365: setup-dataverse crea publicador, solución, columnas y
 });
 
 await test("dynamics 365: flujos con JSON válido que usan las operaciones del conector", () => {
-  const ops = new Set(Object.values(swagger.paths).flatMap((p) => Object.values(p).map((o) => o.operationId).filter(Boolean)));
+  const ops = new Set(
+    Object.values(swagger.paths).flatMap((p) =>
+      Object.values(p)
+        .map((o) => o.operationId)
+        .filter(Boolean),
+    ),
+  );
   for (const f of ["calasign-send-on-request.json", "calasign-sync-status.json"]) {
     const flow = JSON.parse(readFileSync(C(`dynamics365/flows/${f}`), "utf8"));
-    const used = [...JSON.stringify(flow).matchAll(/"apiId":"[^"]*shared_calasign","connectionName":"shared_calasign","operationId":"(\w+)"/g)].map((m) => m[1]);
+    const used = [...JSON.stringify(flow).matchAll(/"apiId":"[^"]*shared_calasign","connectionName":"shared_calasign","operationId":"(\w+)"/g)].map(
+      (m) => m[1],
+    );
     assert.ok(used.length > 0, f);
     for (const op of used) assert.ok(ops.has(op), `${f}: ${op}`);
   }
@@ -789,7 +957,8 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
     calls.push({ url, method: init.method, credentials: init.credentials, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
     const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
     if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
-    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`) return res(200, { items: mappings, connectionsWithoutAccount: noAccount });
+    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`)
+      return res(200, { items: mappings, connectionsWithoutAccount: noAccount });
     const m = url.match(/\/v1\/crm\/mappings\/(\w+)\/send$/);
     if (m && init.body) {
       const b = JSON.parse(init.body);
@@ -806,17 +975,23 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   const ready = await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42,43&companyId=5150"));
   assert.equal(ready.state, "ready");
   assert.equal(ready.accountUnknown, false);
-  assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
+  assert.deepEqual(
+    ready.mappings.map((x) => x.id),
+    ["m1"],
+  );
   assert.equal(calls[0].credentials, "include");
   const out = await PD.sendAll(api, "m1", ["42", "43"], true);
   assert.deepEqual(out, [
     { id: "42", ok: true, envelopeId: "env-42", status: "sent" },
     { id: "43", ok: false, error: "Deal not found", code: "crm_record_not_found" },
   ]);
-  assert.deepEqual(calls.filter((c) => c.method === "POST").map((c) => [c.url, c.body]), [
-    [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "42", send: true }],
-    [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "43", send: true }],
-  ]);
+  assert.deepEqual(
+    calls.filter((c) => c.method === "POST").map((c) => [c.url, c.body]),
+    [
+      [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "42", send: true }],
+      [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "43", send: true }],
+    ],
+  );
   // Con companyId (la compañía desde la que se abrió la acción) se filtran los mapeos y se manda en cada envío.
   assert.equal(PD.parseParams("?resource=deal&selectedIds=42&companyId=x;1").companyId, null);
   calls.length = 0;
@@ -828,9 +1003,23 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   assert.equal(calls[1].headers["Idempotency-Key"], "pd-5150-m1-42-run1", "Idempotency-Key estable por registro y corrida");
   // runId: se guarda en sessionStorage por URL (recargar la pestaña reutiliza las claves).
   const store = new Map();
-  const win = { location: { search: "?resource=deal&selectedIds=42" }, crypto: { randomUUID: () => `u${store.size}` }, sessionStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } };
+  const win = {
+    location: { search: "?resource=deal&selectedIds=42" },
+    crypto: { randomUUID: () => `u${store.size}` },
+    sessionStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) },
+  };
   assert.equal(PD.runIdFor(win), PD.runIdFor(win));
-  assert.equal(PD.runIdFor({ ...win, sessionStorage: { getItem: () => { throw new Error("bloqueado"); } } }).length > 0, true);
+  assert.equal(
+    PD.runIdFor({
+      ...win,
+      sessionStorage: {
+        getItem: () => {
+          throw new Error("bloqueado");
+        },
+      },
+    }).length > 0,
+    true,
+  );
   assert.equal((await PD.load(api, PD.parseParams("?resource=person&selectedIds=8&companyId=5150"))).mappings[0].id, "m3");
   // Conexiones sin compañía guardada: se avisa (con mapeos, como nota; sin mapeos, como error).
   noAccount = [{ id: "c9", name: "Vieja", provider: "pipedrive" }];
@@ -853,10 +1042,14 @@ await test("kommo: registrado, zip del widget con manifest/i18n/images y página
   assert.ok(km, "kommo en connectors/index.json");
   assert.deepEqual(km.artifacts, ["/integrations/connectors/kommo/calasign-kommo-widget.zip"]);
   const zip = readZip(readFileSync(C("kommo/calasign-kommo-widget.zip")));
-  for (const f of ["manifest.json", "script.js", "i18n/es.json", "i18n/en.json", "i18n/pt.json", "images/logo_min.png", "images/logo_main.png"]) assert.ok(zip.has(f), f);
+  for (const f of ["manifest.json", "script.js", "i18n/es.json", "i18n/en.json", "i18n/pt.json", "images/logo_min.png", "images/logo_main.png"])
+    assert.ok(zip.has(f), f);
   const manifest = JSON.parse(zip.get("manifest.json").toString("utf8"));
   assert.equal(manifest.widget.interface_version, 2);
-  assert.deepEqual(manifest.locations.filter((l) => l.startsWith("l")), ["lcard-1", "llist-1"]);
+  assert.deepEqual(
+    manifest.locations.filter((l) => l.startsWith("l")),
+    ["lcard-1", "llist-1"],
+  );
   for (const l of manifest.widget.locale) {
     const tr = JSON.parse(zip.get(`i18n/${l}.json`).toString("utf8"));
     for (const k of ["name", "description", "short_description", "button"]) assert.ok(tr.widget[k], `${l}: widget.${k}`);
@@ -903,11 +1096,21 @@ await test("kommo: el widget pinta el botón en la ficha del lead y abre CalaSig
 
 await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por lead con la sesión", async () => {
   const KM = require(C("kommo/send.js"));
-  assert.deepEqual(KM.parseParams("?ids=42,43,42,x1&companyId=31337"), { ids: ["42", "43"], truncated: false, total: 2, skipped: 0, companyId: "31337" });
+  assert.deepEqual(KM.parseParams("?ids=42,43,42,x1&companyId=31337"), {
+    ids: ["42", "43"],
+    truncated: false,
+    total: 2,
+    skipped: 0,
+    companyId: "31337",
+  });
   assert.equal(KM.parseParams("?ids=1&companyId=a/b").companyId, null);
   assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
   assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).skipped, 5);
-  assert.equal(KM.parseParams(`?ids=${Array.from({ length: 200 }, (_, i) => i + 1).join(",")}&total=500`).skipped, 480, "total de los elegidos en Kommo");
+  assert.equal(
+    KM.parseParams(`?ids=${Array.from({ length: 200 }, (_, i) => i + 1).join(",")}&total=500`).skipped,
+    480,
+    "total de los elegidos en Kommo",
+  );
   const mappings = [
     { id: "m1", name: "Leads", objectType: "deal", templateId: "t1", active: true, send: true },
     { id: "m2", name: "Inactivo", objectType: "deal", templateId: "t1", active: false, send: true },
@@ -924,7 +1127,10 @@ await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por 
   };
   const api = KM.apiFactory(fakeFetch, BASE);
   const ready = await KM.load(api, KM.parseParams("?ids=42&companyId=31337"));
-  assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
+  assert.deepEqual(
+    ready.mappings.map((x) => x.id),
+    ["m1"],
+  );
   assert.equal(calls[0].credentials, "include");
   assert.deepEqual(await KM.sendAll(api, "m1", ["42"], true, "31337", "r9"), [{ id: "42", ok: true, envelopeId: "env-42", status: "sent" }]);
   assert.deepEqual(calls.at(-1).body, { objectId: "42", send: true, companyId: "31337" });
@@ -952,8 +1158,16 @@ await test("zoho crm: zip con la función Deluge del botón (endpoint del conect
   assert.match(dg, /body\.put\("objectId",dealId\.toString\(\)\)/);
   // Primero los textos (pueden traer "//", como las URLs) y después los comentarios.
   const code = dg.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/\/\/.*$/gm, "");
-  for (const [o, c] of [["{", "}"], ["(", ")"], ["[", "]"]]) assert.equal(code.split(o).length, code.split(c).length, `${o}${c} balanceados`);
-  for (const line of code.split("\n").map((l) => l.trim()).filter(Boolean)) {
+  for (const [o, c] of [
+    ["{", "}"],
+    ["(", ")"],
+    ["[", "]"],
+  ])
+    assert.equal(code.split(o).length, code.split(c).length, `${o}${c} balanceados`);
+  for (const line of code
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)) {
     if (/^(if|else|url|type|parameters|headers|connection|detailed)\b|^[{}[\]];?$|[{[]$|= invokeurl$/.test(line)) continue;
     assert.ok(line.endsWith(";"), `sentencia sin ";": ${line}`);
   }

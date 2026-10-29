@@ -203,10 +203,15 @@ export function csvToRows(
   const seen = new Map<string, string>();
   const dupCheck = (key: string, h: string) => {
     const prev = seen.get(key);
-    if (prev !== undefined) fileErrors.push(prev.toLowerCase() === h.toLowerCase() ? `Columna "${h}" repetida` : `Las columnas "${prev}" y "${h}" son el mismo dato`);
+    if (prev !== undefined)
+      fileErrors.push(prev.toLowerCase() === h.toLowerCase() ? `Columna "${h}" repetida` : `Las columnas "${prev}" y "${h}" son el mismo dato`);
     else seen.set(key, h);
   };
-  type Col = { kind: "attr"; roleId: string; attr: string; whatsapp?: boolean } | { kind: "field"; label: string } | { kind: "subject" } | { kind: "ignore" };
+  type Col =
+    | { kind: "attr"; roleId: string; attr: string; whatsapp?: boolean }
+    | { kind: "field"; label: string }
+    | { kind: "subject" }
+    | { kind: "ignore" };
   const cols: Col[] = header.map((h) => {
     const lower = h.toLowerCase();
     if (!h) return { kind: "ignore" };
@@ -217,7 +222,13 @@ export function csvToRows(
     // Primero un dato de un rol (Rol.email): un rol llamado "Campo" o "Field" no se toma por un campo a prellenar.
     const dot = h.lastIndexOf(".");
     const roleName = dot > 0 ? h.slice(0, dot).trim().toLowerCase() : "";
-    const attrKey = dot > 0 ? h.slice(dot + 1).trim().toLowerCase() : "";
+    const attrKey =
+      dot > 0
+        ? h
+            .slice(dot + 1)
+            .trim()
+            .toLowerCase()
+        : "";
     // Solo claves propias: "Firmante.constructor" leía la función heredada y no daba el error de dato desconocido.
     const attr = dot > 0 && Object.hasOwn(ATTR_ALIASES, attrKey) ? ATTR_ALIASES[attrKey] : undefined;
     const role = dot > 0 ? roles.find((r) => r.name.trim().toLowerCase() === roleName) : undefined;
@@ -252,7 +263,11 @@ export function csvToRows(
       } else if (c.kind === "attr") {
         const rec = byRole.get(c.roleId) ?? { roleId: c.roleId };
         if (v) {
-          if (c.attr === "channels") rec.channels = v.toLowerCase().split(/[|\s,/+]+/).filter(Boolean);
+          if (c.attr === "channels")
+            rec.channels = v
+              .toLowerCase()
+              .split(/[|\s,/+]+/)
+              .filter(Boolean);
           else if (c.attr === "email") rec.email = v.toLowerCase();
           // Idioma sin distinguir mayúsculas ("PT-br", "pt_BR"): se guarda como lo espera la API (uno de LOCALES).
           else if (c.attr === "locale") rec.locale = LOCALES.find((l) => l.toLowerCase() === v.toLowerCase().replace(/_/g, "-")) ?? v;
@@ -281,7 +296,12 @@ export function csvSkeleton(tpl: Awaited<ReturnType<typeof loadTemplateDetail>>)
   const example: string[] = [csvCell(tpl.template.subject ?? tpl.template.name)];
   for (const r of tpl.roles) {
     header.push(...[`${r.name}.name`, `${r.name}.email`, `${r.name}.phone`, `${r.name}.channels`].map(csvCell));
-    example.push(csvCell(`Nombre ${r.name}`), csvCell(`${r.name.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@example.com`), csvEscape("+5491100000000"), "email");
+    example.push(
+      csvCell(`Nombre ${r.name}`),
+      csvCell(`${r.name.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@example.com`),
+      csvEscape("+5491100000000"),
+      "email",
+    );
   }
   // Una columna por etiqueta (sin distinguir mayúsculas ni espacios a los lados, como el prellenado), solo si algún
   // campo con esa etiqueta acepta un valor.
@@ -391,7 +411,8 @@ async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
   // Lo que impide enviar cualquier sobre de la plantilla (rol firmante sin campo de firma, fórmula colgada), como en los
   // formularios web: antes se validaban las filas y fallaban todas al enviarse.
   const issues = templateSendIssues(loaded).map((i) => i.message);
-  if (issues.length) throw new AppError(422, "template_not_sendable", `La plantilla no se puede enviar: ${issues.join(". ")}`, { templateIssues: issues });
+  if (issues.length)
+    throw new AppError(422, "template_not_sendable", `La plantilla no se puede enviar: ${issues.join(". ")}`, { templateIssues: issues });
   let rows: BulkRowInput[];
   let columns: string[] = [];
   let lines: number[] | undefined;
@@ -406,13 +427,18 @@ async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
   } else rows = input.rows ?? [];
   if (rows.length === 0) throw badRequest("no_rows", "No hay filas para enviar");
   if (rows.length > BULK_MAX_ROWS) throw badRequest("too_many_rows", `Máximo ${BULK_MAX_ROWS} filas por envío`);
-  const prepared = prepareRows(loaded, rows, {
-    templateId: input.templateId,
-    subject: input.subject,
-    message: input.message,
-    locale: input.locale,
-    expiresAt: input.expiresAt,
-  }, lines);
+  const prepared = prepareRows(
+    loaded,
+    rows,
+    {
+      templateId: input.templateId,
+      subject: input.subject,
+      message: input.message,
+      locale: input.locale,
+      expiresAt: input.expiresAt,
+    },
+    lines,
+  );
   return { input, loaded, prepared, columns };
 }
 
@@ -431,14 +457,21 @@ export function assertCsvEncoding(csv: string) {
 }
 
 function validationResult(prepared: Prepared[], columns: string[]): BulkValidationResult {
-  const errors: BulkRowError[] = prepared.filter((p) => p.errors.length).map((p) => ({ row: p.row, ...(p.line !== undefined ? { line: p.line } : {}), errors: p.errors }));
+  const errors: BulkRowError[] = prepared
+    .filter((p) => p.errors.length)
+    .map((p) => ({ row: p.row, ...(p.line !== undefined ? { line: p.line } : {}), errors: p.errors }));
   return { total: prepared.length, valid: prepared.length - errors.length, invalid: errors.length, errors, columns };
 }
 
 /** Clave de una fila para detectar repetidas: destinatarios (rol, nombre, correo, teléfono) y prellenado, sin orden. */
 function rowKey(input: FromTemplateInput): string {
   const recips = input.recipients
-    .map((r) => [r.roleId ?? `@${(r.role ?? "").toLowerCase()}`, (r.name ?? "").trim().toLowerCase(), (r.email ?? "").trim().toLowerCase(), (r.phone ?? "").trim()])
+    .map((r) => [
+      r.roleId ?? `@${(r.role ?? "").toLowerCase()}`,
+      (r.name ?? "").trim().toLowerCase(),
+      (r.email ?? "").trim().toLowerCase(),
+      (r.phone ?? "").trim(),
+    ])
     .sort((a, b) => a[0].localeCompare(b[0]));
   const prefill = Object.entries(input.prefill ?? {})
     .map(([k, v]) => [normLabel(k), v])
@@ -572,7 +605,11 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Params: { id: string } }>("/v1/templates/:id/bulk-csv", { preHandler: auth }, async (req, reply) => {
     const tpl = await loadTemplateDetail(s.db, A(req).tenantId, req.params.id);
-    const name = tpl.template.name.replace(/[^\p{L}\p{N} _-]+/gu, "").trim().slice(0, 60) || "plantilla";
+    const name =
+      tpl.template.name
+        .replace(/[^\p{L}\p{N} _-]+/gu, "")
+        .trim()
+        .slice(0, 60) || "plantilla";
     reply
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="envio-masivo.csv"; filename*=UTF-8''${encodeURIComponent(name)}-envio-masivo.csv`)
@@ -589,79 +626,99 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     const { remaining } = await quotaLeft(s.db, A(req).tenantId);
     const warnings: string[] = [];
     if (duplicates.length) {
-      warnings.push(`${duplicates.length} fila(s) repiten destinatarios y datos de una anterior: ${duplicates.slice(0, 10).map((d) => `${d.row} (= ${d.sameAs})`).join(", ")}${duplicates.length > 10 ? "…" : ""}`);
+      warnings.push(
+        `${duplicates.length} fila(s) repiten destinatarios y datos de una anterior: ${duplicates
+          .slice(0, 10)
+          .map((d) => `${d.row} (= ${d.sameAs})`)
+          .join(", ")}${duplicates.length > 10 ? "…" : ""}`,
+      );
     }
-    if (remaining !== null && result.valid > remaining) warnings.push(`Hay ${result.valid} filas válidas y en el cupo del mes quedan ${remaining} sobres: el envío se va a rechazar`);
+    if (remaining !== null && result.valid > remaining)
+      warnings.push(`Hay ${result.valid} filas válidas y en el cupo del mes quedan ${remaining} sobres: el envío se va a rechazar`);
     return { ...result, duplicates, quotaRemaining: remaining, warnings };
   });
 
   // Con Idempotency-Key: si la respuesta se pierde y se reintenta, no se arma (ni se manda) un segundo envío masivo.
   app.post("/v1/bulk-sends", big, async (req, reply) =>
     idempotent(s, req, reply, async () => {
-    const a = A(req);
-    const { input, loaded, prepared, columns } = await resolveRows(s, a, req.body);
-    const result = validationResult(prepared, columns);
-    if (result.invalid > 0 && !input.skipInvalid) {
-      throw new AppError(422, "rows_invalid", `${result.invalid} de ${result.total} filas tienen errores`, result);
-    }
-    if (result.valid === 0) throw new AppError(422, "rows_invalid", "Ninguna fila es válida", result);
-    const id = uuidv7();
-    const actor: Actor = { type: a.actor.type, id: a.actor.id, label: a.actor.label, ip: a.actor.ip, userAgent: a.actor.userAgent };
-    await s.db.tx(async (t) => {
-      // La plantilla, FOR SHARE hasta el commit: una edición en curso termina antes (y acá se ve que cambió) y una
-      // posterior ve este envío en cola y responde 409 template_in_use_bulk. Si cambió desde que se validaron las
-      // filas, se vuelve a validar (las filas podían no cerrar con la versión nueva).
-      const cur = await t.one<{ v: string }>(`SELECT updated_at::text AS v FROM templates WHERE id = $1 AND tenant_id = $2 FOR SHARE`, [loaded.tpl.template.id, a.tenantId]);
-      if (!cur) throw notFound("Plantilla");
-      if (loaded.stamp && cur.v !== loaded.stamp) throw conflict("template_changed", "La plantilla cambió mientras se preparaba el envío: validá el archivo de nuevo y volvé a enviarlo");
-      // Todo o nada con el cupo del mes: si no entran todas las filas válidas, no se lanza (antes se enviaban hasta
-      // agotarlo y el resto fallaba fila por fila). Dentro de la transacción del alta y con lock por organización:
-      // dos POST simultáneos no pasan con el mismo cupo. El cupo se vuelve a controlar en cada envío (sendEnvelope).
-      await assertQuotaFor(t, a.tenantId, result.valid);
-      await t.query(
-        `INSERT INTO bulk_sends (id, tenant_id, template_id, template_name, name, status, total, options, actor, created_by)
-         VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9)`,
-        [
-          id,
-          a.tenantId,
+      const a = A(req);
+      const { input, loaded, prepared, columns } = await resolveRows(s, a, req.body);
+      const result = validationResult(prepared, columns);
+      if (result.invalid > 0 && !input.skipInvalid) {
+        throw new AppError(422, "rows_invalid", `${result.invalid} de ${result.total} filas tienen errores`, result);
+      }
+      if (result.valid === 0) throw new AppError(422, "rows_invalid", "Ninguna fila es válida", result);
+      const id = uuidv7();
+      const actor: Actor = { type: a.actor.type, id: a.actor.id, label: a.actor.label, ip: a.actor.ip, userAgent: a.actor.userAgent };
+      await s.db.tx(async (t) => {
+        // La plantilla, FOR SHARE hasta el commit: una edición en curso termina antes (y acá se ve que cambió) y una
+        // posterior ve este envío en cola y responde 409 template_in_use_bulk. Si cambió desde que se validaron las
+        // filas, se vuelve a validar (las filas podían no cerrar con la versión nueva).
+        const cur = await t.one<{ v: string }>(`SELECT updated_at::text AS v FROM templates WHERE id = $1 AND tenant_id = $2 FOR SHARE`, [
           loaded.tpl.template.id,
-          loaded.tpl.template.name,
-          input.name ?? null,
-          prepared.length,
-          // expiresAt null queda guardado como "sin indicar": al procesar las filas da 30 días (ver prepareRows).
-          JSON.stringify({ subject: input.subject ?? null, message: input.message ?? null, locale: input.locale ?? null, expiresAt: input.expiresAt ?? null }),
-          JSON.stringify(actor),
-          a.userId,
-        ],
-      );
-      const pendingIds: string[] = [];
-      for (const p of prepared) {
-        const itemId = uuidv7();
-        const ok = p.errors.length === 0;
-        if (ok) pendingIds.push(itemId);
+          a.tenantId,
+        ]);
+        if (!cur) throw notFound("Plantilla");
+        if (loaded.stamp && cur.v !== loaded.stamp)
+          throw conflict("template_changed", "La plantilla cambió mientras se preparaba el envío: validá el archivo de nuevo y volvé a enviarlo");
+        // Todo o nada con el cupo del mes: si no entran todas las filas válidas, no se lanza (antes se enviaban hasta
+        // agotarlo y el resto fallaba fila por fila). Dentro de la transacción del alta y con lock por organización:
+        // dos POST simultáneos no pasan con el mismo cupo. El cupo se vuelve a controlar en cada envío (sendEnvelope).
+        await assertQuotaFor(t, a.tenantId, result.valid);
         await t.query(
-          `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, line_number, input, status, error, processed_at, retryable)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          `INSERT INTO bulk_sends (id, tenant_id, template_id, template_name, name, status, total, options, actor, created_by)
+         VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9)`,
           [
-            itemId,
-            a.tenantId,
             id,
-            p.row,
-            p.line ?? null,
-            JSON.stringify(p.input ?? { recipients: p.names.map((name) => ({ name })) }),
-            ok ? "pending" : "failed",
-            ok ? null : p.errors.join("; ").slice(0, 2000),
-            ok ? null : new Date().toISOString(),
-            // Inválida por sus datos: se corrige en un envío nuevo, no se reintenta.
-            ok ? null : false,
+            a.tenantId,
+            loaded.tpl.template.id,
+            loaded.tpl.template.name,
+            input.name ?? null,
+            prepared.length,
+            // expiresAt null queda guardado como "sin indicar": al procesar las filas da 30 días (ver prepareRows).
+            JSON.stringify({
+              subject: input.subject ?? null,
+              message: input.message ?? null,
+              locale: input.locale ?? null,
+              expiresAt: input.expiresAt ?? null,
+            }),
+            JSON.stringify(actor),
+            a.userId,
           ],
         );
-      }
-      for (let i = 0; i < pendingIds.length; i += CHUNK) {
-        await enqueue(t, "bulk", { bulkSendId: id, tenantId: a.tenantId, itemIds: pendingIds.slice(i, i + CHUNK) }, { dedupeKey: `bulk:${id}:${i / CHUNK}` });
-      }
-    });
-    return { status: 201, body: await loadBulk(s.db, a, id) };
+        const pendingIds: string[] = [];
+        for (const p of prepared) {
+          const itemId = uuidv7();
+          const ok = p.errors.length === 0;
+          if (ok) pendingIds.push(itemId);
+          await t.query(
+            `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, line_number, input, status, error, processed_at, retryable)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [
+              itemId,
+              a.tenantId,
+              id,
+              p.row,
+              p.line ?? null,
+              JSON.stringify(p.input ?? { recipients: p.names.map((name) => ({ name })) }),
+              ok ? "pending" : "failed",
+              ok ? null : p.errors.join("; ").slice(0, 2000),
+              ok ? null : new Date().toISOString(),
+              // Inválida por sus datos: se corrige en un envío nuevo, no se reintenta.
+              ok ? null : false,
+            ],
+          );
+        }
+        for (let i = 0; i < pendingIds.length; i += CHUNK) {
+          await enqueue(
+            t,
+            "bulk",
+            { bulkSendId: id, tenantId: a.tenantId, itemIds: pendingIds.slice(i, i + CHUNK) },
+            { dedupeKey: `bulk:${id}:${i / CHUNK}` },
+          );
+        }
+      });
+      return { status: 201, body: await loadBulk(s.db, a, id) };
     }),
   );
 
@@ -676,7 +733,10 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
           : `SELECT * FROM bulk_sends WHERE tenant_id = $1 AND created_by = $2 ORDER BY created_at DESC LIMIT 100`,
       all ? [a.tenantId] : [a.tenantId, a.apiKeyId ?? a.userId],
     );
-    const n = await countsFor(s.db, rows.map((r) => r.id));
+    const n = await countsFor(
+      s.db,
+      rows.map((r) => r.id),
+    );
     return { items: rows.map((b) => toBulk(b, n)) };
   });
 
@@ -711,7 +771,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     // "line": línea del CSV de origen (vacía si las filas vinieron en JSON); al final, para no mover las columnas de antes.
     const lines = [["row", "status", "envelopeId", "recipients", "error", "line"].join(",")];
     // csvCell: los nombres vienen de datos externos; sin neutralizar, "=…" se ejecuta como fórmula en la planilla.
-    for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? "", r.line ?? ""].map(csvCell).join(","));
+    for (const r of rows.map(toItem))
+      lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? "", r.line ?? ""].map(csvCell).join(","));
     reply
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="resultados-${req.params.id}.csv"`)
@@ -724,7 +785,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const b = await t.one<any>(`SELECT * FROM bulk_sends WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
       if (!b || !canViewBulk(a, b)) throw notFound("Envío masivo");
-      if (!ownsBulk(a, b) && !hasPerm(a, "envelopes:manage_all")) throw forbidden("Solo quien lanzó el envío masivo (o quien administra todos los sobres) puede cancelarlo");
+      if (!ownsBulk(a, b) && !hasPerm(a, "envelopes:manage_all"))
+        throw forbidden("Solo quien lanzó el envío masivo (o quien administra todos los sobres) puede cancelarlo");
       if (!["queued", "running"].includes(b.status)) throw conflict("not_cancellable", "El envío ya terminó");
       await t.query(`UPDATE bulk_sends SET status = 'cancelled', cancelled_at = now(), updated_at = now() WHERE id = $1`, [b.id]);
       await t.query(`UPDATE bulk_send_items SET status = 'cancelled', processed_at = now() WHERE bulk_send_id = $1 AND status = 'pending'`, [b.id]);
@@ -742,7 +804,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const b = await t.one<any>(`SELECT * FROM bulk_sends WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
       if (!b || !canViewBulk(a, b)) throw notFound("Envío masivo");
-      if (!ownsBulk(a, b) && !hasPerm(a, "envelopes:manage_all")) throw forbidden("Solo quien lanzó el envío masivo (o quien administra todos los sobres) puede reintentarlo");
+      if (!ownsBulk(a, b) && !hasPerm(a, "envelopes:manage_all"))
+        throw forbidden("Solo quien lanzó el envío masivo (o quien administra todos los sobres) puede reintentarlo");
       if (b.status === "cancelled") throw conflict("not_retryable", "El envío masivo se canceló");
       // Las filas con datos válidos guardan el pedido entero (con templateId); las que fallaron por sus datos, solo los nombres.
       const failed = await t.query<any>(
@@ -750,15 +813,29 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
         [b.id],
       );
       const ids = failed.filter((i) => EnvelopeFromTemplateInput.safeParse(i.input).success).map((i) => i.id as string);
-      if (!ids.length) throw conflict("nothing_to_retry", "No hay filas para reintentar (las que fallaron por sus datos o por la plantilla se corrigen en un envío nuevo)");
+      if (!ids.length)
+        throw conflict(
+          "nothing_to_retry",
+          "No hay filas para reintentar (las que fallaron por sus datos o por la plantilla se corrigen en un envío nuevo)",
+        );
       await assertQuotaFor(t, a.tenantId, ids.length);
       // Nueva ronda: el cierre del último intento de un job anterior (que pudo quedar corriendo) solo toca las filas de
       // su ronda, no las que se reencolan acá.
-      const round = (await t.one<{ r: number }>(`SELECT COALESCE(max(retry_round), 0)::int + 1 AS r FROM bulk_send_items WHERE bulk_send_id = $1`, [b.id]))!.r;
-      await t.query(`UPDATE bulk_send_items SET status = 'pending', error = NULL, processed_at = NULL, envelope_id = NULL, retryable = NULL, retry_round = $2 WHERE id = ANY($1)`, [ids, round]);
+      const round = (await t.one<{ r: number }>(`SELECT COALESCE(max(retry_round), 0)::int + 1 AS r FROM bulk_send_items WHERE bulk_send_id = $1`, [
+        b.id,
+      ]))!.r;
+      await t.query(
+        `UPDATE bulk_send_items SET status = 'pending', error = NULL, processed_at = NULL, envelope_id = NULL, retryable = NULL, retry_round = $2 WHERE id = ANY($1)`,
+        [ids, round],
+      );
       await t.query(`UPDATE bulk_sends SET status = 'running', completed_at = NULL, updated_at = now() WHERE id = $1`, [b.id]);
       for (let i = 0; i < ids.length; i += CHUNK) {
-        await enqueue(t, "bulk", { bulkSendId: b.id, tenantId: a.tenantId, itemIds: ids.slice(i, i + CHUNK), retryRound: round }, { dedupeKey: `bulk:${b.id}:retry:${round}:${i / CHUNK}` });
+        await enqueue(
+          t,
+          "bulk",
+          { bulkSendId: b.id, tenantId: a.tenantId, itemIds: ids.slice(i, i + CHUNK), retryRound: round },
+          { dedupeKey: `bulk:${b.id}:retry:${round}:${i / CHUNK}` },
+        );
       }
     });
     return loadBulk(s.db, a, req.params.id);
@@ -809,7 +886,17 @@ export function bulkRowRetryable(e: unknown, loadRetryable = false): boolean {
 /** Códigos de Postgres de un problema del momento: conexión (08xxx), serialización, deadlock, servidor reiniciándose. */
 const TRANSIENT_PG = /^(08...|40001|40P01|57P0[123]|53300)$/;
 /** Errores de red de Node. */
-const TRANSIENT_NET = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "EAI_AGAIN", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "ECONNABORTED"]);
+const TRANSIENT_NET = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EPIPE",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ECONNABORTED",
+]);
 
 /**
  * Error del momento (base caída, conexión cortada, serialización o deadlock): se reintenta el job. Cualquier otra
@@ -861,7 +948,9 @@ export async function bulkJobGaveUp(d: BulkDeps, p: BulkJobPayload, err: unknown
 }
 
 async function finishIfDone(d: BulkDeps, bulkSendId: string) {
-  const left = await d.db.one<any>(`SELECT count(*)::int AS n FROM bulk_send_items WHERE bulk_send_id = $1 AND status IN ('pending','processing')`, [bulkSendId]);
+  const left = await d.db.one<any>(`SELECT count(*)::int AS n FROM bulk_send_items WHERE bulk_send_id = $1 AND status IN ('pending','processing')`, [
+    bulkSendId,
+  ]);
   if ((left?.n ?? 0) === 0) {
     const done = await d.db.query(
       `UPDATE bulk_sends SET status = 'completed', completed_at = now(), updated_at = now() WHERE id = $1 AND status IN ('queued','running') RETURNING id`,
@@ -875,7 +964,8 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
   const round = p.retryRound ?? 0;
   const b = await d.db.one<any>(`SELECT * FROM bulk_sends WHERE id = $1`, [p.bulkSendId]);
   if (!b || b.status === "cancelled" || b.status === "completed") return;
-  if (b.status === "queued") await d.db.query(`UPDATE bulk_sends SET status = 'running', updated_at = now() WHERE id = $1 AND status = 'queued'`, [b.id]);
+  if (b.status === "queued")
+    await d.db.query(`UPDATE bulk_sends SET status = 'running', updated_at = now() WHERE id = $1 AND status = 'queued'`, [b.id]);
   let loaded: LoadedTemplate | null = null;
   let loadError: string | null = null;
   // Si las filas que no se pueden armar se pueden reintentar después: plan o permisos de quien lanzó el envío se pueden
@@ -890,10 +980,14 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
     loadError = (e as Error).message;
   }
   const actor = b.actor as Actor;
-  const ctx = { tenantId: b.tenant_id, userId: b.created_by, apiKeyId: actor.type === "api_key" ? actor.id ?? null : null, actor };
+  const ctx = { tenantId: b.tenant_id, userId: b.created_by, apiKeyId: actor.type === "api_key" ? (actor.id ?? null) : null, actor };
   // Los sobres salen a nombre de quien lanzó el envío: si mientras tanto dejó la organización, perdió el permiso o
   // se revocó su API key, las filas que faltan no se envían.
-  const ownerGone = await ownerCanStillCreate(d.db, { tenantId: ctx.tenantId, userId: ctx.apiKeyId ? null : ctx.userId, apiKeyId: ctx.apiKeyId }, b.template_id);
+  const ownerGone = await ownerCanStillCreate(
+    d.db,
+    { tenantId: ctx.tenantId, userId: ctx.apiKeyId ? null : ctx.userId, apiKeyId: ctx.apiKeyId },
+    b.template_id,
+  );
   if (ownerGone) {
     loaded = null;
     loadError = ownerGone;
@@ -917,7 +1011,10 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
       await d.db.tx(async (t) => {
         // Bloqueo de la fila: si ya se procesó (reintento del job), no se vuelve a crear el sobre. Solo las de la ronda
         // de este job: una fila que "Reintentar fallidas" volvió a encolar la procesa el job nuevo.
-        const item = await t.one<any>(`SELECT * FROM bulk_send_items WHERE id = $1 AND status = 'pending' AND retry_round = $2 FOR UPDATE`, [itemId, round]);
+        const item = await t.one<any>(`SELECT * FROM bulk_send_items WHERE id = $1 AND status = 'pending' AND retry_round = $2 FOR UPDATE`, [
+          itemId,
+          round,
+        ]);
         if (!item) return;
         const cur = await t.one<any>(`SELECT status FROM bulk_sends WHERE id = $1`, [b.id]);
         if (cur?.status === "cancelled") {
@@ -928,7 +1025,10 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
         const input = EnvelopeFromTemplateInput.parse(item.input);
         const plan = planFromTemplate(loaded, input);
         const envId = await insertEnvelopeFromTemplate(t, ctx, loaded, input, plan, { bulkSendId: b.id, bulkRow: item.row_number });
-        await t.query(`UPDATE bulk_send_items SET status = 'sent', envelope_id = $2, error = NULL, processed_at = now() WHERE id = $1`, [itemId, envId]);
+        await t.query(`UPDATE bulk_send_items SET status = 'sent', envelope_id = $2, error = NULL, processed_at = now() WHERE id = $1`, [
+          itemId,
+          envId,
+        ]);
       });
     } catch (e) {
       // Un error del momento (conexión, serialización, deadlock) se relanza para que la cola reintente el job (las filas
@@ -941,27 +1041,30 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
       if (e instanceof ZodError) msg = e.issues.map((i) => `${i.path.join(".") || "fila"}: ${i.message}`).join("; ");
       else if (e instanceof AppError) msg = e.message;
       else {
-        d.log.warn({ bulkSendId: b.id, itemId, err: String(e) }, transient ? "envío masivo: error del momento en el último intento" : "envío masivo: error inesperado en una fila");
-        msg = transient ? "No se pudo procesar la fila (error temporal); podés reintentarla" : "Error interno al crear el sobre de esta fila; podés reintentarla";
+        d.log.warn(
+          { bulkSendId: b.id, itemId, err: String(e) },
+          transient ? "envío masivo: error del momento en el último intento" : "envío masivo: error inesperado en una fila",
+        );
+        msg = transient
+          ? "No se pudo procesar la fila (error temporal); podés reintentarla"
+          : "Error interno al crear el sobre de esta fila; podés reintentarla";
       }
       // Se puede reintentar lo del momento o ajeno a la fila (error temporal o interno, cupo, plan o permisos de quien
       // lo lanzó); lo que es de sus datos o de la plantilla (validación, prellenado, plantilla borrada) fallaría igual.
       const retryable = bulkRowRetryable(e, loadRetryable);
       if (e instanceof AppError && e.code === "plan_limit") {
         // Cupo del mes agotado: las filas que faltan (de todo el envío) fallarían igual. Se marcan sin intentarlas.
-        await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = true WHERE bulk_send_id = $1 AND status = 'pending'`, [
-          b.id,
-          msg.slice(0, 2000),
-        ]);
+        await d.db.query(
+          `UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = true WHERE bulk_send_id = $1 AND status = 'pending'`,
+          [b.id, msg.slice(0, 2000)],
+        );
         d.log.warn({ bulkSendId: b.id, itemId }, "envío masivo: la organización llegó al cupo del plan");
         break;
       }
-      await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = $4 WHERE id = $1 AND status = 'pending' AND retry_round = $3`, [
-        itemId,
-        msg.slice(0, 2000),
-        round,
-        retryable,
-      ]);
+      await d.db.query(
+        `UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = $4 WHERE id = $1 AND status = 'pending' AND retry_round = $3`,
+        [itemId, msg.slice(0, 2000), round, retryable],
+      );
       d.log.warn({ bulkSendId: b.id, itemId, err: msg }, "fila de envío masivo falló");
     }
   }

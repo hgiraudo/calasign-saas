@@ -5,7 +5,7 @@
 /** PDF adjuntos de un mensaje (por tipo o por extensión: algunos clientes mandan application/octet-stream). */
 function pdfAttachments_(msg) {
   return msg.getAttachments({ includeInlineImages: false, includeAttachments: true }).filter(function (a) {
-    return a.getContentType() === 'application/pdf' || /\.pdf$/i.test(a.getName() || '');
+    return a.getContentType() === "application/pdf" || /\.pdf$/i.test(a.getName() || "");
   });
 }
 
@@ -13,7 +13,7 @@ function selfEmail_() {
   try {
     return Session.getActiveUser().getEmail();
   } catch (err) {
-    return '';
+    return "";
   }
 }
 
@@ -21,13 +21,13 @@ function gmailCard_(e, lang) {
   GmailApp.setCurrentMessageAccessToken(e.gmail.accessToken);
   var msg = GmailApp.getMessageById(e.gmail.messageId);
   var atts = pdfAttachments_(msg);
-  if (!atts.length) return buildMessageCard_(lang, t_(lang, 'noPdf'));
+  if (!atts.length) return buildMessageCard_(lang, t_(lang, "noPdf"));
   return buildSendCard_(lang, {
-    source: 'gmail',
+    source: "gmail",
     attachments: atts.map(function (a) {
       return a.getName();
     }),
-    subject: msg.getSubject() || atts[0].getName().replace(/\.pdf$/i, ''),
+    subject: msg.getSubject() || atts[0].getName().replace(/\.pdf$/i, ""),
     signers: suggestSigners_({ from: msg.getFrom(), to: msg.getTo(), cc: msg.getCc() }, selfEmail_()),
     hasText: false,
     allowSaveBack: false,
@@ -48,26 +48,26 @@ function docsCard_(e, lang) {
   var docs = (e && e.docs) || {};
   if (!docs.id || docs.addonHasFileScopePermission === false) {
     return CardService.newCardBuilder()
-      .setName('docs-access')
-      .setHeader(header_(lang, t_(lang, 'fileAccessTitle')))
+      .setName("docs-access")
+      .setHeader(header_(lang, t_(lang, "fileAccessTitle")))
       .addSection(
         CardService.newCardSection()
-          .addWidget(paragraph_(escapeHtml_(t_(lang, 'docAccessText'))))
+          .addWidget(paragraph_(escapeHtml_(t_(lang, "docAccessText"))))
           .addWidget(
             CardService.newTextButton()
-              .setText(t_(lang, 'allowAccess'))
+              .setText(t_(lang, "allowAccess"))
               .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-              .setOnClickAction(action_('onRequestDocScope')),
+              .setOnClickAction(action_("onRequestDocScope")),
           ),
       )
       .addSection(recentSection_(lang))
       .build();
   }
-  var text = driveExport_(docs.id, 'text/plain');
+  var text = driveExport_(docs.id, "text/plain");
   return buildSendCard_(lang, {
-    source: 'docs',
-    docName: docs.title || 'Documento',
-    subject: docs.title || '',
+    source: "docs",
+    docName: docs.title || "Documento",
+    subject: docs.title || "",
     signers: [],
     anchors: findAnchors_(text),
     hasText: true,
@@ -98,32 +98,33 @@ function onRequestDocScope() {
 
 function driveCard_(e, lang) {
   var items = (e && e.drive && e.drive.selectedItems) || [];
-  if (!items.length) return buildHomeCard_(lang, t_(lang, 'driveHint'));
-  if (items.length > 1) return buildHomeCard_(lang, t_(lang, 'driveOne'));
+  if (!items.length) return buildHomeCard_(lang, t_(lang, "driveHint"));
+  if (items.length > 1) return buildHomeCard_(lang, t_(lang, "driveOne"));
   var it = items[0];
-  if (it.mimeType !== 'application/pdf' && it.mimeType !== CS_GDOC_MIME) return buildHomeCard_(lang, t_(lang, 'driveUnsupported', { name: it.title }));
+  if (it.mimeType !== "application/pdf" && it.mimeType !== CS_GDOC_MIME)
+    return buildHomeCard_(lang, t_(lang, "driveUnsupported", { name: it.title }));
   if (!it.addonHasFileScopePermission) {
     return CardService.newCardBuilder()
-      .setName('drive-access')
-      .setHeader(header_(lang, t_(lang, 'fileAccessTitle')))
+      .setName("drive-access")
+      .setHeader(header_(lang, t_(lang, "fileAccessTitle")))
       .addSection(
         CardService.newCardSection()
-          .addWidget(paragraph_(escapeHtml_(t_(lang, 'fileAccessText', { name: it.title }))))
+          .addWidget(paragraph_(escapeHtml_(t_(lang, "fileAccessText", { name: it.title }))))
           .addWidget(
             CardService.newTextButton()
-              .setText(t_(lang, 'allowAccess'))
+              .setText(t_(lang, "allowAccess"))
               .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-              .setOnClickAction(action_('onRequestDriveScope', { fileId: it.id })),
+              .setOnClickAction(action_("onRequestDriveScope", { fileId: it.id })),
           ),
       )
       .build();
   }
   var isDoc = it.mimeType === CS_GDOC_MIME;
-  var text = isDoc ? driveExport_(it.id, 'text/plain') : null;
+  var text = isDoc ? driveExport_(it.id, "text/plain") : null;
   return buildSendCard_(lang, {
-    source: 'drive',
+    source: "drive",
     docName: it.title,
-    subject: String(it.title || '').replace(/\.pdf$/i, ''),
+    subject: String(it.title || "").replace(/\.pdf$/i, ""),
     signers: [],
     anchors: isDoc ? findAnchors_(text) : null,
     hasText: isDoc,
@@ -135,7 +136,7 @@ function driveCard_(e, lang) {
 
 function onDriveHomepage(e) {
   return guardCard_(e, function (lang) {
-    return buildHomeCard_(lang, t_(lang, 'driveHint'));
+    return buildHomeCard_(lang, t_(lang, "driveHint"));
   });
 }
 

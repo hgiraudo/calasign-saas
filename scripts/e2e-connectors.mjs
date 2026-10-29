@@ -91,7 +91,14 @@ const bamboo = {
   key: "bamboo-key-123456",
   revoked: false,
   employees: {
-    101: { id: "101", firstName: "Lucía", lastName: "Gómez HR", workEmail: "lucia.hr@acme.test", jobTitle: "Analista contable", supervisorEId: "100" },
+    101: {
+      id: "101",
+      firstName: "Lucía",
+      lastName: "Gómez HR",
+      workEmail: "lucia.hr@acme.test",
+      jobTitle: "Analista contable",
+      supervisorEId: "100",
+    },
     100: { id: "100", firstName: "Marta", lastName: "Jefa HR", workEmail: "marta.hr@acme.test", jobTitle: "Gerente" },
     102: { id: "102", firstName: "Pedro", lastName: "Nuevo HR", workEmail: "pedro.hr@acme.test", jobTitle: "Vendedor" },
   },
@@ -102,13 +109,29 @@ await serve(P.bamboo, async ({ req, url, body, json, send }) => {
   const m0 = url.pathname.match(/^\/api\/gateway\.php\/([\w-]+)\/v1(\/.*)$/);
   if (!m0 || m0[1] !== "acme") return send(404, { message: "company not found" });
   const path = m0[2];
-  if (bamboo.revoked || req.headers.authorization !== `Basic ${Buffer.from(`${bamboo.key}:x`).toString("base64")}`) return send(401, undefined, { "x-bamboohr-error-message": "invalid key" });
+  if (bamboo.revoked || req.headers.authorization !== `Basic ${Buffer.from(`${bamboo.key}:x`).toString("base64")}`)
+    return send(401, undefined, { "x-bamboohr-error-message": "invalid key" });
   let m;
-  if (path === "/employees/directory") return send(200, { employees: Object.values(bamboo.employees).map((e) => ({ id: e.id, displayName: `${e.firstName} ${e.lastName}`, workEmail: e.workEmail, jobTitle: e.jobTitle })) });
+  if (path === "/employees/directory")
+    return send(200, {
+      employees: Object.values(bamboo.employees).map((e) => ({
+        id: e.id,
+        displayName: `${e.firstName} ${e.lastName}`,
+        workEmail: e.workEmail,
+        jobTitle: e.jobTitle,
+      })),
+    });
   if ((m = path.match(/^\/employees\/(\w+)\/files\/view$/))) return send(200, { categories: [{ id: 17, name: "Contratos" }] });
   if ((m = path.match(/^\/employees\/(\w+)\/files$/)) && req.method === "POST") {
     const p = parts(req, body);
-    bamboo.files.push({ employee: m[1], category: p.category?.text, fileName: p.fileName?.text, share: p.share?.text, pdf: p.file?.text.startsWith("%PDF"), evidence: p.file?.text.includes("calasign.evidence-certificate") });
+    bamboo.files.push({
+      employee: m[1],
+      category: p.category?.text,
+      fileName: p.fileName?.text,
+      share: p.share?.text,
+      pdf: p.file?.text.startsWith("%PDF"),
+      evidence: p.file?.text.includes("calasign.evidence-certificate"),
+    });
     return send(201, undefined, { location: `https://api.bamboohr.test/files/${bamboo.files.length}` });
   }
   if ((m = path.match(/^\/employees\/(\w+)$/))) {
@@ -136,7 +159,13 @@ const ic = {
       title: "MSA Globex",
       status: "active",
       step: "Sign",
-      attributes: { counterpartyName: "Globex", counterpartySignerName: "Gina Globex IC", counterpartySignerEmail: "gina.ic@globex.test", contractValue: "50000", draft: [{ key: "d1", filename: "MSA Globex.pdf" }] },
+      attributes: {
+        counterpartyName: "Globex",
+        counterpartySignerName: "Gina Globex IC",
+        counterpartySignerEmail: "gina.ic@globex.test",
+        contractValue: "50000",
+        draft: [{ key: "d1", filename: "MSA Globex.pdf" }],
+      },
     },
   },
 };
@@ -146,27 +175,33 @@ await serve(P.ironclad, async ({ req, url, body, send }) => {
     if (url.searchParams.get("code_challenge_method") !== "S256") return send(400, { error: "pkce_required" });
     const code = `ic-${randomUUID()}`;
     ic.codes.set(code, { challenge: url.searchParams.get("code_challenge"), redirect: url.searchParams.get("redirect_uri") });
-    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+    return send(302, undefined, {
+      location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}`,
+    });
   }
   if (path === "/oauth/token") {
     const f = new URLSearchParams(body.toString());
     const c = ic.codes.get(f.get("code"));
-    if (f.get("client_secret") !== "ic-secret" || !c || c.redirect !== f.get("redirect_uri") || s256(f.get("code_verifier") ?? "") !== c.challenge) return send(400, { error: "invalid_grant" });
+    if (f.get("client_secret") !== "ic-secret" || !c || c.redirect !== f.get("redirect_uri") || s256(f.get("code_verifier") ?? "") !== c.challenge)
+      return send(400, { error: "invalid_grant" });
     ic.codes.delete(f.get("code"));
     ic.token = `ic-at-${randomUUID()}`;
     return send(200, { access_token: ic.token, refresh_token: "ic-rt", expires_in: 3600 });
   }
   if (req.headers.authorization !== `Bearer ${ic.token}`) return send(401, { message: "unauthorized" });
   let m;
-  if (path === "/public/api/v1/workflows") return send(200, { list: Object.values(ic.workflows).map((w) => ({ id: w.id, title: w.title, step: w.step })) });
-  if ((m = path.match(/^\/public\/api\/v1\/workflows\/(\w+)\/document\/(\w+)\/download$/))) return send(200, tinyPdf("Contrato marco Globex (Ironclad)"));
+  if (path === "/public/api/v1/workflows")
+    return send(200, { list: Object.values(ic.workflows).map((w) => ({ id: w.id, title: w.title, step: w.step })) });
+  if ((m = path.match(/^\/public\/api\/v1\/workflows\/(\w+)\/document\/(\w+)\/download$/)))
+    return send(200, tinyPdf("Contrato marco Globex (Ironclad)"));
   if ((m = path.match(/^\/public\/api\/v1\/workflows\/(\w+)\/upload-signed$/)) && req.method === "POST") {
     const p = parts(req, body);
     ic.signed.push({ id: m[1], pdf: p.attachment?.text.startsWith("%PDF"), filename: p.attachment?.filename });
     ic.workflows[m[1]].step = "Archive";
     return send(200, { key: "signed1" });
   }
-  if ((m = path.match(/^\/public\/api\/v1\/workflows\/(\w+)$/))) return ic.workflows[m[1]] ? send(200, ic.workflows[m[1]]) : send(404, { message: "not found" });
+  if ((m = path.match(/^\/public\/api\/v1\/workflows\/(\w+)$/)))
+    return ic.workflows[m[1]] ? send(200, ic.workflows[m[1]]) : send(404, { message: "not found" });
   send(404, { message: `ironclad mock: ${req.method} ${path}` });
 });
 
@@ -176,7 +211,15 @@ await serve(P.juro, async ({ req, url, body, send }) => {
   const path = url.pathname.replace(/^\/v3/, "");
   if (req.headers["x-api-key"] !== "juro-key-123456") return send(401, { message: "invalid api key" });
   if (path === "/contracts") return send(200, { contracts: [{ id: "jc1", name: "NDA Initech", state: "draft" }] });
-  if (path === "/contracts/jc1") return send(200, { contract: { id: "jc1", name: "NDA Initech", fields: [{ title: "Plazo", value: "12 meses" }], signingSides: [{ name: "Initech", signatories: [{ name: "Ivo Initech JU", email: "ivo.ju@initech.test" }] }] } });
+  if (path === "/contracts/jc1")
+    return send(200, {
+      contract: {
+        id: "jc1",
+        name: "NDA Initech",
+        fields: [{ title: "Plazo", value: "12 meses" }],
+        signingSides: [{ name: "Initech", signatories: [{ name: "Ivo Initech JU", email: "ivo.ju@initech.test" }] }],
+      },
+    });
   if (path === "/contracts/jc1/pdf/binary") return send(200, tinyPdf("NDA Initech (Juro)"));
   if (path === "/contracts/upload" && req.method === "POST") {
     const p = parts(req, body);
@@ -193,7 +236,9 @@ await serve(P.box, async ({ req, url, body, json, send }) => {
   if (path === "/authorize") {
     const code = `box-${randomUUID()}`;
     box.codes.add(code);
-    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+    return send(302, undefined, {
+      location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}`,
+    });
   }
   if (path === "/oauth2/token") {
     const f = new URLSearchParams(body.toString());
@@ -206,7 +251,8 @@ await serve(P.box, async ({ req, url, body, json, send }) => {
   if (path === "/2.0/folders" && req.method === "POST") {
     const { name, parent } = json();
     const par = box.folders[parent.id];
-    if (par.children[name]) return send(409, { type: "error", code: "item_name_in_use", context_info: { conflicts: [{ id: par.children[name], type: "folder" }] } });
+    if (par.children[name])
+      return send(409, { type: "error", code: "item_name_in_use", context_info: { conflicts: [{ id: par.children[name], type: "folder" }] } });
     const id = String(box.nextId++);
     box.folders[id] = { name, children: {} };
     par.children[name] = id;
@@ -215,7 +261,12 @@ await serve(P.box, async ({ req, url, body, json, send }) => {
   if (path === "/api/2.0/files/content" && req.method === "POST") {
     const p = parts(req, body);
     const attrs = JSON.parse(p.attributes.text);
-    box.files.push({ name: attrs.name, parent: attrs.parent.id, pdf: p.file.text.startsWith("%PDF"), evidence: p.file.text.includes("calasign.evidence-certificate") });
+    box.files.push({
+      name: attrs.name,
+      parent: attrs.parent.id,
+      pdf: p.file.text.startsWith("%PDF"),
+      evidence: p.file.text.includes("calasign.evidence-certificate"),
+    });
     return send(201, { total_count: 1, entries: [{ id: `f${box.files.length}`, type: "file", name: attrs.name }] });
   }
   send(404, { message: `box mock: ${req.method} ${path}` });
@@ -229,7 +280,9 @@ await serve(P.ms, async ({ req, url, body, send }) => {
     if (!url.searchParams.get("scope").includes("Sites.ReadWrite.All")) return send(400, { error: "invalid_scope" });
     const code = `ms-${randomUUID()}`;
     ms.codes.add(code);
-    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+    return send(302, undefined, {
+      location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}`,
+    });
   }
   if (path === "/common/oauth2/v2.0/token") {
     const f = new URLSearchParams(body.toString());
@@ -240,10 +293,22 @@ await serve(P.ms, async ({ req, url, body, send }) => {
   if (req.headers.authorization !== `Bearer ${ms.token}`) return send(401, { error: { code: "InvalidAuthenticationToken" } });
   if (path === "/v1.0/me") return send(200, { mail: "legal@acme.onmicrosoft.test" });
   if (path === "/v1.0/sites/127.0.0.1:/sites/Legal") return send(200, { id: "site-legal", webUrl: "https://acme.sharepoint.test/sites/Legal" });
-  if (path === "/v1.0/sites/site-legal/drives") return send(200, { value: [{ id: "drive-docs", name: "Documentos" }, { id: "drive-rrhh", name: "Contratos RRHH" }] });
+  if (path === "/v1.0/sites/site-legal/drives")
+    return send(200, {
+      value: [
+        { id: "drive-docs", name: "Documentos" },
+        { id: "drive-rrhh", name: "Contratos RRHH" },
+      ],
+    });
   let m;
   if ((m = path.match(/^\/v1\.0\/drives\/([\w-]+)\/root:\/(.+):\/content$/)) && req.method === "PUT") {
-    ms.uploads.push({ drive: m[1], path: m[2], type: req.headers["content-type"], pdf: body.subarray(0, 5).toString() === "%PDF-", evidence: body.toString().includes("calasign.evidence-certificate") });
+    ms.uploads.push({
+      drive: m[1],
+      path: m[2],
+      type: req.headers["content-type"],
+      pdf: body.subarray(0, 5).toString() === "%PDF-",
+      evidence: body.toString().includes("calasign.evidence-certificate"),
+    });
     return send(201, { id: `it${ms.uploads.length}`, webUrl: `https://acme.sharepoint.test/${encodeURI(m[2])}` });
   }
   send(404, { error: { message: `ms mock: ${req.method} ${path}` } });
@@ -293,7 +358,12 @@ const cleanup = () => {
   }
 };
 process.on("exit", cleanup);
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 process.on("uncaughtException", (e) => {
   console.error(e);
   cleanup();
@@ -367,7 +437,16 @@ async function template(name, roles, extraFields = []) {
   await api("PUT", `/v1/templates/${t.id}/roles`, { roles: roles.map((r, i) => ({ id: ids[i], name: r, role: "signer", routingOrder: i + 1 })) });
   await api("PUT", `/v1/templates/${t.id}/fields`, {
     fields: [
-      ...roles.map((_, i) => ({ documentId: doc.id, roleId: ids[i], type: "signature", page: 0, x: 0.1 + i * 0.45, y: 0.7, width: 0.3, height: 0.08 })),
+      ...roles.map((_, i) => ({
+        documentId: doc.id,
+        roleId: ids[i],
+        type: "signature",
+        page: 0,
+        x: 0.1 + i * 0.45,
+        y: 0.7,
+        width: 0.3,
+        height: 0.08,
+      })),
       ...extraFields.map((f) => ({ documentId: doc.id, roleId: ids[0], type: "text", page: 0, x: 0.1, y: 0.2, width: 0.3, height: 0.03, label: f })),
     ],
   });
@@ -377,35 +456,74 @@ async function template(name, roles, extraFields = []) {
 // ───────────────────────────── Escenario ─────────────────────────────
 
 const stamp = Date.now();
-await api("POST", "/v1/auth/signup", { name: "Admin Conectores", email: `conn+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Conectores ${stamp}` });
+await api("POST", "/v1/auth/signup", {
+  name: "Admin Conectores",
+  email: `conn+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Conectores ${stamp}`,
+});
 
 const prov = await api("GET", "/v1/connectors/providers");
 const byP = Object.fromEntries(prov.items.map((p) => [p.provider, p]));
-assert(byP.ironclad.oauthConfigured && !byP.factorial.oauthConfigured && byP.bamboohr.category === "hris" && byP.juro.category === "clm", "proveedores");
+assert(
+  byP.ironclad.oauthConfigured && !byP.factorial.oauthConfigured && byP.bamboohr.category === "hris" && byP.juro.category === "clm",
+  "proveedores",
+);
 assert(prov.redirectUris.ironclad === `${BASE}/v1/connectors/oauth/ironclad/callback`, "redirect URI de Ironclad");
 step("proveedores: 3 HRIS + 2 CLM; OAuth configurado para Ironclad");
 
 // ── DMS: Box y SharePoint con certificado de evidencia ──
-await oauthDance("/v1/storage/oauth/box/start", { name: "Box RRHH", folder: "CalaSign/RRHH", includeEvidence: true }, "/v1/storage/oauth/box/callback", "connected=box");
+await oauthDance(
+  "/v1/storage/oauth/box/start",
+  { name: "Box RRHH", folder: "CalaSign/RRHH", includeEvidence: true },
+  "/v1/storage/oauth/box/callback",
+  "connected=box",
+);
 await api("POST", "/v1/storage/oauth/sharepoint/start", { name: "SP sin sitio" }, { expect: 400 });
 await oauthDance(
   "/v1/storage/oauth/sharepoint/start",
-  { name: "SharePoint Legal", siteUrl: `http://127.0.0.1:${P.ms}/sites/Legal/Shared%20Documents/Forms/AllItems.aspx`, library: "Contratos RRHH", folder: "Firmados/2026", includeEvidence: true },
+  {
+    name: "SharePoint Legal",
+    siteUrl: `http://127.0.0.1:${P.ms}/sites/Legal/Shared%20Documents/Forms/AllItems.aspx`,
+    library: "Contratos RRHH",
+    folder: "Firmados/2026",
+    includeEvidence: true,
+  },
   "/v1/storage/oauth/sharepoint/callback",
   "connected=sharepoint",
 );
 const stConns = (await api("GET", "/v1/storage/connections")).items;
 const spConn = stConns.find((c) => c.provider === "sharepoint");
-assert(spConn?.accountLabel === "legal@acme.onmicrosoft.test" && spConn.includeEvidence && spConn.target.includes("Contratos RRHH"), `conexión SharePoint (${JSON.stringify(spConn)})`);
+assert(
+  spConn?.accountLabel === "legal@acme.onmicrosoft.test" && spConn.includeEvidence && spConn.target.includes("Contratos RRHH"),
+  `conexión SharePoint (${JSON.stringify(spConn)})`,
+);
 assert(stConns.find((c) => c.provider === "box")?.accountLabel === "admin@acme.box.test", "conexión Box");
 step("DMS: Box y SharePoint por OAuth (sitio y biblioteca resueltos con Graph), con certificado de evidencia");
 
 // ── HRIS: BambooHR ──
 const tplHr = await template(`Contrato laboral ${stamp}`, ["Empleado", "Jefe"], ["Cargo"]);
-await api("POST", "/v1/connectors/connections", { provider: "bamboohr", name: "x", credentials: { companyDomain: "acme", apiKey: "clave-mala-123" } }, { expect: 400 });
-await api("POST", "/v1/connectors/connections", { provider: "bamboohr", name: "x", credentials: { companyDomain: "acme/../evil", apiKey: bamboo.key } }, { expect: 400 });
-const bConn = await api("POST", "/v1/connectors/connections", { provider: "bamboohr", name: "BambooHR ACME", credentials: { companyDomain: "https://acme.bamboohr.com", apiKey: bamboo.key } });
-assert(bConn.accountLabel === "acme.bamboohr.com" && bConn.webhookUrl.startsWith(`${BASE}/v1/integrations/connectors/hook/cshk_`), "conexión BambooHR con URL de webhook");
+await api(
+  "POST",
+  "/v1/connectors/connections",
+  { provider: "bamboohr", name: "x", credentials: { companyDomain: "acme", apiKey: "clave-mala-123" } },
+  { expect: 400 },
+);
+await api(
+  "POST",
+  "/v1/connectors/connections",
+  { provider: "bamboohr", name: "x", credentials: { companyDomain: "acme/../evil", apiKey: bamboo.key } },
+  { expect: 400 },
+);
+const bConn = await api("POST", "/v1/connectors/connections", {
+  provider: "bamboohr",
+  name: "BambooHR ACME",
+  credentials: { companyDomain: "https://acme.bamboohr.com", apiKey: bamboo.key },
+});
+assert(
+  bConn.accountLabel === "acme.bamboohr.com" && bConn.webhookUrl.startsWith(`${BASE}/v1/integrations/connectors/hook/cshk_`),
+  "conexión BambooHR con URL de webhook",
+);
 const found = await api("GET", `/v1/connectors/connections/${bConn.id}/records?q=lucía`);
 assert(found.items.length === 1 && found.items[0].id === "101", "búsqueda de empleados");
 step("BambooHR: clave inválida y dominio raro rechazados; conexión probada; búsqueda de empleados");
@@ -425,16 +543,28 @@ const onboarding = await api("POST", "/v1/connectors/flows", {
 });
 const sent = await api("POST", `/v1/connectors/flows/${onboarding.id}/send`, { recordId: "101" });
 const det = await api("GET", `/v1/envelopes/${sent.envelopeId}`);
-assert(det.recipients.some((r) => r.name === "Lucía Gómez HR" && r.email === "lucia.hr@acme.test"), "empleado como firmante");
-assert(det.recipients.some((r) => r.name === "Marta Jefa HR"), "jefe (supervisor) como firmante");
-assert(det.fields.some((f) => f.label === "Cargo" && f.value === "Analista contable"), "cargo prellenado");
+assert(
+  det.recipients.some((r) => r.name === "Lucía Gómez HR" && r.email === "lucia.hr@acme.test"),
+  "empleado como firmante",
+);
+assert(
+  det.recipients.some((r) => r.name === "Marta Jefa HR"),
+  "jefe (supervisor) como firmante",
+);
+assert(
+  det.fields.some((f) => f.label === "Cargo" && f.value === "Analista contable"),
+  "cargo prellenado",
+);
 assert(det.envelope.metadata.connector?.objectId === "101", "metadata del sobre con el empleado");
 await waitFor(() => bamboo.employees[101].customCalaSign === "sent", "estado sent en BambooHR");
 step("BambooHR: sobre desde el empleado 101 (empleado + jefe, cargo prellenado) y estado «sent»");
 
 await signAll(sent.envelopeId, ["Lucía Gómez HR", "Marta Jefa HR"]);
 await waitFor(() => bamboo.files.length === 2 && bamboo.employees[101].customCalaSign === "Firmado", "PDF + evidencia al legajo");
-assert(bamboo.files.every((f) => f.employee === "101" && f.category === "17" && f.share === "no"), "categoría del legajo y sin compartir");
+assert(
+  bamboo.files.every((f) => f.employee === "101" && f.category === "17" && f.share === "no"),
+  "categoría del legajo y sin compartir",
+);
 assert(bamboo.files.some((f) => f.pdf) && bamboo.files.some((f) => f.evidence), "PDF sellado y certificado de evidencia");
 step("BambooHR: firmado → PDF sellado y certificado de evidencia en el legajo, estado «Firmado»");
 
@@ -442,7 +572,10 @@ await waitFor(() => box.files.filter((f) => f.pdf).length >= 1 && box.files.some
 const boxFolder = box.folders[0].children.CalaSign && box.folders[box.folders[0].children.CalaSign].children.RRHH;
 assert(boxFolder && box.files.every((f) => f.parent === boxFolder), "Box: dentro de CalaSign/RRHH");
 await waitFor(() => ms.uploads.filter((u) => u.drive === "drive-rrhh").length >= 2, "SharePoint: PDF + evidencia");
-assert(ms.uploads.some((u) => u.path.startsWith("Firmados/2026/") && u.pdf) && ms.uploads.some((u) => u.evidence && u.type === "application/json"), "SharePoint: carpeta y tipos");
+assert(
+  ms.uploads.some((u) => u.path.startsWith("Firmados/2026/") && u.pdf) && ms.uploads.some((u) => u.evidence && u.type === "application/json"),
+  "SharePoint: carpeta y tipos",
+);
 step("DMS: el firmado (y su evidencia) archivados en Box (carpeta anidada creada) y en la biblioteca de SharePoint");
 
 // ── Webhook de BambooHR ──
@@ -458,17 +591,31 @@ const hookFlow = await api("POST", "/v1/connectors/flows", {
   trigger: "webhook",
   triggerConfig: { event: "Created" },
 });
-const bad = await fetch(`${BASE}/v1/integrations/connectors/hook/cshk_nope`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+const bad = await fetch(`${BASE}/v1/integrations/connectors/hook/cshk_nope`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: "{}",
+});
 assert(bad.status === 404, "token de webhook inválido → 404");
 const hookBody = JSON.stringify({ employees: [{ id: "102", action: "Created", changedFields: [] }] });
 for (let i = 0; i < 2; i++) {
   const r = await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: hookBody });
   assert(r.status === 200, `webhook aceptado (${r.status})`);
 }
-await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ employees: [{ id: "102", action: "Updated" }] }) });
-const hookRun = await waitFor(async () => (await api("GET", "/v1/connectors/runs")).items.find((r) => r.flowId === hookFlow.id && r.status === "succeeded" && r.envelopeId), "envío por webhook");
+await fetch(bConn.webhookUrl, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ employees: [{ id: "102", action: "Updated" }] }),
+});
+const hookRun = await waitFor(
+  async () => (await api("GET", "/v1/connectors/runs")).items.find((r) => r.flowId === hookFlow.id && r.status === "succeeded" && r.envelopeId),
+  "envío por webhook",
+);
 const hookRuns = (await api("GET", "/v1/connectors/runs")).items.filter((r) => r.flowId === hookFlow.id && r.kind === "send");
-assert(hookRuns.length === 1 && hookRun.objectId === "102", `un solo envío por evento repetido y filtrado por evento (${JSON.stringify(hookRuns.map((r) => [r.event, r.status, r.detail, r.error]))})`);
+assert(
+  hookRuns.length === 1 && hookRun.objectId === "102",
+  `un solo envío por evento repetido y filtrado por evento (${JSON.stringify(hookRuns.map((r) => [r.event, r.status, r.detail, r.error]))})`,
+);
 step("BambooHR: webhook (URL secreta) dispara el alta del empleado 102; repetido no duplica; otro evento no dispara");
 
 // Secreto HMAC opcional del flujo: sin firma (o con otra) no dispara; firmado con X-CalaSign-Signature sí.
@@ -478,7 +625,11 @@ assert(signedFlow.webhookSigned === true && !("webhookSecret" in signedFlow), "f
 const sigBody = JSON.stringify({ employees: [{ id: "102", action: "Created", changedFields: ["firma"] }] });
 const unsigned = await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: sigBody });
 assert(unsigned.status === 401, `webhook sin firma → 401 (${unsigned.status})`);
-const wrongSig = await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json", "x-calasign-signature": `sha256=${"0".repeat(64)}` }, body: sigBody });
+const wrongSig = await fetch(bConn.webhookUrl, {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-calasign-signature": `sha256=${"0".repeat(64)}` },
+  body: sigBody,
+});
 assert(wrongSig.status === 401, "firma incorrecta → 401");
 const signed = await fetch(bConn.webhookUrl, {
   method: "POST",
@@ -494,7 +645,12 @@ await oauthDance("/v1/connectors/oauth/ironclad/start", { name: "Ironclad Legal"
 const icConn = (await api("GET", "/v1/connectors/connections")).items.find((c) => c.provider === "ironclad");
 assert(icConn?.authType === "oauth", "conexión Ironclad por OAuth (PKCE verificado por el simulador)");
 const tplSig = await template(`Hoja de firmas ${stamp}`, ["Contraparte"]);
-await api("POST", "/v1/connectors/flows", { connectionId: bConn.id, name: "x", objectType: "employee", templateId: tplSig.id, documentSource: "record" }, { expect: 400 });
+await api(
+  "POST",
+  "/v1/connectors/flows",
+  { connectionId: bConn.id, name: "x", objectType: "employee", templateId: tplSig.id, documentSource: "record" },
+  { expect: 400 },
+);
 const icFlow = await api("POST", "/v1/connectors/flows", {
   connectionId: icConn.id,
   name: "Firma de workflows",
@@ -505,7 +661,10 @@ const icFlow = await api("POST", "/v1/connectors/flows", {
 });
 const icSent = await api("POST", `/v1/connectors/flows/${icFlow.id}/send`, { recordId: "wf1" });
 const icDet = await api("GET", `/v1/envelopes/${icSent.envelopeId}`);
-assert(icDet.documents.length === 2 && icDet.documents[0].name === "MSA Globex.pdf", `documento de Ironclad primero (${icDet.documents.map((x) => x.name)})`);
+assert(
+  icDet.documents.length === 2 && icDet.documents[0].name === "MSA Globex.pdf",
+  `documento de Ironclad primero (${icDet.documents.map((x) => x.name)})`,
+);
 assert(icDet.recipients[0].email === "gina.ic@globex.test", "contraparte desde los atributos del workflow");
 await signAll(icSent.envelopeId, ["Gina Globex IC"]);
 await waitFor(() => ic.signed.length === 1 && ic.signed[0].pdf && ic.workflows.wf1.step === "Archive", "upload-signed en Ironclad");
@@ -533,7 +692,11 @@ assert(e409.error.code === "connector_reauth_required", "clave revocada → conn
 const conns = (await api("GET", "/v1/connectors/connections")).items;
 assert(conns.find((c) => c.id === bConn.id).lastError, "la conexión muestra el error");
 const rotated = await api("POST", `/v1/connectors/connections/${bConn.id}/rotate-webhook`);
-assert(rotated.webhookUrl !== bConn.webhookUrl && (await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status === 404, "URL de webhook regenerada");
+assert(
+  rotated.webhookUrl !== bConn.webhookUrl &&
+    (await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status === 404,
+  "URL de webhook regenerada",
+);
 step("BambooHR revocado → 409 connector_reauth_required y error visible; URL de webhook regenerada");
 
 console.log("\nE2E conectores OK");

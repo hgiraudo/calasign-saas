@@ -51,8 +51,15 @@ describe("Stripe", () => {
 
   it("codifica parámetros anidados como x-www-form-urlencoded de Stripe", async () => {
     const { stripeForm } = await load();
-    const s = stripeForm({ mode: "payment", metadata: { paymentId: "p1" }, line_items: [{ quantity: 1, price_data: { currency: "brl", unit_amount: 15050 } }], skip: undefined });
-    expect(decodeURIComponent(s)).toBe("mode=payment&metadata[paymentId]=p1&line_items[0][quantity]=1&line_items[0][price_data][currency]=brl&line_items[0][price_data][unit_amount]=15050");
+    const s = stripeForm({
+      mode: "payment",
+      metadata: { paymentId: "p1" },
+      line_items: [{ quantity: 1, price_data: { currency: "brl", unit_amount: 15050 } }],
+      skip: undefined,
+    });
+    expect(decodeURIComponent(s)).toBe(
+      "mode=payment&metadata[paymentId]=p1&line_items[0][quantity]=1&line_items[0][price_data][currency]=brl&line_items[0][price_data][unit_amount]=15050",
+    );
   });
 
   it("crea un Checkout de pago con el monto en centavos y la metadata del cobro", async () => {
@@ -82,7 +89,15 @@ describe("Stripe", () => {
     const { stripeCreateSubscriptionCheckout } = await load();
     replies.set("POST /v1/checkout/sessions", { status: 200, body: { id: "cs_sub", url: "https://checkout.stripe.com/c/pay/cs_sub" } });
     calls.length = 0;
-    await stripeCreateSubscriptionCheckout({ planName: "Business", amount: 49, currency: "USD", successUrl: "s", cancelUrl: "c", metadata: { tenantId: "t1", plan: "business" }, customerEmail: "a@b.c" });
+    await stripeCreateSubscriptionCheckout({
+      planName: "Business",
+      amount: 49,
+      currency: "USD",
+      successUrl: "s",
+      cancelUrl: "c",
+      metadata: { tenantId: "t1", plan: "business" },
+      customerEmail: "a@b.c",
+    });
     const body = new URLSearchParams(calls[0].body);
     expect(body.get("mode")).toBe("subscription");
     expect(body.get("line_items[0][price_data][recurring][interval]")).toBe("month");
@@ -105,7 +120,13 @@ describe("Mercado Pago", () => {
     const manifest = "id:123456789;request-id:bb56a2f1-6aae-46ac-982e-9dcd3581d08e;ts:1704908010;";
     const v1 = createHmac("sha256", secret).update(manifest).digest("hex");
     const ok = (x: Partial<Parameters<typeof verifyMercadoPagoSignature>[0]>) =>
-      verifyMercadoPagoSignature({ xSignature: `ts=${ts},v1=${v1}`, xRequestId: "bb56a2f1-6aae-46ac-982e-9dcd3581d08e", dataId: "123456789", secret, ...x });
+      verifyMercadoPagoSignature({
+        xSignature: `ts=${ts},v1=${v1}`,
+        xRequestId: "bb56a2f1-6aae-46ac-982e-9dcd3581d08e",
+        dataId: "123456789",
+        secret,
+        ...x,
+      });
     expect(ok({})).toBe(true);
     expect(ok({ dataId: "123456780" })).toBe(false);
     expect(ok({ xRequestId: "otro" })).toBe(false);
@@ -123,7 +144,11 @@ describe("Mercado Pago", () => {
     const { mpCreatePreference, mpGetPayment } = await load();
     replies.set("POST /checkout/preferences", {
       status: 201,
-      body: { id: "pref_1", init_point: "https://www.mercadopago.com/checkout?pref_id=pref_1", sandbox_init_point: "https://sandbox.mercadopago.com/checkout?pref_id=pref_1" },
+      body: {
+        id: "pref_1",
+        init_point: "https://www.mercadopago.com/checkout?pref_id=pref_1",
+        sandbox_init_point: "https://sandbox.mercadopago.com/checkout?pref_id=pref_1",
+      },
     });
     calls.length = 0;
     const p = await mpCreatePreference({
@@ -144,21 +169,55 @@ describe("Mercado Pago", () => {
     // GET /v1/payments/{id} (respuesta resumida de la documentación).
     replies.set("GET /v1/payments/1234", {
       status: 200,
-      body: { id: 1234, status: "approved", external_reference: "pay:abc", transaction_amount: 25000, currency_id: "COP", date_approved: "2026-10-17T12:00:00.000-04:00", payment_method_id: "pse" },
+      body: {
+        id: 1234,
+        status: "approved",
+        external_reference: "pay:abc",
+        transaction_amount: 25000,
+        currency_id: "COP",
+        date_approved: "2026-10-17T12:00:00.000-04:00",
+        payment_method_id: "pse",
+      },
     });
     const pay = await mpGetPayment("1234");
-    expect(pay).toEqual({ id: "1234", status: "approved", externalReference: "pay:abc", amount: 25000, currency: "COP", approvedAt: "2026-10-17T12:00:00.000-04:00", method: "pse" });
+    expect(pay).toEqual({
+      id: "1234",
+      status: "approved",
+      externalReference: "pay:abc",
+      amount: 25000,
+      currency: "COP",
+      approvedAt: "2026-10-17T12:00:00.000-04:00",
+      method: "pse",
+    });
   });
 
   it("crea y consulta una suscripción (preapproval)", async () => {
     const { mpCreatePreapproval, mpGetPreapproval } = await load();
-    replies.set("POST /preapproval", { status: 201, body: { id: "pre_1", init_point: "https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=pre_1" } });
+    replies.set("POST /preapproval", {
+      status: 201,
+      body: { id: "pre_1", init_point: "https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=pre_1" },
+    });
     calls.length = 0;
-    await mpCreatePreapproval({ reason: "CalaSign Business", externalReference: "sub:t:business", payerEmail: "a@b.c", amount: 249, currency: "BRL", backUrl: "b" });
+    await mpCreatePreapproval({
+      reason: "CalaSign Business",
+      externalReference: "sub:t:business",
+      payerEmail: "a@b.c",
+      amount: 249,
+      currency: "BRL",
+      backUrl: "b",
+    });
     const sent = JSON.parse(calls[0].body);
     expect(sent.auto_recurring).toEqual({ frequency: 1, frequency_type: "months", transaction_amount: 249, currency_id: "BRL" });
-    replies.set("GET /preapproval/pre_1", { status: 200, body: { id: "pre_1", status: "authorized", external_reference: "sub:t:business", next_payment_date: "2026-11-17T00:00:00.000-03:00" } });
-    expect(await mpGetPreapproval("pre_1")).toEqual({ id: "pre_1", status: "authorized", externalReference: "sub:t:business", nextPaymentDate: "2026-11-17T00:00:00.000-03:00" });
+    replies.set("GET /preapproval/pre_1", {
+      status: 200,
+      body: { id: "pre_1", status: "authorized", external_reference: "sub:t:business", next_payment_date: "2026-11-17T00:00:00.000-03:00" },
+    });
+    expect(await mpGetPreapproval("pre_1")).toEqual({
+      id: "pre_1",
+      status: "authorized",
+      externalReference: "sub:t:business",
+      nextPaymentDate: "2026-11-17T00:00:00.000-03:00",
+    });
   });
 });
 

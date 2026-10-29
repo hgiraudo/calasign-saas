@@ -87,5 +87,8 @@ export function generateRecoveryCodes(n = 10): string[] {
 }
 
 export function normalizeRecoveryCode(code: string) {
-  return code.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return code
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }

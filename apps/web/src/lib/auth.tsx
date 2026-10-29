@@ -221,15 +221,7 @@ function TabChangedModal({ unsaved, onClose, onReload }: { unsaved?: boolean; on
  * Sesión vencida con cambios sin guardar: se ingresa en otra pestaña (la cookie es la misma) y «Reintentar» vuelve a
  * leer /v1/me. Tiene que ser la misma persona y la misma organización: con otra, los guardados irían a otro lado.
  */
-function SessionLostModal({
-  me,
-  onRestored,
-  onDiscard,
-}: {
-  me: MeResponse;
-  onRestored: (m: MeResponse) => void;
-  onDiscard: () => void;
-}) {
+function SessionLostModal({ me, onRestored, onDiscard }: { me: MeResponse; onRestored: (m: MeResponse) => void; onDiscard: () => void }) {
   const pw = usePasswordText();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);

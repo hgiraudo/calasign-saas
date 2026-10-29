@@ -59,7 +59,12 @@ export function FirmadorPage() {
                         <a className="btn btn-primary" href={f.url} download>
                           ⬇ {f.file}
                         </a>
-                        <div className="muted small mono">{c("firmador.size", { mb: formatNumber(f.sizeBytes / 1048576, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), sha: f.sha256 })}</div>
+                        <div className="muted small mono">
+                          {c("firmador.size", {
+                            mb: formatNumber(f.sizeBytes / 1048576, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+                            sha: f.sha256,
+                          })}
+                        </div>
                       </div>
                     ))}
                     {g.steps && <p className="small">{g.steps}</p>}

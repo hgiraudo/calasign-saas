@@ -108,7 +108,9 @@ export function AiFieldDetect({
 
   // Una sugerencia ya aceptada (mismo documento, página, tipo y posición) no se vuelve a ofrecer.
   const exists = (s: FieldSuggestion) =>
-    fields.some((f) => f.documentId === s.documentId && f.page === s.page && f.type === s.type && Math.abs(f.x - s.x) < 0.01 && Math.abs(f.y - s.y) < 0.01);
+    fields.some(
+      (f) => f.documentId === s.documentId && f.page === s.page && f.type === s.type && Math.abs(f.x - s.x) < 0.01 && Math.abs(f.y - s.y) < 0.01,
+    );
   const pending = (res?.suggestions ?? []).filter((s) => !dismissed.has(s.id) && !exists(s));
 
   return (
@@ -208,13 +210,17 @@ export function AiReviewPanel({ envelopeId, versioned, disabled }: { envelopeId:
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<AiSettings>("/v1/settings/ai").then(setSettings).catch(() => setSettings(null));
+    api<AiSettings>("/v1/settings/ai")
+      .then(setSettings)
+      .catch(() => setSettings(null));
     setAssist(null);
     setAssistError(null);
     api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`)
       .then((m) => setAssist(m.signerAssist))
       .catch((e) => setAssistError(errorText(e)));
-    api<PlaybookReviewResponse | null>(`/v1/envelopes/${envelopeId}/ai/review`).then(setReview).catch(() => {});
+    api<PlaybookReviewResponse | null>(`/v1/envelopes/${envelopeId}/ai/review`)
+      .then(setReview)
+      .catch(() => {});
   }, [envelopeId]);
 
   if (!settings) return null;
@@ -292,7 +298,8 @@ export function AiReviewPanel({ envelopeId, versioned, disabled }: { envelopeId:
               <li key={i} className={STATUS_CLASS[f.status]}>
                 <div>
                   <strong>{ai(`review.status.${f.status}` as "review.status.ok")}</strong>
-                  {f.status !== "ok" && <span className="muted small"> · {ai(`review.severity.${f.severity}` as "review.severity.low")}</span>} — {f.rule}
+                  {f.status !== "ok" && <span className="muted small"> · {ai(`review.severity.${f.severity}` as "review.severity.low")}</span>} —{" "}
+                  {f.rule}
                 </div>
                 <div className="small">{f.explanation}</div>
                 {f.citation && <CitationLine c={f.citation} />}
@@ -341,8 +348,12 @@ export function AiMetadataPanel({ envelopeId, completed, canManage = true }: { e
   const [edit, setEdit] = useState<{ m: ContractMetadata; parties: string; amounts: string } | null>(null);
 
   useEffect(() => {
-    api<AiSettings>("/v1/settings/ai").then((s) => setEnabled(s.enabled)).catch(() => setEnabled(false));
-    api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`).then(setData).catch(() => setData(null));
+    api<AiSettings>("/v1/settings/ai")
+      .then((s) => setEnabled(s.enabled))
+      .catch(() => setEnabled(false));
+    api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`)
+      .then(setData)
+      .catch(() => setData(null));
   }, [envelopeId]);
 
   if (!completed || (!enabled && !data?.metadata)) return null;
@@ -389,7 +400,12 @@ export function AiMetadataPanel({ envelopeId, completed, canManage = true }: { e
       description: description || null,
     }));
     try {
-      setData(await api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`, { method: "PUT", body: { metadata: { ...edit.m, parties, amounts } } }));
+      setData(
+        await api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`, {
+          method: "PUT",
+          body: { metadata: { ...edit.m, parties, amounts } },
+        }),
+      );
       setEdit(null);
     } catch (e) {
       setError(errorText(e));
@@ -529,7 +545,9 @@ export function AiSignerAssist({ base }: { base: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<SignerAiInfo>(`${base}/ai`).then(setInfo).catch(() => setInfo(null));
+    api<SignerAiInfo>(`${base}/ai`)
+      .then(setInfo)
+      .catch(() => setInfo(null));
   }, [base]);
 
   if (!info?.enabled) return null;

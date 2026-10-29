@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { analyzeTemplate, blocksToText, checkClauseGraph, diffWords, parseLocaleDate, parseLocaleNumber, parseTemplate, renderTemplate, TemplateSyntaxError } from "@calasign/shared";
+import {
+  analyzeTemplate,
+  blocksToText,
+  checkClauseGraph,
+  diffWords,
+  parseLocaleDate,
+  parseLocaleNumber,
+  parseTemplate,
+  renderTemplate,
+  TemplateSyntaxError,
+} from "@calasign/shared";
 import { interpolateValue, toIsoDate, toNumberOrNull } from "../src/modules/agreements/common";
 import { agreementMetaFromMapping, renderTemplateCompat } from "../src/modules/agreements/documents";
 
@@ -76,7 +86,7 @@ describe("motor de plantillas", () => {
   });
 
   it("informa variables faltantes y permite marcarlas", () => {
-    const r = renderTemplate("A {{x}} y {{y.z}} {{w | default:\"n/d\"}}", { y: {} }, { missing: "placeholder" });
+    const r = renderTemplate('A {{x}} y {{y.z}} {{w | default:"n/d"}}', { y: {} }, { missing: "placeholder" });
     expect(r.missing.sort()).toEqual(["x", "y.z"]);
     expect(blocksToText(r.blocks)).toBe("A [x] y [y.z] n/d");
   });
@@ -106,14 +116,34 @@ describe("motor de plantillas", () => {
     const t0 = Date.now();
     const bd = diffWords(big1, big2);
     expect(Date.now() - t0).toBeLessThan(5000);
-    expect(bd.filter((p) => p.op !== "ins").map((p) => p.text).join("")).toBe(big1);
-    expect(bd.filter((p) => p.op !== "del").map((p) => p.text).join("")).toBe(big2);
+    expect(
+      bd
+        .filter((p) => p.op !== "ins")
+        .map((p) => p.text)
+        .join(""),
+    ).toBe(big1);
+    expect(
+      bd
+        .filter((p) => p.op !== "del")
+        .map((p) => p.text)
+        .join(""),
+    ).toBe(big2);
 
     const d = diffWords("El plazo es de 12 meses y se renueva", "El plazo es de 24 meses y no se renueva");
     expect(d.filter((p) => p.op === "del").map((p) => p.text.trim())).toEqual(["12"]);
     expect(d.filter((p) => p.op === "ins").map((p) => p.text.trim())).toEqual(["24", "no"]);
-    expect(d.filter((p) => p.op !== "ins").map((p) => p.text).join("")).toBe("El plazo es de 12 meses y se renueva");
-    expect(d.filter((p) => p.op !== "del").map((p) => p.text).join("")).toBe("El plazo es de 24 meses y no se renueva");
+    expect(
+      d
+        .filter((p) => p.op !== "ins")
+        .map((p) => p.text)
+        .join(""),
+    ).toBe("El plazo es de 12 meses y se renueva");
+    expect(
+      d
+        .filter((p) => p.op !== "del")
+        .map((p) => p.text)
+        .join(""),
+    ).toBe("El plazo es de 24 meses y no se renueva");
   });
 
   it("un valor sin dígitos no se imprime como 0 y un if en línea puede ocupar la línea entera", () => {
@@ -163,7 +193,8 @@ describe("motor de plantillas: cláusulas, listas, números, fechas y roles", ()
   });
 
   it("hasta 8 niveles de cláusulas anidadas se insertan; el 9º es un error (antes el 4º se perdía sin aviso)", () => {
-    const chain = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`c${i + 1}`, `Nivel ${i + 1}${i + 1 < n ? `\n{{clausula:c${i + 2}}}` : ""}`]));
+    const chain = (n: number) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`c${i + 1}`, `Nivel ${i + 1}${i + 1 < n ? `\n{{clausula:c${i + 2}}}` : ""}`]));
     const r = renderTemplate("{{clausula:c1}}", {}, { clauses: chain(8) });
     expect(blocksToText(r.blocks)).toContain("Nivel 4");
     expect(blocksToText(r.blocks)).toContain("Nivel 8");
@@ -301,7 +332,10 @@ describe("números y fechas: literales, valores crudos y compatibilidad de cláu
 
   it("agreementMetaFromMapping conserva un número JSON con decimales (ruta suelta o {{variable}})", () => {
     const data = { monto: 2.125, vence: "2028/1/15" };
-    expect(agreementMetaFromMapping({ value: "{{monto}}", expiryDate: "{{vence}}" } as any, data, "es")).toMatchObject({ value: 2.125, expiryDate: "2028-01-15" });
+    expect(agreementMetaFromMapping({ value: "{{monto}}", expiryDate: "{{vence}}" } as any, data, "es")).toMatchObject({
+      value: 2.125,
+      expiryDate: "2028-01-15",
+    });
     expect(agreementMetaFromMapping({ value: "monto" } as any, data, "es")).toMatchObject({ value: 2.125 });
   });
 
@@ -310,10 +344,18 @@ describe("números y fechas: literales, valores crudos y compatibilidad de cláu
     expect(() => renderTemplate("{{clausula:a}}", {}, { clauses })).toThrow(/ciclo/);
     const legacy = renderTemplate("{{clausula:a}}", {}, { clauses, legacyClauseRecursion: true });
     expect(blocksToText(legacy.blocks).replace(/\s+/g, " ").trim()).toBe("A B A");
-    expect(blocksToText(renderTemplateCompat("{{clausula:a}}", {}, { clauses }).blocks).replace(/\s+/g, " ").trim()).toBe("A B A");
+    expect(
+      blocksToText(renderTemplateCompat("{{clausula:a}}", {}, { clauses }).blocks)
+        .replace(/\s+/g, " ")
+        .trim(),
+    ).toBe("A B A");
     // Sin ciclo, igual que renderTemplate (más de 3 niveles incluidos).
     const deep = { p1: "1\n{{clausula:p2}}", p2: "2\n{{clausula:p3}}", p3: "3\n{{clausula:p4}}", p4: "4" };
-    expect(blocksToText(renderTemplateCompat("{{clausula:p1}}", {}, { clauses: deep }).blocks).replace(/\s+/g, " ").trim()).toBe("1 2 3 4");
+    expect(
+      blocksToText(renderTemplateCompat("{{clausula:p1}}", {}, { clauses: deep }).blocks)
+        .replace(/\s+/g, " ")
+        .trim(),
+    ).toBe("1 2 3 4");
     // Otros errores de sintaxis siguen fallando.
     expect(() => renderTemplateCompat("{{#if x}}", {}, {})).toThrow(TemplateSyntaxError);
   });

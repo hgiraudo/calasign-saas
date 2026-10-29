@@ -89,23 +89,37 @@ export function TemplateUsePage() {
       // misma etiqueta, así que mandar la etiqueta recortada daba "no hay ningún campo" o "es de solo lectura".
       // Un valor borrado se manda vacío para quitar el valor por defecto de la plantilla (antes quedaba igual).
       prefill: Object.fromEntries(
-        prefillable.flatMap((g) => (g.key in prefill && (prefill[g.key].trim() !== "" || g.field.value) ? g.ids.map((fid) => [fid, prefill[g.key].trim()]) : [])),
+        prefillable.flatMap((g) =>
+          g.key in prefill && (prefill[g.key].trim() !== "" || g.field.value) ? g.ids.map((fid) => [fid, prefill[g.key].trim()]) : [],
+        ),
       ),
       send,
     };
     try {
-      const d = await api<EnvelopeDetail>("/v1/envelopes/from-template", { method: "POST", body, headers: { "Idempotency-Key": `${idemKey}:${send ? "send" : "draft"}` } });
+      const d = await api<EnvelopeDetail>("/v1/envelopes/from-template", {
+        method: "POST",
+        body,
+        headers: { "Idempotency-Key": `${idemKey}:${send ? "send" : "draft"}` },
+      });
       nav(send ? `/app/envelopes/${d.envelope.id}` : `/app/envelopes/${d.envelope.id}/edit`);
     } catch (err) {
       // Clave nueva solo ante un rechazo de los datos: con idempotency_in_progress/mismatch el primer pedido ya llegó al
       // servidor, y una clave nueva podía crear (y enviar) un segundo envío.
-      if (err instanceof HttpError && err.status > 0 && err.status < 500 && !["idempotency_in_progress", "idempotency_mismatch"].includes(err.code)) setIdemKey(uuid());
+      if (err instanceof HttpError && err.status > 0 && err.status < 500 && !["idempotency_in_progress", "idempotency_mismatch"].includes(err.code))
+        setIdemKey(uuid());
       setError(errorText(err));
       setBusy(false);
     }
   };
 
-  if (!tpl) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
+  if (!tpl)
+    return error ? (
+      <div className="page">
+        <ErrorBox error={error} />
+      </div>
+    ) : (
+      <Spinner />
+    );
   let signerIdx = -1;
 
   return (
@@ -129,7 +143,10 @@ export function TemplateUsePage() {
         return (
           <div key={r.id} className="card pad recipient-row" style={{ borderLeftColor: r.role === "signer" ? recipientColor(signerIdx) : "#94a3b8" }}>
             <h3>
-              {t("tpl.recipientFor")} «{r.name}» <span className="muted small">({t(r.role === "cc" ? "edit.role.cc" : r.role === "approver" ? "edit.role.approver" : "edit.role.signer")})</span>
+              {t("tpl.recipientFor")} «{r.name}»{" "}
+              <span className="muted small">
+                ({t(r.role === "cc" ? "edit.role.cc" : r.role === "approver" ? "edit.role.approver" : "edit.role.signer")})
+              </span>
             </h3>
             <div className="use-grid">
               <label className="field">
@@ -138,7 +155,13 @@ export function TemplateUsePage() {
               </label>
               <label className="field">
                 <span>{t("auth.email")}</span>
-                <input type="email" maxLength={320} value={p.email} required={p.channels.includes("email")} onChange={(e) => set({ email: e.target.value })} />
+                <input
+                  type="email"
+                  maxLength={320}
+                  value={p.email}
+                  required={p.channels.includes("email")}
+                  onChange={(e) => set({ email: e.target.value })}
+                />
               </label>
               <label className="field">
                 <span>{t("edit.phone")}</span>

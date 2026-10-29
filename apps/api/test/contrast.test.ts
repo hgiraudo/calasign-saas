@@ -69,7 +69,12 @@ describe("contraste WCAG", () => {
     const light = render("invite", "es", vars, { primaryColor: "#fde047", brandName: "ACME" }).html;
     expect(light).toContain("background:#fde047;color:#0f172a;text-decoration:none");
     expect(light).toContain("background:#fde047;padding:18px 28px;color:#0f172a");
-    const own = render("invite", "es", vars, { primaryColor: "#fde047", brandName: "ACME", headerTextColor: "#222222", buttonTextColor: "#333333" }).html;
+    const own = render("invite", "es", vars, {
+      primaryColor: "#fde047",
+      brandName: "ACME",
+      headerTextColor: "#222222",
+      buttonTextColor: "#333333",
+    }).html;
     expect(own).toContain("padding:18px 28px;color:#222222");
     expect(own).toContain("color:#333333;text-decoration:none");
   });

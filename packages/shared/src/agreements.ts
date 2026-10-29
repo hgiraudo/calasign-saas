@@ -304,13 +304,14 @@ const key = z
   .trim()
   .regex(/^[A-Za-z_][A-Za-z0-9_]{0,39}$/, "letras, números y _");
 
-export const CollectField = z.object({
-  key: key,
-  label: z.string().trim().min(1).max(150),
-  type: z.enum(["text", "textarea", "email", "number", "date", "select"]),
-  required: z.boolean().default(true),
-  options: z.array(z.string().trim().min(1).max(100)).max(50).nullable().optional(),
-})
+export const CollectField = z
+  .object({
+    key: key,
+    label: z.string().trim().min(1).max(150),
+    type: z.enum(["text", "textarea", "email", "number", "date", "select"]),
+    required: z.boolean().default(true),
+    options: z.array(z.string().trim().min(1).max(100)).max(50).nullable().optional(),
+  })
   // Sin opciones, la lista sale vacía y la validación del envío rechaza cualquier valor: el run quedaba trabado.
   .refine((f) => f.type !== "select" || (f.options?.length ?? 0) > 0, { message: "un campo de lista necesita opciones" });
 export type CollectField = z.infer<typeof CollectField>;
@@ -368,7 +369,10 @@ export const WorkflowStep = z.discriminatedUnion("type", [
     config: z.object({
       url: z.string().url().max(2000),
       method: z.enum(["POST", "PUT"]).default("POST"),
-      headers: z.record(z.string().regex(/^[A-Za-z0-9-]{1,60}$/), z.string().max(500)).nullable().optional(),
+      headers: z
+        .record(z.string().regex(/^[A-Za-z0-9-]{1,60}$/), z.string().max(500))
+        .nullable()
+        .optional(),
       /** JSON con {{variables}} (se insertan como valores JSON). Vacío: se manda el contexto del run. */
       bodyTemplate: z.string().max(20_000).nullable().optional(),
       saveAs: key.nullable().optional(),
@@ -619,15 +623,17 @@ export interface NegotiationView {
   dataPurgedAt?: string;
 }
 
-export const NegotiationCommentInput = z.object({
-  body: z.string().trim().min(1).max(5000),
-  quote: z.string().max(2000).nullable().optional(),
-  // Tope: un offset fuera del rango de integer de Postgres daba 500.
-  start: z.number().int().min(0).max(10_000_000).nullable().optional(),
-  end: z.number().int().min(0).max(10_000_000).nullable().optional(),
-  /** La versión que vio quien comenta: si cambió mientras tanto, 409 version_changed (no queda anclado a un texto que no vio). */
-  expectedVersion: z.number().int().min(1).optional(),
-}).refine((c) => c.start == null || c.end == null || c.start <= c.end, { message: "start no puede ser mayor que end", path: ["end"] });
+export const NegotiationCommentInput = z
+  .object({
+    body: z.string().trim().min(1).max(5000),
+    quote: z.string().max(2000).nullable().optional(),
+    // Tope: un offset fuera del rango de integer de Postgres daba 500.
+    start: z.number().int().min(0).max(10_000_000).nullable().optional(),
+    end: z.number().int().min(0).max(10_000_000).nullable().optional(),
+    /** La versión que vio quien comenta: si cambió mientras tanto, 409 version_changed (no queda anclado a un texto que no vio). */
+    expectedVersion: z.number().int().min(1).optional(),
+  })
+  .refine((c) => c.start == null || c.end == null || c.start <= c.end, { message: "start no puede ser mayor que end", path: ["end"] });
 export const NegotiationProposalInput = z.object({
   kind: z.enum(["variable", "clause"]),
   key: z.string().trim().min(1).max(200),

@@ -43,10 +43,12 @@ describe("envío masivo y plan vigente", () => {
     );
     const item = uuidv7();
     const input = { templateId: tpl, recipients: [{ roleId: uuidv7(), name: "Bea", email: "bea@x.com", channels: ["email"] }], send: true };
-    await db.query(
-      `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status) VALUES ($1, $2, $3, 1, $4, 'pending')`,
-      [item, tenant, bulk, JSON.stringify(input)],
-    );
+    await db.query(`INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status) VALUES ($1, $2, $3, 1, $4, 'pending')`, [
+      item,
+      tenant,
+      bulk,
+      JSON.stringify(input),
+    ]);
 
     const log = { info: () => {}, warn: () => {} };
     await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: [item] });

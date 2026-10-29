@@ -237,7 +237,8 @@ function parseInline(src: string, line: number): Inline[] {
     if (mk && MARK_TAGS[mk[1].toLowerCase()]) {
       const role = mk[2].trim().replace(/\s+/g, " ");
       // El firmante de un rol se indica con ese nombre (máximo 80 caracteres): un rol más largo nunca podría generarse.
-      if (role.length > MAX_ROLE_LENGTH) throw new TemplateSyntaxError(`el rol «${role.slice(0, 40)}…» supera los ${MAX_ROLE_LENGTH} caracteres`, line, "role_too_long");
+      if (role.length > MAX_ROLE_LENGTH)
+        throw new TemplateSyntaxError(`el rol «${role.slice(0, 40)}…» supera los ${MAX_ROLE_LENGTH} caracteres`, line, "role_too_long");
       return [{ t: "mark", kind: MARK_TAGS[mk[1].toLowerCase()], role }];
     }
     const vm = new RegExp(String.raw`^(${PATH})\s*(?:\|\s*([a-z]+)\s*(?::\s*(.+))?)?$`, "i").exec(tag);
@@ -418,7 +419,11 @@ export const MAX_CLAUSE_DEPTH = 8;
 const clauseCycleError = (chain: string[]) =>
   new TemplateSyntaxError(`las cláusulas se citan en ciclo: ${chain.map((c) => `{{clausula:${c}}}`).join(" → ")}`, 0, "clause_cycle");
 const clauseDepthError = (chain: string[]) =>
-  new TemplateSyntaxError(`demasiados niveles de cláusulas que citan cláusulas (máximo ${MAX_CLAUSE_DEPTH}): ${chain.join(" → ")}`, 0, "clause_depth");
+  new TemplateSyntaxError(
+    `demasiados niveles de cláusulas que citan cláusulas (máximo ${MAX_CLAUSE_DEPTH}): ${chain.join(" → ")}`,
+    0,
+    "clause_depth",
+  );
 
 /** Clave para comparar roles: sin distinguir mayúsculas ni espacios repetidos ("cliente" y "Cliente" son el mismo). */
 export function roleKey(role: string): string {
@@ -444,7 +449,8 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
   // variable larga repetida en un each multiplica el texto. Sin tope, un pedido de cualquier cuenta colgaba la API.
   let work = 0;
   let chars = 0;
-  const tooBig = () => new TemplateSyntaxError(`el documento generado es demasiado grande (máximo ${MAX_RENDER_WORK} bloques o ${MAX_RENDER_CHARS} caracteres)`, 0);
+  const tooBig = () =>
+    new TemplateSyntaxError(`el documento generado es demasiado grande (máximo ${MAX_RENDER_WORK} bloques o ${MAX_RENDER_CHARS} caracteres)`, 0);
   const charge = (units: number, text = 0) => {
     work += units;
     chars += text;
@@ -484,7 +490,8 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
     if (c.op === "truthy") return c.neg ? !truthy(v) : truthy(v);
     const target = c.num !== undefined ? (toNum(c.num, locale) ?? c.value) : c.value;
     if (c.op === "eq" || c.op === "ne") {
-      const eq = typeof target === "number" ? toNum(v, locale) === target : typeof target === "boolean" ? truthy(v) === target : String(v ?? "") === target;
+      const eq =
+        typeof target === "number" ? toNum(v, locale) === target : typeof target === "boolean" ? truthy(v) === target : String(v ?? "") === target;
       return c.op === "eq" ? eq : !eq;
     }
     const a = toNum(v, locale);
@@ -500,7 +507,11 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
       missing.add(path);
       return opts.missing === "placeholder" ? `[${path}]` : "";
     }
-    if (Array.isArray(v)) v = v.map((x) => (isObj(x) ? "" : String(x))).filter(Boolean).join(", ");
+    if (Array.isArray(v))
+      v = v
+        .map((x) => (isObj(x) ? "" : String(x)))
+        .filter(Boolean)
+        .join(", ");
     switch (filter) {
       case "upper":
         return String(v).toLocaleUpperCase(locale);
@@ -539,11 +550,11 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         const v = x.path === "@index" ? String(lookup("@index", scopes) ?? "") : format(lookup(x.path, scopes), x.filter, x.arg, x.path);
         charge(0, v.length);
         pushText(out, v, style);
-      }
-      else if (x.t === "mark") {
+      } else if (x.t === "mark") {
         charge(1);
         // Cada marca es un campo del sobre: el mismo tope que al cargar campos.
-        if (marks.length >= MAX_MARKS) throw new TemplateSyntaxError(`el documento tiene demasiadas marcas de firma o campos (máximo ${MAX_MARKS})`, 0);
+        if (marks.length >= MAX_MARKS)
+          throw new TemplateSyntaxError(`el documento tiene demasiadas marcas de firma o campos (máximo ${MAX_MARKS})`, 0);
         const role = canonRole(x.role);
         marks.push({ kind: x.kind, role });
         out.push({ mark: x.kind, role });
@@ -566,7 +577,19 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
           if (arr == null) missing.add(n.path);
           continue;
         }
-        arr.forEach((item, idx) => emitNodes(n.body, [...scopes, new Map<string, unknown>([[n.as, item], ["@index", idx + 1]])], chain));
+        arr.forEach((item, idx) =>
+          emitNodes(
+            n.body,
+            [
+              ...scopes,
+              new Map<string, unknown>([
+                [n.as, item],
+                ["@index", idx + 1],
+              ]),
+            ],
+            chain,
+          ),
+        );
       } else if (n.k === "clause") {
         // Propias del objeto: un slug como "constructor" no toma lo heredado de Object.prototype.
         const src = opts.clauses && Object.hasOwn(opts.clauses, n.slug) ? opts.clauses[n.slug] : undefined;
@@ -740,8 +763,7 @@ export function analyzeTemplate(source: string, clauses: Record<string, string> 
         const k = roleKey(x.role);
         if (!roles.has(k)) roles.set(k, x.role.trim().replace(/\s+/g, " "));
         if (x.kind === "signature") signed.add(k);
-      }
-      else if (x.t === "if") {
+      } else if (x.t === "if") {
         addPath(x.cond.path, loopVars);
         inl(x.then, loopVars);
         inl(x.else, loopVars);
@@ -867,7 +889,15 @@ export function checkClauseGraph(clauses: Record<string, string>, roots: string[
 
 export function blocksToText(blocks: ResolvedBlock[]): string {
   const runText = (runs: Run[]) =>
-    runs.map((r) => ("text" in r ? r.text : "br" in r ? "\n" : `[${r.mark === "signature" ? "Firma" : r.mark === "initials" ? "Iniciales" : r.mark === "date" ? "Fecha" : "Nombre"}: ${r.role}]`)).join("");
+    runs
+      .map((r) =>
+        "text" in r
+          ? r.text
+          : "br" in r
+            ? "\n"
+            : `[${r.mark === "signature" ? "Firma" : r.mark === "initials" ? "Iniciales" : r.mark === "date" ? "Fecha" : "Nombre"}: ${r.role}]`,
+      )
+      .join("");
   const out: string[] = [];
   for (const b of blocks) {
     if (b.type === "heading" || b.type === "paragraph") out.push(runText(b.runs));
@@ -915,7 +945,10 @@ function myers(a: string[], b: string[]): DiffPart[] {
   if (n === 0) return m ? [{ op: "ins", text: b.join("") }] : [];
   if (m === 0) return [{ op: "del", text: a.join("") }];
   const max = n + m;
-  const coarse: DiffPart[] = [{ op: "del", text: a.join("") }, { op: "ins", text: b.join("") }];
+  const coarse: DiffPart[] = [
+    { op: "del", text: a.join("") },
+    { op: "ins", text: b.join("") },
+  ];
   if (max > 40000) return coarse;
   // El rastro guarda una copia de `v` por cada paso: la memoria crece como D². Con textos muy distintos se
   // corta y se devuelve el cambio en bloque, en vez de agotar la memoria del proceso.

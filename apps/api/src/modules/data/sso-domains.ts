@@ -75,7 +75,10 @@ export async function recheckVerifiedSsoDomains(
       continue;
     }
     if (values.includes(ssoTxtValue(r.verification_token))) {
-      await d.db.query(`UPDATE sso_domains SET last_checked_at = now(), last_error = NULL WHERE domain = $1 AND tenant_id = $2`, [r.domain, r.tenant_id]);
+      await d.db.query(`UPDATE sso_domains SET last_checked_at = now(), last_error = NULL WHERE domain = $1 AND tenant_id = $2`, [
+        r.domain,
+        r.tenant_id,
+      ]);
       continue;
     }
     if (!String(r.last_error ?? "").startsWith(MISSING_MARK)) {

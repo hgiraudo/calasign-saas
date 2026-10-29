@@ -17,7 +17,10 @@ function independent(xml: string): { valid: boolean; references?: { uri: string;
   const file = join(dir, "doc.xml");
   writeFileSync(file, xml);
   try {
-    const out = execFileSync("python3", [VERIFIER, file], { encoding: "utf8", env: { ...process.env, PYTHONPATH: process.env.XMLDSIG_PYTHONPATH ?? "" } });
+    const out = execFileSync("python3", [VERIFIER, file], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONPATH: process.env.XMLDSIG_PYTHONPATH ?? "" },
+    });
     return JSON.parse(out);
   } catch {
     return null;
@@ -90,8 +93,16 @@ describe("firma XML", () => {
       }
 
       // xml-crypto como segundo verificador (misma canonicalización, otra lógica de referencias).
-      const sx = new SignedXml({ publicCert: Buffer.from(own.signer ? (await signer.certificateChain())[0] : []).toString("base64").replace(/(.{64})/g, "$1\n").replace(/^/, "-----BEGIN CERTIFICATE-----\n").concat("\n-----END CERTIFICATE-----\n") });
-      const sigNode = new (await import("@xmldom/xmldom")).DOMParser().parseFromString(signed, "text/xml").getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature")[0];
+      const sx = new SignedXml({
+        publicCert: Buffer.from(own.signer ? (await signer.certificateChain())[0] : [])
+          .toString("base64")
+          .replace(/(.{64})/g, "$1\n")
+          .replace(/^/, "-----BEGIN CERTIFICATE-----\n")
+          .concat("\n-----END CERTIFICATE-----\n"),
+      });
+      const sigNode = new (await import("@xmldom/xmldom")).DOMParser()
+        .parseFromString(signed, "text/xml")
+        .getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature")[0];
       sx.loadSignature(sigNode as unknown as Node);
       const xc = sx.checkSignature(signed);
       const ind = independent(signed);
@@ -121,9 +132,13 @@ describe("firma XML", () => {
     expect(signed).toContain('DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"');
     expect(own.references).toHaveLength(1);
 
-    const pem = Buffer.from((await signer.certificateChain())[0]).toString("base64").replace(/(.{64})/g, "$1\n");
+    const pem = Buffer.from((await signer.certificateChain())[0])
+      .toString("base64")
+      .replace(/(.{64})/g, "$1\n");
     const sx = new SignedXml({ publicCert: `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n` });
-    const sigNode = new (await import("@xmldom/xmldom")).DOMParser().parseFromString(signed, "text/xml").getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature")[0];
+    const sigNode = new (await import("@xmldom/xmldom")).DOMParser()
+      .parseFromString(signed, "text/xml")
+      .getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature")[0];
     sx.loadSignature(sigNode as unknown as Node);
     expect(sx.checkSignature(signed)).toBe(true);
     const ind = independent(signed);
@@ -136,7 +151,10 @@ describe("firma XML", () => {
     const signed = await signXml(SUNAT_INVOICE, signer, { profile: "sunat-cpe", signatureAlgorithm: "rsa-sha256" });
     expect(verifyXml(signed).valid).toBe(true);
     expect(signed).toContain("xmldsig-more#rsa-sha256");
-    const sinExtension = SUNAT_INVOICE.replace("<ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions>", "");
+    const sinExtension = SUNAT_INVOICE.replace(
+      "<ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions>",
+      "",
+    );
     await expect(signXml(sinExtension, signer, { profile: "sunat-cpe" })).rejects.toThrow(/ExtensionContent/);
   });
 
@@ -158,7 +176,9 @@ describe("firma XML", () => {
   });
 
   it("una ds:Signature sin SignedInfo es inválida, no un error", () => {
-    const r = verifyXml('<a><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignatureValue>AA==</ds:SignatureValue></ds:Signature></a>');
+    const r = verifyXml(
+      '<a><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignatureValue>AA==</ds:SignatureValue></ds:Signature></a>',
+    );
     expect(r.valid).toBe(false);
     expect(r.errors.join(" ")).toMatch(/SignedInfo/);
   });

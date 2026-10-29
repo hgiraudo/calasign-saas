@@ -45,9 +45,19 @@ export async function readTgz(buf) {
   const out = new Map();
   let o = 0;
   while (o + 512 <= raw.length) {
-    const name = raw.subarray(o, o + 100).toString("utf8").replace(/\0.*$/s, "");
+    const name = raw
+      .subarray(o, o + 100)
+      .toString("utf8")
+      .replace(/\0.*$/s, "");
     if (!name) break;
-    const size = parseInt(raw.subarray(o + 124, o + 136).toString("ascii").replace(/\0.*$/s, "").trim(), 8);
+    const size = parseInt(
+      raw
+        .subarray(o + 124, o + 136)
+        .toString("ascii")
+        .replace(/\0.*$/s, "")
+        .trim(),
+      8,
+    );
     out.set(name, raw.subarray(o + 512, o + 512 + size));
     o += 512 + Math.ceil(size / 512) * 512;
   }

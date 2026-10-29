@@ -112,7 +112,6 @@ function summary(c: pkijs.Certificate): CertSummary {
   };
 }
 
-
 // ───────────────────── Algoritmos débiles ─────────────────────
 const WEAK_DIGESTS: Record<string, string> = { "1.3.14.3.2.26": "SHA-1", "1.2.840.113549.2.5": "MD5" };
 const WEAK_SIGNATURE_ALGS: Record<string, string> = {
@@ -169,7 +168,10 @@ function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate
       const oid = (els[0].valueBlock.value[0] as asn1js.ObjectIdentifier).valueBlock.toString();
       alg = HASH_BY_OID[oid];
       // Resumen que no se soporta (SHA-224, SHA-3…): no se puede comprobar, pero eso no prueba que no coincida.
-      if (!alg) warnings.push(`El atributo signingCertificateV2 usa un resumen no soportado (${oid}): no se pudo comprobar que identifica al certificado firmante`);
+      if (!alg)
+        warnings.push(
+          `El atributo signingCertificateV2 usa un resumen no soportado (${oid}): no se pudo comprobar que identifica al certificado firmante`,
+        );
       i = 1;
     }
     const certHash = els[i];
@@ -181,7 +183,9 @@ function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate
     if (issuerSerial instanceof asn1js.Sequence) {
       const [names, serial] = issuerSerial.valueBlock.value;
       if (!(serial instanceof asn1js.Integer) || !serial.isEqual(signer.serialNumber)) return bad;
-      const dn = (names as asn1js.Sequence).valueBlock.value.find((g) => g.idBlock.tagClass === 3 && g.idBlock.tagNumber === 4) as asn1js.Constructed | undefined;
+      const dn = (names as asn1js.Sequence).valueBlock.value.find((g) => g.idBlock.tagClass === 3 && g.idBlock.tagNumber === 4) as
+        | asn1js.Constructed
+        | undefined;
       if (dn) {
         const name = new pkijs.RelativeDistinguishedNames({ schema: dn.valueBlock.value[0] });
         if (!name.isEqual(signer.issuer)) return bad;
@@ -216,12 +220,9 @@ async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool:
     const at = tst.genTime;
     const chain = await buildChain(tsa, [...cmsCertificates(token), ...pool]);
     const last = chain[chain.length - 1];
-    trusted =
-      isSelfSigned(last) &&
-      anchors.has(fingerprint(certDer(last))) &&
-      chain.every((c) => c.notBefore.value <= at && at <= c.notAfter.value);
+    trusted = isSelfSigned(last) && anchors.has(fingerprint(certDer(last))) && chain.every((c) => c.notBefore.value <= at && at <= c.notAfter.value);
   }
-  return { time: tst.genTime.toISOString(), tsa: tsa ? commonName(tsa.subject) ?? nameToString(tsa.subject) : null, valid, trusted };
+  return { time: tst.genTime.toISOString(), tsa: tsa ? (commonName(tsa.subject) ?? nameToString(tsa.subject)) : null, valid, trusted };
 }
 
 /**
@@ -278,7 +279,10 @@ async function chainReport(
       if (revocation.status === "not_checked") {
         for (const crl of dss?.crls ?? []) {
           const r = await statusFromCrl(crl, c, issuer, at);
-          if (r) { revocation = { status: r.status, source: "dss-crl", revokedAt: r.revokedAt ?? null }; break; }
+          if (r) {
+            revocation = { status: r.status, source: "dss-crl", revokedAt: r.revokedAt ?? null };
+            break;
+          }
         }
       }
       if (revocation.status === "not_checked" && opts.online) {
@@ -297,9 +301,7 @@ async function chainReport(
   }
   // Revocado al momento de firmar: la revocación es anterior a esa fecha, o no se sabe cuándo ocurrió. El OCSP trae su
   // revocationTime: sin pasarlo, un certificado revocado DESPUÉS de una firma con sello de confianza contaba como revocado.
-  const revoked = entries.some(
-    (e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at),
-  );
+  const revoked = entries.some((e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at));
   // "De confianza" no dice nada de la revocación si no hubo datos (sin DSS ni consulta online): se informa aparte.
   const revocationUnknown = entries.some((e) => e.revocation.status === "not_checked" || e.revocation.status === "unknown");
   return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid, revoked, revocationUnknown };
@@ -327,7 +329,8 @@ export const MAX_CERT_POOL = 300;
 
 async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Promise<ValidationReport> {
   const { signatures, dss: rawDss } = await readPdfSignatures(pdf);
-  if (signatures.length > MAX_VALIDATE_SIGNATURES) throw new Error(`el PDF tiene demasiadas firmas (${signatures.length}; máximo ${MAX_VALIDATE_SIGNATURES})`);
+  if (signatures.length > MAX_VALIDATE_SIGNATURES)
+    throw new Error(`el PDF tiene demasiadas firmas (${signatures.length}; máximo ${MAX_VALIDATE_SIGNATURES})`);
   // Se recorta en vez de rechazar: cada renovación del archivo agrega OCSP nuevos al final, y rechazar dejaba a ese
   // sobre sin poder renovarse nunca más. Se usan los más recientes (los últimos) y se ignoran las CRL demasiado grandes.
   const dss: PdfDss | null = rawDss
@@ -341,13 +344,15 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
   const anchors = new Set(anchorsDer.map(fingerprint));
   // Las raíces de confianza se parsean una vez y no cuentan para el tope (un almacén grande no puede romper validaciones).
   const anchorCerts = anchorsDer.map(parseCert);
-  const dssCerts = (dss?.certs ?? []).map((d) => {
-    try {
-      return parseCert(d);
-    } catch {
-      return null;
-    }
-  }).filter((c): c is pkijs.Certificate => !!c);
+  const dssCerts = (dss?.certs ?? [])
+    .map((d) => {
+      try {
+        return parseCert(d);
+      } catch {
+        return null;
+      }
+    })
+    .filter((c): c is pkijs.Certificate => !!c);
   const docTsEnds = signatures.filter((s) => s.type === "DocTimeStamp").map((s) => s.byteRange[2] + s.byteRange[3]);
   const reports: SignatureReport[] = [];
 
@@ -389,7 +394,11 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
 
       if (s.type === "DocTimeStamp") {
         const ts = await verifyToken(sd, content, pool, anchors, weak);
-        const tsIntegrity: SignatureReport["integrity"] = brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" };
+        const tsIntegrity: SignatureReport["integrity"] = brIssue
+          ? { valid: false, reason: brIssue }
+          : ts.valid
+            ? { valid: true }
+            : { valid: false, reason: "El sello de documento no corresponde al contenido" };
         reports.push({
           ...base,
           kind: "document_timestamp",
@@ -398,7 +407,10 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
           timestamp: ts,
           integrity: tsIntegrity,
           // Como en las firmas: sin integridad no se arma la cadena (un sello que no verifica no puede quedar "confiable").
-          chain: signer && tsIntegrity.valid ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak) : { trusted: false, anchor: null, entries: [] },
+          chain:
+            signer && tsIntegrity.valid
+              ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak)
+              : { trusted: false, anchor: null, entries: [] },
           level: null,
           ...weakOf(),
         });
@@ -437,8 +449,10 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         timestamp = await verifyToken(tsToken, sigValue, pool, anchors, weak);
       }
       const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
-      const signingTime = s.signingTimeM ?? (signingTimeAttr ? (signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null : null);
-      const hasV2 = !!sd.signerInfos[0].signedAttrs?.attributes.some((a) => a.type === OIDS.signingCertificateV2 || a.type === OIDS.signingCertificate);
+      const signingTime = s.signingTimeM ?? (signingTimeAttr ? ((signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null) : null);
+      const hasV2 = !!sd.signerInfos[0].signedAttrs?.attributes.some(
+        (a) => a.type === OIDS.signingCertificateV2 || a.type === OIDS.signingCertificate,
+      );
       const padesBase = s.subFilter === "ETSI.CAdES.detached" && hasV2;
       let level: PadesLevel | null = null;
       if (padesBase) {
@@ -456,9 +470,10 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         // Validez de la cadena al momento de firmar: la fecha del sello de tiempo solo si es de una TSA de confianza (prueba de
         // existencia). Sin eso, la fecha declarada la elige quien firma: se evalúa al día de hoy (sin prueba de existencia).
         // Sin integridad no se analiza la cadena (es lo más costoso y el informe ya dice que la firma no vale).
-        chain: signer && integrity.valid
-          ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date(), weak)
-          : { trusted: false, anchor: null, entries: [] },
+        chain:
+          signer && integrity.valid
+            ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date(), weak)
+            : { trusted: false, anchor: null, entries: [] },
         level,
         ...weakOf(),
       });
@@ -511,8 +526,13 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
     dss: dss ? { certs: dss.certs.length, ocsps: dss.ocsps.length, crls: dss.crls.length } : null,
     summary: {
       count: reports.length,
-      allValid: reports.length > 0 && !modifiedAfterSigning && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid) && !r.weakAlgorithm),
-      allTrusted: reports.length > 0 && reports.every((r) => r.integrity.valid && r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked && !r.weakAlgorithm),
+      allValid:
+        reports.length > 0 &&
+        !modifiedAfterSigning &&
+        reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid) && !r.weakAlgorithm),
+      allTrusted:
+        reports.length > 0 &&
+        reports.every((r) => r.integrity.valid && r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked && !r.weakAlgorithm),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
       modifiedAfterSigning,
       revocationUnknown: reports.some((r) => r.chain.revocationUnknown === true),

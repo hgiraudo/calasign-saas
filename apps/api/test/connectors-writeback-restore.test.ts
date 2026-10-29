@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-connectors-restore-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let tenant: string;
 const real = globalThis.fetch;
@@ -43,13 +43,10 @@ async function setup() {
     conn,
     JSON.stringify({ statusProperty: "customCalaSign", uploadSigned: false }),
   ]);
-  await db.query(`INSERT INTO connector_links (id, tenant_id, connection_id, flow_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,'employee','7')`, [
-    link,
-    tenant,
-    conn,
-    flow,
-    envelope,
-  ]);
+  await db.query(
+    `INSERT INTO connector_links (id, tenant_id, connection_id, flow_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,'employee','7')`,
+    [link, tenant, conn, flow, envelope],
+  );
   await db.query(
     `INSERT INTO connector_runs (id, tenant_id, connection_id, flow_id, link_id, envelope_id, kind, event, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,'write_back','sent','employee','7')`,
     [run, tenant, conn, flow, link, envelope],

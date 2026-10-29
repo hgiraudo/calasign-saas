@@ -42,7 +42,7 @@ export function scalarValue(v: unknown): unknown {
   const items = v.filter((x) => x !== null && x !== undefined && x !== "");
   if (items.length === 0) return null;
   if (items.every((x) => typeof x !== "object")) return items.join(", ");
-  const val = (x: any) => (x && typeof x === "object" ? x.value ?? x.email ?? x.phone ?? null : x);
+  const val = (x: any) => (x && typeof x === "object" ? (x.value ?? x.email ?? x.phone ?? null) : x);
   const has = (x: unknown) => val(x) !== null && val(x) !== undefined && val(x) !== "";
   const pick = items.find((x: any) => x && typeof x === "object" && x.primary === true && has(x)) ?? items.find(has);
   return pick === undefined ? null : val(pick);
@@ -85,7 +85,12 @@ export function mapRecipients(record: Pick<CrmRecord, "id" | "properties" | "con
       else if (r.primary) c = record.contacts.find((x) => x.primary);
       else if (r.contactRole) c = record.contacts.find((x) => (x.role ?? "").toLowerCase() === r.contactRole!.toLowerCase());
       if (!c) {
-        const what = r.source === "contact" ? `el contacto #${(r.index ?? 0) + 1}` : r.primary ? "el contacto principal" : `un contacto con rol "${r.contactRole}"`;
+        const what =
+          r.source === "contact"
+            ? `el contacto #${(r.index ?? 0) + 1}`
+            : r.primary
+              ? "el contacto principal"
+              : `un contacto con rol "${r.contactRole}"`;
         throw new MappingError("crm_contact_missing", `El registro ${record.id} no tiene ${what} para el rol "${r.role}"`);
       }
       name = c.name;
@@ -93,7 +98,9 @@ export function mapRecipients(record: Pick<CrmRecord, "id" | "properties" | "con
       phone = normalizePhone(c.phone);
     }
     if (!name) throw new MappingError("crm_name_missing", `Falta el nombre del destinatario para el rol "${r.role}"`);
-    let channels = (r.channels ?? ["email"]).filter((ch) => (ch === "email" ? Boolean(email) : ch === "whatsapp" ? Boolean(phone) : ch === "telegram" ? false : false));
+    let channels = (r.channels ?? ["email"]).filter((ch) =>
+      ch === "email" ? Boolean(email) : ch === "whatsapp" ? Boolean(phone) : ch === "telegram" ? false : false,
+    );
     if (channels.length === 0) {
       if (email) channels = ["email"];
       else if (phone) channels = ["whatsapp"];
@@ -146,7 +153,11 @@ export function statusValue(wb: Partial<CrmWriteBack> | null | undefined, status
 }
 
 /** ¿El cambio de propiedad del webhook dispara este mapeo? */
-export function webhookMatches(trigger: { property?: string | null; value?: string | null }, propertyName: string | null, propertyValue: string | null): boolean {
+export function webhookMatches(
+  trigger: { property?: string | null; value?: string | null },
+  propertyName: string | null,
+  propertyValue: string | null,
+): boolean {
   if (!trigger.property) return false;
   if (trigger.property !== propertyName) return false;
   return !trigger.value || trigger.value === propertyValue;

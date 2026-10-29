@@ -23,12 +23,20 @@ const ByokChangeSchema = ByokSettingsSchema.extend({
   notice: z
     .string()
     .nullable()
-    .describe("Si había una clave activa: aviso de que lo guardado antes del cambio sigue cifrado con ella (no se re-cifra; no deshabilitarla mientras haga falta leerlo). null si no había."),
+    .describe(
+      "Si había una clave activa: aviso de que lo guardado antes del cambio sigue cifrado con ella (no se re-cifra; no deshabilitarla mientras haga falta leerlo). null si no había.",
+    ),
 });
 
 export const DATA_OPS = [
   { method: "get", path: "/v1/public/cells", tag: TAG, summary: "Regiones (celdas) donde se pueden guardar los datos", auth: "none" },
-  { method: "get", path: "/v1/settings/byok", tag: TAG, summary: "Estado de BYOK y política sugerida para la clave KMS del cliente", response: ByokSettingsSchema },
+  {
+    method: "get",
+    path: "/v1/settings/byok",
+    tag: TAG,
+    summary: "Estado de BYOK y política sugerida para la clave KMS del cliente",
+    response: ByokSettingsSchema,
+  },
   {
     method: "put",
     path: "/v1/settings/byok",
@@ -49,7 +57,14 @@ export const DATA_OPS = [
     response: ByokChangeSchema,
   },
   { method: "get", path: "/v1/settings/sso/domains", tag: TAG, summary: "Dominios SSO y su verificación por DNS" },
-  { method: "post", path: "/v1/settings/sso/domains/{domain}/verify", tag: TAG, summary: "Verificar un dominio SSO (TXT _calasign-sso.<dominio>)", description: "Exige SSO en el plan (402).", errors: ["plan_limit_sso"] },
+  {
+    method: "post",
+    path: "/v1/settings/sso/domains/{domain}/verify",
+    tag: TAG,
+    summary: "Verificar un dominio SSO (TXT _calasign-sso.<dominio>)",
+    description: "Exige SSO en el plan (402).",
+    errors: ["plan_limit_sso"],
+  },
   { method: "get", path: "/v1/envelopes/{id}/archive", tag: TAG, summary: "Vigencia del sello de archivo y versiones del PDF firmado" },
   {
     method: "post",
@@ -58,6 +73,13 @@ export const DATA_OPS = [
     summary: "Renovar ahora el sello de archivo (DSS + sello de documento)",
     description:
       "Una renovación a la vez por sobre (409 archive_renewal_in_progress), hasta 3 por día (429 archive_recently_renewed, sin Retry-After) y 50 en total (409 archive_renewal_limit). Si la autoridad de sellado de tiempo falla, 502 tsa_unavailable: reintentar más tarde. 409 archive_not_due si falta para el vencimiento o si un sello nuevo no extendería la validez (el último ya es del certificado vigente de la TSA); 409 archive_not_applicable si el PDF no es de archivo (o no se puede analizar). Si falla el almacenamiento, 503 storage_unavailable o byok_key_unavailable.",
-    errors: ["archive_renewal_in_progress", "archive_recently_renewed", "archive_renewal_limit", "archive_not_due", "archive_not_applicable", "tsa_unavailable"],
+    errors: [
+      "archive_renewal_in_progress",
+      "archive_recently_renewed",
+      "archive_renewal_limit",
+      "archive_not_due",
+      "archive_not_applicable",
+      "tsa_unavailable",
+    ],
   },
 ] as const;

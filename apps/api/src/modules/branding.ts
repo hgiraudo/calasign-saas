@@ -108,7 +108,8 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El logo supera los 200 KB", { limit: "file" });
     const type = sniffImage(buf);
     if (!type || !(LOGO_CONTENT_TYPES as readonly string[]).includes(type)) throw badRequest("invalid_logo", "El logo tiene que ser PNG, JPG o SVG");
-    if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8"))) throw badRequest("invalid_logo", "El SVG contiene scripts o referencias externas");
+    if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8")))
+      throw badRequest("invalid_logo", "El SVG contiene scripts o referencias externas");
     // El logo se incrusta en el certificado de cada sobre: un PNG que declara dimensiones enormes reservaría GB al sellar.
     if (type === "image/png") {
       try {
@@ -121,19 +122,21 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
     const ext = type === "image/png" ? "png" : type === "image/jpeg" ? "jpg" : "svg";
     const key = `tenants/${tenantId}/branding/${fileId}.${ext}`;
     await s.blobs.put(key, buf, type);
-    const previous = await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT branding->>'logoFileId' AS logo FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
-      await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'logo',$3,$4,$5,$6)`, [
-        fileId,
-        tenantId,
-        key,
-        type,
-        buf.length,
-        sha256Hex(buf),
-      ]);
-      await patchBranding(t, tenantId, { logoFileId: fileId, logoContentType: type });
-      return (cur?.logo as string | null) ?? null;
-    }));
+    const previous = await discardBlobsOnFailure(s.blobs, [key], () =>
+      s.db.tx(async (t) => {
+        const cur = await t.one<any>(`SELECT branding->>'logoFileId' AS logo FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+        await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'logo',$3,$4,$5,$6)`, [
+          fileId,
+          tenantId,
+          key,
+          type,
+          buf.length,
+          sha256Hex(buf),
+        ]);
+        await patchBranding(t, tenantId, { logoFileId: fileId, logoContentType: type });
+        return (cur?.logo as string | null) ?? null;
+      }),
+    );
     // El logo anterior ya no lo usa nada (se sirve siempre el vigente): sin esto quedaba en el almacenamiento para siempre.
     await deleteFileIfUnused(s.db, s.blobs, previous).catch(() => {});
     return toApi(await getTenantBranding(s.db, tenantId));

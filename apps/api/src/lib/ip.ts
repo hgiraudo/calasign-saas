@@ -23,7 +23,9 @@ function ipv6Groups(v: string): number[] {
  * ("[2001:db8::1]:443", "203.0.113.9:5678") y una IPv4 mapeada en IPv6 (::ffff:10.0.0.1 o ::ffff:a00:1) como IPv4.
  */
 export function normalizeIp(ip: string | undefined | null): string {
-  let v = String(ip ?? "").trim().toLowerCase();
+  let v = String(ip ?? "")
+    .trim()
+    .toLowerCase();
   const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(v);
   if (bracketed) v = bracketed[1];
   else if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(v)) v = v.slice(0, v.lastIndexOf(":"));
@@ -84,7 +86,8 @@ export const AUTHENTICATES = Symbol.for("calasign.authenticates");
  * (varias rutas comparten el mismo objeto `rl` y algunas son públicas).
  */
 export function markBearerAuthRoutes(opts: { onRequest?: unknown; preHandler?: unknown; config?: object }): void {
-  const has = (h: unknown) => (Array.isArray(h) ? h : [h]).some((f) => typeof f === "function" && (f as unknown as Record<symbol, unknown>)[AUTHENTICATES] === true);
+  const has = (h: unknown) =>
+    (Array.isArray(h) ? h : [h]).some((f) => typeof f === "function" && (f as unknown as Record<symbol, unknown>)[AUTHENTICATES] === true);
   if (has(opts.onRequest) || has(opts.preHandler)) opts.config = { ...(opts.config ?? {}), bearerAuthRoute: true };
 }
 

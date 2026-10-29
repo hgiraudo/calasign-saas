@@ -8,7 +8,16 @@ import { brandText, isVerifyPath as webIsVerifyPath, setBrandTheme, setVerifyPag
 
 describe("textos de la verificación con marca blanca", () => {
   it("las claves del veredicto y del reporte técnico están protegidas; título e intro no", () => {
-    for (const k of ["verify.matchTitle", "verify.noMatchTitle", "verify.brokenText", "verify.chainOk", "verify.chainBroken", "verify.hash", "val.intact", "val.broken"]) {
+    for (const k of [
+      "verify.matchTitle",
+      "verify.noMatchTitle",
+      "verify.brokenText",
+      "verify.chainOk",
+      "verify.chainBroken",
+      "verify.hash",
+      "val.intact",
+      "val.broken",
+    ]) {
       expect(isProtectedTextKey(k)).toBe(true);
     }
     for (const k of ["verify.title", "verify.text", "sign.doneTitle", "otp.title"]) expect(isProtectedTextKey(k)).toBe(false);
@@ -19,11 +28,15 @@ describe("textos de la verificación con marca blanca", () => {
       es: { "sign.doneTitle": "¡Listo!" },
     });
     expect(BrandConfigInput.parse({ texts: { en: { "val.intact": "OK" } } }).texts).toEqual({ en: {} });
-    expect(BrandConfigInput.safeParse({ texts: { es: { "verify.title": "Verificá tu documento", "sign.doneTitle": "¡Listo!" } } }).success).toBe(true);
+    expect(BrandConfigInput.safeParse({ texts: { es: { "verify.title": "Verificá tu documento", "sign.doneTitle": "¡Listo!" } } }).success).toBe(
+      true,
+    );
   });
 
   it("brandText no aplica un texto protegido guardado antes de la validación", () => {
-    setBrandTheme({ texts: { es: { "verify.noMatchTitle": "Documento válido ✓", "verify.title": "Mi verificación" } } } as unknown as PublicBrandTheme);
+    setBrandTheme({
+      texts: { es: { "verify.noMatchTitle": "Documento válido ✓", "verify.title": "Mi verificación" } },
+    } as unknown as PublicBrandTheme);
     try {
       expect(brandText("es", "verify.noMatchTitle", "El documento no coincide")).toBe("El documento no coincide");
       expect(brandText("es", "verify.title", "Verificar")).toBe("Mi verificación");
@@ -93,7 +106,12 @@ describe("textos de la verificación con marca blanca", () => {
     g.document = fakeDoc;
     try {
       setVerifyPageMode(true);
-      setBrandTheme({ theme: { fontSource: null }, css: ":root{--navy:#112233}", pageCss: ":root{--navy:#112233}\n.x{}", texts: {} } as unknown as PublicBrandTheme);
+      setBrandTheme({
+        theme: { fontSource: null },
+        css: ":root{--navy:#112233}",
+        pageCss: ":root{--navy:#112233}\n.x{}",
+        texts: {},
+      } as unknown as PublicBrandTheme);
       expect(els.get("brand-theme").textContent).not.toContain(".x{}");
       setVerifyPageMode(false);
       expect(els.get("brand-theme").textContent).toBe(":root{--navy:#112233}\n.x{}");
@@ -110,7 +128,13 @@ describe("frame-ancestors con comodín", () => {
     for (const bad of ["https://*.com", "https://*.com.ar", "https://*.co.uk", "https://*.github.io", "https://*.vercel.app", "https://*.ar"]) {
       expect(FrameAncestor.safeParse(bad).success, bad).toBe(false);
     }
-    for (const ok of ["https://*.cliente.com", "https://*.cliente.com.ar", "https://app.cliente.com", "https://cliente.com:8443", "http://localhost:5199"]) {
+    for (const ok of [
+      "https://*.cliente.com",
+      "https://*.cliente.com.ar",
+      "https://app.cliente.com",
+      "https://cliente.com:8443",
+      "http://localhost:5199",
+    ]) {
       expect(FrameAncestor.safeParse(ok).success, ok).toBe(true);
     }
   });

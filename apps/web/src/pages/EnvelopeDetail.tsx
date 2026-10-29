@@ -46,10 +46,7 @@ export function EnvelopeDetailPage() {
   const load = useCallback(async () => {
     const mine = ++seq.current;
     try {
-      const [d, ev] = await Promise.all([
-        api<EnvelopeDetail>(`/v1/envelopes/${id}`),
-        api<{ items: EnvelopeEvent[] }>(`/v1/envelopes/${id}/events`),
-      ]);
+      const [d, ev] = await Promise.all([api<EnvelopeDetail>(`/v1/envelopes/${id}`), api<{ items: EnvelopeEvent[] }>(`/v1/envelopes/${id}/events`)]);
       if (mine !== seq.current) return;
       setDetail(d);
       setEvents(ev.items);
@@ -74,7 +71,14 @@ export function EnvelopeDetailPage() {
   }, [status, load]);
 
   if (notFound) return <Navigate to="/app" replace />;
-  if (!detail) return loadError ? <div className="page"><ErrorBox error={loadError} /></div> : <Spinner />;
+  if (!detail)
+    return loadError ? (
+      <div className="page">
+        <ErrorBox error={loadError} />
+      </div>
+    ) : (
+      <Spinner />
+    );
   // Un borrador se edita en el asistente; quien solo puede verlo (canManage false) se queda acá, de solo lectura.
   if (detail.envelope.status === "draft" && detail.canManage !== false) return <Navigate to={`/app/envelopes/${id}/edit`} replace />;
   // Quien lo ve por un grupo, como anfitrión o con view_all no puede modificarlo: sin estas acciones (la API daba 403).
@@ -199,7 +203,11 @@ export function EnvelopeDetailPage() {
       </div>
 
       <ErrorBox error={error ?? loadError} />
-      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      {notice && (
+        <div className="alert alert-success" role="status">
+          {notice}
+        </div>
+      )}
       {finalizeFailed && (
         <div className="alert alert-warn row-wrap" role="alert">
           <span>{unsealableCode ? t("detail.finalizeFailedUnsealable", { code: unsealableCode }) : t("detail.finalizeFailed")}</span>
@@ -220,7 +228,9 @@ export function EnvelopeDetailPage() {
 
       <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} canManage={canManage} />
       {env.status === "completed" && <ArchivePanel envelopeId={env.id} canManage={canManage} />}
-      {detail.recipients.some((r) => r.signatureType === "certificate") && <CertificateProgressPanel envelopeId={env.id} status={env.status} refreshKey={events.length} />}
+      {detail.recipients.some((r) => r.signatureType === "certificate") && (
+        <CertificateProgressPanel envelopeId={env.id} status={env.status} refreshKey={events.length} />
+      )}
 
       <div className="grid-2">
         <section className="card pad">
@@ -274,10 +284,26 @@ export function EnvelopeDetailPage() {
                     </div>
                     <div className="muted small">{[r.email, r.phone].filter(Boolean).join(" · ")}</div>
                     <div className="muted small timeline-mini">
-                      {r.sentAt && <span>{t("detail.sent")}: {formatDateTime(r.sentAt, locale)}</span>}
-                      {r.viewedAt && <span>{t("detail.viewed")}: {formatDateTime(r.viewedAt, locale)}</span>}
-                      {r.signedAt && <span>{t("detail.signed")}: {formatDateTime(r.signedAt, locale)}</span>}
-                      {r.declinedAt && <span>{t("detail.declined")}: {formatDateTime(r.declinedAt, locale)}</span>}
+                      {r.sentAt && (
+                        <span>
+                          {t("detail.sent")}: {formatDateTime(r.sentAt, locale)}
+                        </span>
+                      )}
+                      {r.viewedAt && (
+                        <span>
+                          {t("detail.viewed")}: {formatDateTime(r.viewedAt, locale)}
+                        </span>
+                      )}
+                      {r.signedAt && (
+                        <span>
+                          {t("detail.signed")}: {formatDateTime(r.signedAt, locale)}
+                        </span>
+                      )}
+                      {r.declinedAt && (
+                        <span>
+                          {t("detail.declined")}: {formatDateTime(r.declinedAt, locale)}
+                        </span>
+                      )}
                     </div>
                     {r.replacedBy && (
                       <div className="small">

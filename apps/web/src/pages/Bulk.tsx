@@ -11,7 +11,8 @@ import { useTitle } from "../lib/white-label";
 
 function BulkStatus({ status }: { status: BulkSend["status"] }) {
   const st = useScaleText();
-  const cls = status === "completed" ? "badge-completed" : status === "cancelled" ? "badge-voided" : status === "running" ? "badge-finalizing" : "badge-sent";
+  const cls =
+    status === "completed" ? "badge-completed" : status === "cancelled" ? "badge-voided" : status === "running" ? "badge-finalizing" : "badge-sent";
   return <span className={`badge ${cls}`}>{st(`bulk.status.${status}` as "bulk.status.queued")}</span>;
 }
 
@@ -176,7 +177,11 @@ export function BulkNewPage() {
         try {
           if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(wanted)) throw new HttpError(404, "not_found", "");
           const d = await api<TemplateDetail>(`/v1/templates/${encodeURIComponent(wanted)}`);
-          const extra: TemplateSummary = { ...d.template, documentCount: d.documents.length, roles: d.roles.map((x) => ({ name: x.name, role: x.role })) };
+          const extra: TemplateSummary = {
+            ...d.template,
+            documentCount: d.documents.length,
+            roles: d.roles.map((x) => ({ name: x.name, role: x.role })),
+          };
           items = [extra, ...items];
         } catch (e) {
           // Un corte de red o un 5xx no es "no existe": se muestra ese error.
@@ -240,7 +245,8 @@ export function BulkNewPage() {
       // Respuesta de error: se puede corregir y volver a enviar con otra clave (un corte o un 5xx reintenta con la misma).
       // Clave nueva solo ante un rechazo de los datos: con idempotency_in_progress/mismatch el primer pedido ya llegó al
       // servidor, y una clave nueva podía crear (y enviar) un segundo envío.
-      if (e instanceof HttpError && e.status > 0 && e.status < 500 && !["idempotency_in_progress", "idempotency_mismatch"].includes(e.code)) setIdemKey(uuid());
+      if (e instanceof HttpError && e.status > 0 && e.status < 500 && !["idempotency_in_progress", "idempotency_mismatch"].includes(e.code))
+        setIdemKey(uuid());
       if (e instanceof HttpError && e.code === "rows_invalid") setResult(e.details as BulkValidationResult);
       setError(errorText(e));
       setBusy(false);
@@ -269,7 +275,14 @@ export function BulkNewPage() {
   const sendCount = result ? (skipInvalid ? result.valid : result.invalid === 0 ? result.total : 0) : 0;
 
   // Si la lista de plantillas no carga, se muestra el error (antes quedaba el spinner para siempre).
-  if (templates === null) return error ? <div className="page narrow"><ErrorBox error={error} /></div> : <Spinner />;
+  if (templates === null)
+    return error ? (
+      <div className="page narrow">
+        <ErrorBox error={error} />
+      </div>
+    ) : (
+      <Spinner />
+    );
   return (
     <div className="page narrow">
       <div className="page-head">
@@ -331,17 +344,31 @@ export function BulkNewPage() {
             {result && (
               <div className="stack">
                 <p>
-                  <strong>{result.total}</strong> {st("bulk.rows")} · <span className="ok-text">{result.valid} {st("bulk.valid")}</span>
+                  <strong>{result.total}</strong> {st("bulk.rows")} ·{" "}
+                  <span className="ok-text">
+                    {result.valid} {st("bulk.valid")}
+                  </span>
                   {result.invalid > 0 && (
                     <>
                       {" "}
-                      · <span className="err-text">{result.invalid} {st("bulk.invalid")}</span>
+                      ·{" "}
+                      <span className="err-text">
+                        {result.invalid} {st("bulk.invalid")}
+                      </span>
                     </>
                   )}
                 </p>
                 {(result.duplicates?.length ?? 0) > 0 && (
                   <p className="small warn-text" role="status">
-                    ⚠ {st("bulk.duplicates", { n: result.duplicates!.length, rows: result.duplicates!.slice(0, 10).map((d) => `${d.row} (= ${d.sameAs})`).join(", ") + (result.duplicates!.length > 10 ? "…" : "") })}
+                    ⚠{" "}
+                    {st("bulk.duplicates", {
+                      n: result.duplicates!.length,
+                      rows:
+                        result
+                          .duplicates!.slice(0, 10)
+                          .map((d) => `${d.row} (= ${d.sameAs})`)
+                          .join(", ") + (result.duplicates!.length > 10 ? "…" : ""),
+                    })}
                   </p>
                 )}
                 {result.quotaRemaining != null && result.valid > result.quotaRemaining && (
@@ -594,7 +621,9 @@ export function BulkDetailPage() {
                   {it.error && <div className="err-text small">{it.error}</div>}
                 </td>
                 <td>
-                  <span className={`badge ${it.status === "sent" ? "badge-completed" : it.status === "failed" ? "badge-declined" : it.status === "cancelled" ? "badge-voided" : "badge-sent"}`}>
+                  <span
+                    className={`badge ${it.status === "sent" ? "badge-completed" : it.status === "failed" ? "badge-declined" : it.status === "cancelled" ? "badge-voided" : "badge-sent"}`}
+                  >
                     {st(`bulk.item.${it.status}` as "bulk.item.sent")}
                   </span>
                 </td>

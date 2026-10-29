@@ -81,7 +81,11 @@ const me = await cs.request("GET", "/v1/me"); // ${t("sdk.c.any")}`;
     ["envelopes.download_signed(id)", "envelopes.downloadSigned(id)", "GET /v1/envelopes/{id}/signed.pdf"],
     ["envelopes.signing_url(id, rid)", "envelopes.signingUrl(id, rid)", "POST …/signing-url"],
     ["templates.list / get", "templates.list / get", "GET /v1/templates…"],
-    ["webhooks.list / get / create / update / delete / deliveries / test / rotate_secret", "webhooks.list / get / create / update / delete / deliveries / test / rotateSecret", "/v1/webhooks…"],
+    [
+      "webhooks.list / get / create / update / delete / deliveries / test / rotate_secret",
+      "webhooks.list / get / create / update / delete / deliveries / test / rotateSecret",
+      "/v1/webhooks…",
+    ],
     ["construct_event(body, header, secret)", "constructWebhookEvent({ payload, header, secret })", t("sdk.m.verify")],
   ];
 
@@ -107,14 +111,22 @@ const me = await cs.request("GET", "/v1/me"); // ${t("sdk.c.any")}`;
       <Code lang="bash" code={SDK_INSTALL.node} title={t("sdk.install")} />
       <Code lang="ts" code={node} />
       <H3 id="methods">{t("sdk.methods.h")}</H3>
-      <DataTable head={["Python", "Node.js", "API"]} rows={methods.map(([a, b, c]) => [<code key="a">{a}</code>, <code key="b">{b}</code>, <code key="c">{c}</code>])} />
+      <DataTable
+        head={["Python", "Node.js", "API"]}
+        rows={methods.map(([a, b, c]) => [<code key="a">{a}</code>, <code key="b">{b}</code>, <code key="c">{c}</code>])}
+      />
 
       <H2 id="openapi">{t("sdk.openapi.h")}</H2>
       <Md text={t("sdk.openapi.p")} />
       <CodeTabs
         tabs={[
           { id: "ts", label: "TypeScript", lang: "bash", code: `npx openapi-typescript ${BASE}/v1/openapi.json -o calasign.d.ts` },
-          { id: "java", label: "Java / C# / Go / PHP", lang: "bash", code: `npx @openapitools/openapi-generator-cli generate \\\n  -i ${BASE}/v1/openapi.json \\\n  -g java \\\n  -o ./calasign-client        # csharp, go, php, ruby, kotlin…` },
+          {
+            id: "java",
+            label: "Java / C# / Go / PHP",
+            lang: "bash",
+            code: `npx @openapitools/openapi-generator-cli generate \\\n  -i ${BASE}/v1/openapi.json \\\n  -g java \\\n  -o ./calasign-client        # csharp, go, php, ruby, kotlin…`,
+          },
           { id: "postman", label: "Postman / Insomnia", lang: "text", code: `${t("sdk.openapi.import")}\n${BASE}/v1/openapi.json` },
         ]}
       />

@@ -7,7 +7,16 @@ import { signPayload } from "../src/modules/webhooks";
 describe("búsqueda avanzada de sobres", () => {
   it("arma condiciones y parámetros", () => {
     const params: unknown[] = ["tenant"];
-    const sql = envelopeSearchSql({ created_from: "2026-01-01", updated_since: "2026-02-01T00:00:00Z", metadata: ["orderId:A:1"], "metadata[canal]": "web", recipient: "Ana@X.com" }, params);
+    const sql = envelopeSearchSql(
+      {
+        created_from: "2026-01-01",
+        updated_since: "2026-02-01T00:00:00Z",
+        metadata: ["orderId:A:1"],
+        "metadata[canal]": "web",
+        recipient: "Ana@X.com",
+      },
+      params,
+    );
     expect(sql).toContain("e.created_at >= $2::timestamptz");
     expect(sql).toContain("e.updated_at >= $3::timestamptz");
     expect(sql).toContain("e.metadata @> $4::jsonb");

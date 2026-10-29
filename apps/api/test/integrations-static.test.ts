@@ -9,7 +9,14 @@ async function app() {
   const a = Fastify();
   await a.register(helmet, { contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], frameAncestors: ["'none'"] } } });
   integrationsStaticHeaders(a);
-  for (const p of ["/integrations/office/taskpane.html", "/integrations/calasign.mcpb", "/integrations/gemini-api/example.py", "/app", "/oauth/authorize"]) a.get(p, async () => "x");
+  for (const p of [
+    "/integrations/office/taskpane.html",
+    "/integrations/calasign.mcpb",
+    "/integrations/gemini-api/example.py",
+    "/app",
+    "/oauth/authorize",
+  ])
+    a.get(p, async () => "x");
   a.get("/integrations/office/missing.html", async (_req, reply) => reply.code(404).send({ error: "nf" }));
   return a;
 }

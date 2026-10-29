@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-staff-auth-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -83,13 +83,20 @@ describe("2FA: re-autenticación y avisos", () => {
     const noPw = await app.inject({ method: "POST", url: "/v1/me/2fa/enable", cookies, payload: { code: totp.totpAt(secret, totp.currentStep()) } });
     expect(noPw.json().error.code).toBe("reauth_required");
     expect((await db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [u.id]))!.totp_enabled_at).toBeNull();
-    const en = await app.inject({ method: "POST", url: "/v1/me/2fa/enable", cookies, payload: { code: totp.totpAt(secret, totp.currentStep()), password: PW } });
+    const en = await app.inject({
+      method: "POST",
+      url: "/v1/me/2fa/enable",
+      cookies,
+      payload: { code: totp.totpAt(secret, totp.currentStep()), password: PW },
+    });
     expect(en.statusCode).toBe(200);
     expect(await jobsOf(u.id, "2fa_enabled")).toHaveLength(1);
 
     // Regenerar: sin re-autenticación no gasta el código; con la contraseña, sí y avisa.
     const code = totp.totpAt(secret, totp.currentStep() + 1);
-    expect((await app.inject({ method: "POST", url: "/v1/me/2fa/recovery-codes", cookies, payload: { code } })).json().error.code).toBe("reauth_required");
+    expect((await app.inject({ method: "POST", url: "/v1/me/2fa/recovery-codes", cookies, payload: { code } })).json().error.code).toBe(
+      "reauth_required",
+    );
     const regen = await app.inject({ method: "POST", url: "/v1/me/2fa/recovery-codes", cookies, payload: { code, password: PW } });
     expect(regen.statusCode).toBe(200);
     expect(await jobsOf(u.id, "2fa_recovery_regenerated")).toHaveLength(1);
@@ -114,7 +121,15 @@ describe("2FA: re-autenticación y avisos", () => {
     const { render } = await import("../src/notifications/templates");
     for (const kind of ["password_changed", "2fa_enabled", "2fa_disabled", "2fa_recovery_regenerated"] as const) {
       for (const loc of ["es", "pt-BR", "en"]) {
-        const m = render(kind, loc, { recipientName: "Ana", senderName: "CalaSign", organizationName: "CalaSign", subject: "x", date: "1 de enero", detail: "203.0.113.0/24", link: "https://x.test" });
+        const m = render(kind, loc, {
+          recipientName: "Ana",
+          senderName: "CalaSign",
+          organizationName: "CalaSign",
+          subject: "x",
+          date: "1 de enero",
+          detail: "203.0.113.0/24",
+          link: "https://x.test",
+        });
         expect(m.text).toContain("203.0.113.0/24");
       }
     }
@@ -129,7 +144,10 @@ describe("restablecer la contraseña", () => {
     expect(forgot.statusCode).toBe(202);
     const token = util.randomToken();
     await db.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1`, [u.id]);
-    await db.query(`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '30 minutes')`, [util.sha256Hex(token), u.id]);
+    await db.query(`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '30 minutes')`, [
+      util.sha256Hex(token),
+      u.id,
+    ]);
     const weak = await app.inject({ method: "POST", url: "/v1/auth/password/reset", payload: { token, password: "password12345" } });
     expect(weak.statusCode).toBe(400);
     expect(weak.json().error).toMatchObject({ code: "weak_password", details: { reason: "common" } });
@@ -165,7 +183,9 @@ describe("restablecer la contraseña", () => {
       ]);
     }
     await app.inject({ method: "POST", url: "/v1/auth/password/forgot", payload: { email: u.email }, remoteAddress: "198.51.100.44" });
-    expect(await db.query(`SELECT 1 FROM password_resets WHERE user_id = $1 AND ip_key = '198.51.100.0/24' AND used_at IS NULL`, [u.id])).toHaveLength(1);
+    expect(
+      await db.query(`SELECT 1 FROM password_resets WHERE user_id = $1 AND ip_key = '198.51.100.0/24' AND used_at IS NULL`, [u.id]),
+    ).toHaveLength(1);
     expect(await db.query(`SELECT 1 FROM password_resets WHERE user_id = $1 AND used_at IS NULL`, [u.id])).toHaveLength(26);
   });
 });
@@ -195,7 +215,9 @@ describe("bloqueo de ingresos", () => {
     await login(u.email, "mala-contraseña-x", "203.0.113.9");
     expect(await acct()).toBe(1);
     const cookies = { cs_session: await newSession(u.id, t, { authenticatedAgo: "2 hours" }) };
-    expect((await app.inject({ method: "POST", url: "/v1/me/2fa/setup", cookies, payload: { password: PW }, remoteAddress: "203.0.113.1" })).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "POST", url: "/v1/me/2fa/setup", cookies, payload: { password: PW }, remoteAddress: "203.0.113.1" })).statusCode,
+    ).toBe(200);
     expect(await acct()).toBe(1);
     // Con 2FA, la contraseña correcta ya devuelve el intento (antes del código).
     const secret = totp.generateTotpSecret();
@@ -220,7 +242,12 @@ describe("bloqueo de ingresos", () => {
     const ch = await login(u.email, PW, "198.51.100.9");
     expect(ch.json().twoFactorRequired).toBe(true);
     for (let i = 0; i < 12; i++) await login(u.email, "mala-contraseña-x", `203.0.113.${i + 1}`);
-    const v = await app.inject({ method: "POST", url: "/v1/auth/2fa/verify", payload: { challengeToken: ch.json().challengeToken, code: totp.totpAt(secret, totp.currentStep()) }, remoteAddress: "198.51.100.9" });
+    const v = await app.inject({
+      method: "POST",
+      url: "/v1/auth/2fa/verify",
+      payload: { challengeToken: ch.json().challengeToken, code: totp.totpAt(secret, totp.currentStep()) },
+      remoteAddress: "198.51.100.9",
+    });
     expect(v.statusCode).toBe(200);
   });
 
@@ -229,13 +256,10 @@ describe("bloqueo de ingresos", () => {
     const owner = await newUser(t);
     const u = await newUser(null);
     const token = util.randomToken();
-    await db.query(`INSERT INTO invitations (id, tenant_id, email, role, token_hash, invited_by, expires_at) VALUES ($1,$2,$3,'member',$4,$5, now() + interval '7 days')`, [
-      util.uuidv7(),
-      t,
-      u.email,
-      util.sha256Hex(token),
-      owner.id,
-    ]);
+    await db.query(
+      `INSERT INTO invitations (id, tenant_id, email, role, token_hash, invited_by, expires_at) VALUES ($1,$2,$3,'member',$4,$5, now() + interval '7 days')`,
+      [util.uuidv7(), t, u.email, util.sha256Hex(token), owner.id],
+    );
     const r = await app.inject({ method: "POST", url: `/v1/invite/${token}/accept`, payload: {} });
     expect(r.statusCode).toBe(401);
     expect(await db.one(`SELECT 1 FROM login_attempts WHERE user_id = $1`, [u.id])).toBeNull();
@@ -264,7 +288,9 @@ describe("sesiones", () => {
     const active = await newSession(u.id, t, { remember: false, lastSeenAgo: "6 minutes" });
     expect((await app.inject({ method: "GET", url: "/v1/me", cookies: { cs_session: active } })).statusCode).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
-    const seen = await db.one<any>(`SELECT last_seen_at > now() - interval '1 minute' AS fresh FROM sessions WHERE token_hash = $1`, [util.sha256Hex(active)]);
+    const seen = await db.one<any>(`SELECT last_seen_at > now() - interval '1 minute' AS fresh FROM sessions WHERE token_hash = $1`, [
+      util.sha256Hex(active),
+    ]);
     expect(seen.fresh).toBe(true);
   });
 
@@ -292,12 +318,19 @@ describe("sesiones", () => {
 
     const { issueTokens } = await import("../src/modules/oauth-tokens");
     const client = util.uuidv7();
-    await db.query(`INSERT INTO oauth_clients (id, tenant_id, client_id, name, redirect_uris, grant_types, scopes) VALUES ($1,$2,$3,'app','{https://app.test/cb}','{authorization_code}','{envelopes:read}')`, [
-      client,
-      t,
-      `cs_cli_${client.slice(-12)}`,
-    ]);
-    await issueTokens(db, { clientId: client, tenantId: t, userId: u.id, serviceApiKeyId: null, scopes: ["envelopes:read"], withRefresh: false, authMethod: "password" });
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, name, redirect_uris, grant_types, scopes) VALUES ($1,$2,$3,'app','{https://app.test/cb}','{authorization_code}','{envelopes:read}')`,
+      [client, t, `cs_cli_${client.slice(-12)}`],
+    );
+    await issueTokens(db, {
+      clientId: client,
+      tenantId: t,
+      userId: u.id,
+      serviceApiKeyId: null,
+      scopes: ["envelopes:read"],
+      withRefresh: false,
+      authMethod: "password",
+    });
     await newSession(u.id, t);
     const all = await app.inject({ method: "POST", url: "/v1/auth/logout-all", cookies });
     expect(all.statusCode).toBe(204);
@@ -318,7 +351,15 @@ describe("OAuth: refresh con scope más chico", () => {
       `INSERT INTO oauth_clients (id, tenant_id, client_id, name, redirect_uris, grant_types, scopes) VALUES ($1,$2,$3,'app','{https://app.test/cb}','{authorization_code,refresh_token}','{envelopes:read,envelopes:write,offline_access}')`,
       [client, t, clientId],
     );
-    const tok = await issueTokens(db, { clientId: client, tenantId: t, userId: u.id, serviceApiKeyId: null, scopes: ["envelopes:read", "envelopes:write", "offline_access"], withRefresh: true, authMethod: "password" });
+    const tok = await issueTokens(db, {
+      clientId: client,
+      tenantId: t,
+      userId: u.id,
+      serviceApiKeyId: null,
+      scopes: ["envelopes:read", "envelopes:write", "offline_access"],
+      withRefresh: true,
+      authMethod: "password",
+    });
     const refresh = (rt: string, scope?: string) =>
       app.inject({
         method: "POST",
@@ -330,7 +371,10 @@ describe("OAuth: refresh con scope más chico", () => {
     expect(narrow.statusCode).toBe(200);
     expect(narrow.json().scope).toBe("envelopes:read");
     expect(narrow.json().refresh_token).toBeTruthy();
-    const rows = await db.query<any>(`SELECT kind, scopes FROM oauth_tokens WHERE client_id = $1 AND revoked_at IS NULL AND used_at IS NULL ORDER BY created_at DESC`, [client]);
+    const rows = await db.query<any>(
+      `SELECT kind, scopes FROM oauth_tokens WHERE client_id = $1 AND revoked_at IS NULL AND used_at IS NULL ORDER BY created_at DESC`,
+      [client],
+    );
     expect(rows.find((r) => r.kind === "access").scopes).toEqual(["envelopes:read"]);
     expect(rows.find((r) => r.kind === "refresh").scopes).toEqual(["envelopes:read", "envelopes:write", "offline_access"]);
     // Con el refresh nuevo se puede volver a pedir el conjunto completo.
@@ -358,7 +402,11 @@ describe("política de contraseñas", () => {
     expect(weakPasswordReason("ANA-ana-2024", "ana@acme.com")).toBe("email");
     expect(weakPasswordReason("trebor-2024-!!", "robert+tag@acme.com")).toBe("email");
     expect(weakPasswordReason("lisa-montaña-1987", "lis@acme.com")).toBeNull();
-    const signup = await app.inject({ method: "POST", url: "/v1/auth/signup", payload: { name: "X", email: "nuevo-x@acme.test", password: "iloveyou123", organization: "Org X" } });
+    const signup = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: { name: "X", email: "nuevo-x@acme.test", password: "iloveyou123", organization: "Org X" },
+    });
     expect(signup.statusCode).toBe(400);
     expect(signup.json().error.code).toBe("weak_password");
   });

@@ -306,7 +306,7 @@ export function typeLabel(spec: Spec, raw: JsonSchema | undefined): string {
   const types = Array.isArray(s.type) ? s.type : s.type ? [s.type] : s.properties ? ["object"] : [];
   const nullable = s.nullable || types.includes("null");
   const base = types.filter((t) => t !== "null");
-  let label = base.length ? base.join(" | ") : named ?? "any";
+  let label = base.length ? base.join(" | ") : (named ?? "any");
   if (base[0] === "array") label = `array<${typeLabel(spec, s.items)}>`;
   else if (base[0] === "object" && named) label = named;
   else if (s.format && base[0] !== "object") label += ` · ${s.format}`;

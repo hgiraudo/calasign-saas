@@ -11,7 +11,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
 const tempDirs = [];
 process.on("exit", () => {
@@ -19,7 +18,12 @@ process.on("exit", () => {
 });
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -89,7 +93,12 @@ function tinyPdf(label) {
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 
 const owner = session();
-await owner("POST", "/v1/auth/signup", { name: "Dueña Cobros", email: `owner-bill+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Cobros ${stamp}` });
+await owner("POST", "/v1/auth/signup", {
+  name: "Dueña Cobros",
+  email: `owner-bill+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Cobros ${stamp}`,
+});
 
 async function linkFor(name) {
   for (let i = 0; i < 60; i++) {
@@ -107,10 +116,24 @@ async function draft(signers, subject) {
   const fd = new FormData();
   fd.append("file", new Blob([tinyPdf(subject)], { type: "application/pdf" }), "doc.pdf");
   const doc = await owner("POST", `/v1/envelopes/${envelope.id}/documents`, fd);
-  const recips = signers.map((name, i) => ({ id: randomUUID(), name, email: `s${i}-${stamp}-${randomUUID().slice(0, 6)}@example.com`, routingOrder: i + 1 }));
+  const recips = signers.map((name, i) => ({
+    id: randomUUID(),
+    name,
+    email: `s${i}-${stamp}-${randomUUID().slice(0, 6)}@example.com`,
+    routingOrder: i + 1,
+  }));
   await owner("PUT", `/v1/envelopes/${envelope.id}/recipients`, { recipients: recips });
   await owner("PUT", `/v1/envelopes/${envelope.id}/fields`, {
-    fields: recips.map((r, i) => ({ documentId: doc.id, recipientId: r.id, type: "signature", page: 0, x: 0.1 + i * 0.4, y: 0.7, width: 0.3, height: 0.08 })),
+    fields: recips.map((r, i) => ({
+      documentId: doc.id,
+      recipientId: r.id,
+      type: "signature",
+      page: 0,
+      x: 0.1 + i * 0.4,
+      y: 0.7,
+      width: 0.3,
+      height: 0.08,
+    })),
   });
   return { id: envelope.id, recips };
 }
@@ -137,22 +160,44 @@ async function status(id) {
 
 // ── Plan por defecto (local: sin límites) ──
 let bill = await owner("GET", "/v1/billing");
-assert(bill.defaultPlan && bill.plans.length === 4 && bill.providers.some((p) => p.id === "mock" && p.configured), `resumen de facturación: ${JSON.stringify(bill.plan)}`);
+assert(
+  bill.defaultPlan && bill.plans.length === 4 && bill.providers.some((p) => p.id === "mock" && p.configured),
+  `resumen de facturación: ${JSON.stringify(bill.plan)}`,
+);
 const provs = await owner("GET", "/v1/payments/providers");
-assert(provs.items.find((p) => p.id === "mercadopago").methods.some((m) => m.includes("PSE")), "medios por proveedor (Pix/PSE)");
+assert(
+  provs.items.find((p) => p.id === "mercadopago").methods.some((m) => m.includes("PSE")),
+  "medios por proveedor (Pix/PSE)",
+);
 // Códigos estables (los traduce la web), uno por medio y en el mismo orden.
-for (const p of provs.items) assert(Array.isArray(p.methodCodes) && p.methodCodes.length === p.methods.length, `methodCodes de ${p.id}: ${JSON.stringify(p.methodCodes)}`);
-assert(JSON.stringify(provs.items.find((p) => p.id === "mock").methodCodes) === '["simulated"]', "el proveedor simulado se informa con el código simulated");
+for (const p of provs.items)
+  assert(Array.isArray(p.methodCodes) && p.methodCodes.length === p.methods.length, `methodCodes de ${p.id}: ${JSON.stringify(p.methodCodes)}`);
+assert(
+  JSON.stringify(provs.items.find((p) => p.id === "mock").methodCodes) === '["simulated"]',
+  "el proveedor simulado se informa con el código simulated",
+);
 assert(provs.items.find((p) => p.id === "mercadopago").methodCodes.includes("pse"), "Mercado Pago informa pse");
-ok(`plan por defecto del entorno: ${bill.plan.name}; proveedores: ${bill.providers.map((p) => `${p.id}${p.configured ? "" : " (no configurado)"}`).join(", ")}`);
+ok(
+  `plan por defecto del entorno: ${bill.plan.name}; proveedores: ${bill.providers.map((p) => `${p.id}${p.configured ? "" : " (no configurado)"}`).join(", ")}`,
+);
 
 // ── after_sign ──
 const A = `Pagador ${stamp}`;
 const B = `Segundo ${stamp}`;
 const e1 = await draft([A, B], `Contrato con cobro ${stamp}`);
-await owner("PUT", `/v1/envelopes/${e1.id}/payment`, { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: randomUUID(), provider: "mock" }, { expect: 400 });
+await owner(
+  "PUT",
+  `/v1/envelopes/${e1.id}/payment`,
+  { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: randomUUID(), provider: "mock" },
+  { expect: 400 },
+);
 if (!provs.items.find((p) => p.id === "stripe").configured) {
-  await owner("PUT", `/v1/envelopes/${e1.id}/payment`, { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: e1.recips[0].id, provider: "stripe" }, { expect: 400 });
+  await owner(
+    "PUT",
+    `/v1/envelopes/${e1.id}/payment`,
+    { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: e1.recips[0].id, provider: "stripe" },
+    { expect: 400 },
+  );
 }
 const pay = await owner("PUT", `/v1/envelopes/${e1.id}/payment`, {
   amount: 150.5,
@@ -173,7 +218,10 @@ assert(s2.res.status === 200, "el segundo firma");
 await sleep(1500);
 assert((await status(e1.id)) === "sent", "con todos firmados, sin pago el sobre NO se completa");
 let ev = (await owner("GET", `/v1/envelopes/${e1.id}/events`)).items;
-assert(ev.some((x) => x.type === "envelope.awaiting_payment"), "evento envelope.awaiting_payment");
+assert(
+  ev.some((x) => x.type === "envelope.awaiting_payment"),
+  "evento envelope.awaiting_payment",
+);
 const otherInfo = await owner("GET", `/v1/signing/${s2.tk}/payment`);
 assert(!otherInfo.required, "el otro firmante no paga");
 await owner("POST", `/v1/signing/${s2.tk}/payment/checkout`, null, { expect: 404 });
@@ -193,7 +241,10 @@ assert(st === "completed", `con el pago confirmado el sobre se completa (${st})`
 ev = (await owner("GET", `/v1/envelopes/${e1.id}/events`)).items;
 const paidEv = ev.find((x) => x.type === "payment.completed");
 assert(paidEv && paidEv.data.amount === 150.5 && paidEv.data.currency === "BRL", "evento payment.completed con monto");
-assert(ev.some((x) => x.type === "payment.failed"), "evento payment.failed");
+assert(
+  ev.some((x) => x.type === "payment.failed"),
+  "evento payment.failed",
+);
 await owner("POST", `/v1/signing/${s1.tk}/payment/checkout`, null, { expect: 409 });
 const pdf = Buffer.from(await (await owner("GET", `/v1/envelopes/${e1.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
 try {
@@ -203,14 +254,22 @@ try {
   assert(/Pagos/.test(txt) && /150,50/.test(txt) && /Pagado por/.test(txt), "el certificado incluye el comprobante del pago");
   ok("after_sign: firman todos → espera el pago; rechazo y reintento; pago → se completa; comprobante en el certificado");
 } catch (e) {
-  if (String(e).includes("ENOENT")) ok("after_sign: firman todos → espera el pago; rechazo y reintento; pago → se completa (pdftotext no disponible)");
+  if (String(e).includes("ENOENT"))
+    ok("after_sign: firman todos → espera el pago; rechazo y reintento; pago → se completa (pdftotext no disponible)");
   else throw e;
 }
 
 // ── before_sign ──
 const C = `Paga antes ${stamp}`;
 const e2 = await draft([C], `Reserva ${stamp}`);
-await owner("PUT", `/v1/envelopes/${e2.id}/payment`, { amount: 25000, currency: "COP", description: "Reserva", payerRecipientId: e2.recips[0].id, timing: "before_sign", provider: "mock" });
+await owner("PUT", `/v1/envelopes/${e2.id}/payment`, {
+  amount: 25000,
+  currency: "COP",
+  description: "Reserva",
+  payerRecipientId: e2.recips[0].id,
+  timing: "before_sign",
+  provider: "mock",
+});
 await owner("POST", `/v1/envelopes/${e2.id}/send`);
 const tk2 = await linkFor(C);
 await owner("GET", `/v1/signing/${tk2}`);
@@ -233,7 +292,14 @@ ok("before_sign: 402 hasta pagar; después firma y se completa");
 // Como Stripe y Mercado Pago después de cerrarse el checkout: completar el pago simulado de un sobre anulado da 409.
 const Cv = `Paga y anulan simulado ${stamp}`;
 const e2v = await draft([Cv], `Reserva anulada ${stamp}`);
-await owner("PUT", `/v1/envelopes/${e2v.id}/payment`, { amount: 100, currency: "BRL", description: "Reserva", payerRecipientId: e2v.recips[0].id, timing: "before_sign", provider: "mock" });
+await owner("PUT", `/v1/envelopes/${e2v.id}/payment`, {
+  amount: 100,
+  currency: "BRL",
+  description: "Reserva",
+  payerRecipientId: e2v.recips[0].id,
+  timing: "before_sign",
+  provider: "mock",
+});
 await owner("POST", `/v1/envelopes/${e2v.id}/send`);
 const tk2v = await linkFor(Cv);
 await owner("GET", `/v1/signing/${tk2v}`);
@@ -251,10 +317,18 @@ ok("simulado: un sobre anulado no admite el pago (409)");
 bill = await owner("POST", "/v1/billing/cancel");
 assert(bill.plan.id === "free" && !bill.defaultPlan, "baja a Free");
 const lim = await owner("POST", "/v1/api-keys", { name: "k" }, { expect: 402 });
-assert(lim.error.code === "plan_limit" && lim.error.details.feature === "api" && lim.error.details.suggestedPlan === "starter", `Free sin API: ${JSON.stringify(lim.error.details)}`);
+assert(
+  lim.error.code === "plan_limit" && lim.error.details.feature === "api" && lim.error.details.suggestedPlan === "starter",
+  `Free sin API: ${JSON.stringify(lim.error.details)}`,
+);
 await owner("POST", "/v1/invitations", { email: `inv-${stamp}@example.com`, role: "member" }, { expect: 402 });
 const e3 = await draft([`Libre ${stamp}`], `Free ${stamp}`);
-const p402 = await owner("PUT", `/v1/envelopes/${e3.id}/payment`, { amount: 1, currency: "USD", description: "x", payerRecipientId: e3.recips[0].id, provider: "mock" }, { expect: 402 });
+const p402 = await owner(
+  "PUT",
+  `/v1/envelopes/${e3.id}/payment`,
+  { amount: 1, currency: "USD", description: "x", payerRecipientId: e3.recips[0].id, provider: "mock" },
+  { expect: 402 },
+);
 assert(p402.error.details.feature === "payments", "cobro al firmar no incluido en Free");
 bill = await owner("GET", "/v1/billing");
 let used = bill.usage.envelopesSent;
@@ -267,7 +341,13 @@ while (used < 5) {
 }
 const over = await draft([`Excedido ${stamp}`], `Excedido ${stamp}`);
 const q = await owner("POST", `/v1/envelopes/${over.id}/send`, null, { expect: 402 });
-assert(q.error.code === "plan_limit" && q.error.details.limit === "envelopes_per_month" && q.error.details.max === 5 && q.error.details.upgradeUrl === "/app/settings/billing", `cupo: ${JSON.stringify(q.error)}`);
+assert(
+  q.error.code === "plan_limit" &&
+    q.error.details.limit === "envelopes_per_month" &&
+    q.error.details.max === 5 &&
+    q.error.details.upgradeUrl === "/app/settings/billing",
+  `cupo: ${JSON.stringify(q.error)}`,
+);
 assert((await status(over.id)) === "draft", "el sobre excedido queda en borrador");
 ok("Free: API, invitaciones y cobros bloqueados (402 con plan sugerido); 6.º sobre del mes → 402 plan_limit");
 
@@ -283,7 +363,8 @@ ok("Free: API, invitaciones y cobros bloqueados (402 con plan sugerido); 6.º so
   const free = 3 - members;
   assert(free >= 2, `Starter con lugar para 2 invitaciones (miembros: ${members})`);
   const invs = [];
-  for (let i = 0; i < free; i++) invs.push((await owner("POST", "/v1/invitations", { email: `seat${i}-${stamp}@example.com`, role: "member" })).invitation);
+  for (let i = 0; i < free; i++)
+    invs.push((await owner("POST", "/v1/invitations", { email: `seat${i}-${stamp}@example.com`, role: "member" })).invitation);
   const full = await owner("POST", "/v1/invitations", { email: `seat-x-${stamp}@example.com`, role: "member" }, { expect: 402 });
   assert(full.error.details.limit === "users", "cupo lleno → 402 users");
   const again = await owner("POST", "/v1/invitations", { email: `SEAT0-${stamp}@example.com`, role: "member" }, { raw: true });
@@ -291,9 +372,14 @@ ok("Free: API, invitaciones y cobros bloqueados (402 con plan sugerido); 6.º so
   const resent = (await again.json()).invitation;
   await owner("DELETE", `/v1/invitations/${resent.id}`, null, { expect: 204 });
   const race = await Promise.all(
-    [0, 1].map((i) => owner("POST", "/v1/invitations", { email: `race${i}-${stamp}@example.com`, role: "member" }, { raw: true }).then((r) => r.status)),
+    [0, 1].map((i) =>
+      owner("POST", "/v1/invitations", { email: `race${i}-${stamp}@example.com`, role: "member" }, { raw: true }).then((r) => r.status),
+    ),
   );
-  assert(race.filter((x) => x === 201).length === 1 && race.filter((x) => x === 402).length === 1, `dos invitaciones simultáneas por el último lugar: una entra (${race})`);
+  assert(
+    race.filter((x) => x === 201).length === 1 && race.filter((x) => x === 402).length === 1,
+    `dos invitaciones simultáneas por el último lugar: una entra (${race})`,
+  );
   for (const it of (await owner("GET", "/v1/invitations")).items) {
     if (it.status === "pending") await owner("DELETE", `/v1/invitations/${it.id}`, null, { expect: 204 });
   }
@@ -309,7 +395,10 @@ assert(page.includes("Business") && page.includes("249"), "página del checkout 
 const action = /action="([^"]+)"/.exec(page)[1].replace(/&amp;/g, "&");
 await owner("POST", action, { outcome: "paid" }, { headers: { accept: "application/json" } });
 bill = await owner("GET", "/v1/billing");
-assert(bill.plan.id === "business" && bill.subscription.provider === "mock" && bill.subscription.status === "active" && bill.subscription.renewsAt, "plan Business activo");
+assert(
+  bill.plan.id === "business" && bill.subscription.provider === "mock" && bill.subscription.status === "active" && bill.subscription.renewsAt,
+  "plan Business activo",
+);
 await owner("POST", `/v1/envelopes/${over.id}/send`);
 assert((await status(over.id)) === "sent", "con Business el envío pasa");
 assert(bill.usage.envelopesSent >= 5 && bill.usage.messages.email > 0, `uso: ${JSON.stringify(bill.usage)}`);
@@ -406,7 +495,13 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   // Stripe: cobro after_sign
   const S = `Paga Stripe ${stamp}`;
   const es = await draft([S], `Stripe ${stamp}`);
-  await owner("PUT", `/v1/envelopes/${es.id}/payment`, { amount: 99.9, currency: "USD", description: "Cuota", payerRecipientId: es.recips[0].id, provider: "stripe" });
+  await owner("PUT", `/v1/envelopes/${es.id}/payment`, {
+    amount: 99.9,
+    currency: "USD",
+    description: "Cuota",
+    payerRecipientId: es.recips[0].id,
+    provider: "stripe",
+  });
   await owner("POST", `/v1/envelopes/${es.id}/send`);
   const ss = await sign(S);
   const { url } = await owner("POST", `/v1/signing/${ss.tk}/payment/checkout`);
@@ -414,7 +509,15 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const again = await owner("POST", `/v1/signing/${ss.tk}/payment/checkout`);
   assert(again.url === url, "Stripe: un segundo pedido reutiliza la sesión abierta (no dos cobrables)");
   const pid = (await owner("GET", `/v1/envelopes/${es.id}/payment`)).payment.id;
-  const session = { id: url.split("/").pop(), mode: "payment", payment_status: "paid", amount_total: 9990, currency: "usd", payment_intent: "pi_e2e", metadata: { paymentId: pid } };
+  const session = {
+    id: url.split("/").pop(),
+    mode: "payment",
+    payment_status: "paid",
+    amount_total: 9990,
+    currency: "usd",
+    payment_intent: "pi_e2e",
+    metadata: { paymentId: pid },
+  };
   let r = await stripeHook({ id: `evt_${stamp}_bad`, type: "checkout.session.completed", data: { object: { ...session, amount_total: 100 } } });
   assert(r.status === 400, "Stripe: monto distinto → 400 (no se acredita)");
   r = await stripeHook({ id: `evt_${stamp}_nosig`, type: "checkout.session.completed", data: { object: session } }, false);
@@ -430,7 +533,13 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   // sesión de Stripe y el cobro quedaba acreditado en un sobre anulado. Lo cierra el barrido periódico (cada 30 s).
   const SV = `Paga y anulan ${stamp}`;
   const ev = await draft([SV], `Stripe anulado ${stamp}`);
-  await owner("PUT", `/v1/envelopes/${ev.id}/payment`, { amount: 10, currency: "USD", description: "Cuota", payerRecipientId: ev.recips[0].id, provider: "stripe" });
+  await owner("PUT", `/v1/envelopes/${ev.id}/payment`, {
+    amount: 10,
+    currency: "USD",
+    description: "Cuota",
+    payerRecipientId: ev.recips[0].id,
+    provider: "stripe",
+  });
   await owner("POST", `/v1/envelopes/${ev.id}/send`);
   const sv = await sign(SV);
   const vco = await owner("POST", `/v1/signing/${sv.tk}/payment/checkout`);
@@ -444,12 +553,28 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   r = await stripeHook({
     id: `evt_${stamp}_late`,
     type: "checkout.session.completed",
-    data: { object: { id: vses.id, mode: "payment", payment_status: "paid", amount_total: 1000, currency: "usd", payment_intent: "pi_late", metadata: { paymentId: vpid } } },
+    data: {
+      object: {
+        id: vses.id,
+        mode: "payment",
+        payment_status: "paid",
+        amount_total: 1000,
+        currency: "usd",
+        payment_intent: "pi_late",
+        metadata: { paymentId: vpid },
+      },
+    },
   });
   assert(r.status === 200, "Stripe: pago tardío recibido");
   for (let i = 0; i < 50 && (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status !== "refunded"; i++) await sleep(1000);
-  assert((await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status === "refunded", "el pago que llegó con el sobre anulado quedó reembolsado");
-  assert(refunds.some((x) => x.paymentIntent === "pi_late" && x.key === `refund:${vpid}`), "reembolso pedido a Stripe con clave de idempotencia");
+  assert(
+    (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status === "refunded",
+    "el pago que llegó con el sobre anulado quedó reembolsado",
+  );
+  assert(
+    refunds.some((x) => x.paymentIntent === "pi_late" && x.key === `refund:${vpid}`),
+    "reembolso pedido a Stripe con clave de idempotencia",
+  );
   const vpay = (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment;
   assert(vpay.refundRequiredAt && vpay.refundedAt && vpay.refundError === null, `el pago expone el reembolso (${JSON.stringify(vpay)})`);
   const vEvents = (await owner("GET", `/v1/envelopes/${ev.id}/events`)).items.map((x) => x.type);
@@ -461,8 +586,26 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const sco = await owner("POST", "/v1/billing/checkout", { plan: "starter", currency: "USD", provider: "stripe" });
   assert(sco.url.startsWith("https://checkout.stripe.test/"), "checkout de suscripción en Stripe");
   const me = await owner("GET", "/v1/me");
-  const subObj = { id: "sub_e2e", status: "active", customer: "cus_e2e", metadata: { tenantId: me.tenant.id, plan: "starter" }, current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400 };
-  await stripeHook({ id: `evt_${stamp}_sub`, type: "checkout.session.completed", data: { object: { id: "cs_sub", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e", metadata: { tenantId: me.tenant.id, plan: "starter" } } } });
+  const subObj = {
+    id: "sub_e2e",
+    status: "active",
+    customer: "cus_e2e",
+    metadata: { tenantId: me.tenant.id, plan: "starter" },
+    current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+  };
+  await stripeHook({
+    id: `evt_${stamp}_sub`,
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_sub",
+        mode: "subscription",
+        customer: "cus_e2e",
+        subscription: "sub_e2e",
+        metadata: { tenantId: me.tenant.id, plan: "starter" },
+      },
+    },
+  });
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "starter" && bill.subscription.provider === "stripe", "Stripe: suscripción Starter activa");
   await stripeHook({ id: `evt_${stamp}_upd`, type: "customer.subscription.updated", data: { object: subObj } });
@@ -474,18 +617,45 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   assert(bill.plan.id === "free", "Stripe: suscripción borrada → Free");
   ok("Stripe (servidor falso): checkout, webhook firmado, monto verificado, idempotencia, suscripción alta/renovación/baja");
 
-
   // Cambio de plan con una suscripción de Stripe vigente: el portal no puede cambiar de plan (los precios son de cada
   // checkout), así que el cambio es un checkout nuevo y, al pagarse, la suscripción anterior se cancela.
-  await stripeHook({ id: `evt_${stamp}_sub3`, type: "checkout.session.completed", data: { object: { id: "cs_sub3", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e3", metadata: { tenantId: me.tenant.id, plan: "starter" } } } });
+  await stripeHook({
+    id: `evt_${stamp}_sub3`,
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_sub3",
+        mode: "subscription",
+        customer: "cus_e2e",
+        subscription: "sub_e2e3",
+        metadata: { tenantId: me.tenant.id, plan: "starter" },
+      },
+    },
+  });
   await owner("POST", "/v1/billing/checkout", { plan: "starter", currency: "USD", provider: "stripe" }, { expect: 409 });
   const up = await owner("POST", "/v1/billing/checkout", { plan: "business", currency: "USD", provider: "stripe" });
   assert(up.url.startsWith("https://checkout.stripe.test/"), "Stripe vigente: checkout para subir de plan");
-  await stripeHook({ id: `evt_${stamp}_sub4`, type: "checkout.session.completed", data: { object: { id: "cs_sub4", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e4", metadata: { tenantId: me.tenant.id, plan: "business" } } } });
+  await stripeHook({
+    id: `evt_${stamp}_sub4`,
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_sub4",
+        mode: "subscription",
+        customer: "cus_e2e",
+        subscription: "sub_e2e4",
+        metadata: { tenantId: me.tenant.id, plan: "business" },
+      },
+    },
+  });
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "business" && bill.subscription.provider === "stripe", "Stripe: subió a Business");
   assert(cancelled.includes("stripe:sub_e2e3"), "la suscripción Starter anterior se canceló");
-  await stripeHook({ id: `evt_${stamp}_del4`, type: "customer.subscription.deleted", data: { object: { ...subObj, id: "sub_e2e4", status: "canceled", metadata: { tenantId: me.tenant.id, plan: "business" } } } });
+  await stripeHook({
+    id: `evt_${stamp}_del4`,
+    type: "customer.subscription.deleted",
+    data: { object: { ...subObj, id: "sub_e2e4", status: "canceled", metadata: { tenantId: me.tenant.id, plan: "business" } } },
+  });
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "free", "Stripe: Business borrada → Free");
   ok("Stripe: cambio de plan con suscripción vigente (checkout nuevo; la anterior se cancela)");
@@ -496,7 +666,14 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   await owner("POST", /action="([^"]+)"/.exec(pg2)[1].replace(/&amp;/g, "&"), { outcome: "paid" }, { headers: { accept: "application/json" } });
   const Mm = `Paga MP ${stamp}`;
   const em = await draft([Mm], `MP ${stamp}`);
-  await owner("PUT", `/v1/envelopes/${em.id}/payment`, { amount: 25000, currency: "COP", description: "Reserva", payerRecipientId: em.recips[0].id, timing: "before_sign", provider: "mercadopago" });
+  await owner("PUT", `/v1/envelopes/${em.id}/payment`, {
+    amount: 25000,
+    currency: "COP",
+    description: "Reserva",
+    payerRecipientId: em.recips[0].id,
+    timing: "before_sign",
+    provider: "mercadopago",
+  });
   await owner("POST", `/v1/envelopes/${em.id}/send`);
   const tkm = await linkFor(Mm);
   await owner("GET", `/v1/signing/${tkm}`);
@@ -521,25 +698,55 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   assert((await mpHook("776")).status === 200, "MP: notificación de pago rechazado");
   const mcoRetry = await owner("POST", `/v1/signing/${tkm}/payment/checkout`);
   assert(mcoRetry.url === mco.url && mpPrefCount === prefsBefore, `MP: tras un rechazo se reutiliza la preferencia (${mpPrefCount} creadas)`);
-  mpPayments.set("777", { id: 777, status: "approved", external_reference: `pay:${mpid}`, transaction_amount: 25000, currency_id: "COP", payment_method_id: "pse", date_approved: new Date().toISOString() });
+  mpPayments.set("777", {
+    id: 777,
+    status: "approved",
+    external_reference: `pay:${mpid}`,
+    transaction_amount: 25000,
+    currency_id: "COP",
+    payment_method_id: "pse",
+    date_approved: new Date().toISOString(),
+  });
   r = await mpHook("777", "payment", "secreto-incorrecto");
   assert(r.status === 400, "MP: firma inválida → 400");
   r = await mpHook("777");
   assert(r.status === 200, "MP: notificación de pago aprobada");
   const okSign = await owner("POST", `/v1/signing/${tkm}/complete`, { fields: [], signature: { kind: "drawn", imagePng: PNG } }, { raw: true });
   assert(okSign.status === 200, "MP: pagado (PSE) → puede firmar");
-  mpPreapprovals.set("pre_e2e", { id: "pre_e2e", status: "authorized", external_reference: `sub:${me.tenant.id}:enterprise`, next_payment_date: new Date(Date.now() + 30 * 86400_000).toISOString() });
+  mpPreapprovals.set("pre_e2e", {
+    id: "pre_e2e",
+    status: "authorized",
+    external_reference: `sub:${me.tenant.id}:enterprise`,
+    next_payment_date: new Date(Date.now() + 30 * 86400_000).toISOString(),
+  });
   await mpHook("pre_e2e", "subscription_preapproval");
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "enterprise" && bill.subscription.provider === "mercadopago", "MP: preapproval autorizado → Enterprise");
   ok("Mercado Pago (servidor falso): Checkout Pro, x-signature verificada, pago aprobado consultado a la API, preapproval");
 
   // Dos suscripciones pagadas con distintos medios: queda la última y la anterior se cancela (no cobran las dos).
-  await stripeHook({ id: `evt_${stamp}_sub2`, type: "checkout.session.completed", data: { object: { id: "cs_sub2", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e2", metadata: { tenantId: me.tenant.id, plan: "starter" } } } });
+  await stripeHook({
+    id: `evt_${stamp}_sub2`,
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_sub2",
+        mode: "subscription",
+        customer: "cus_e2e",
+        subscription: "sub_e2e2",
+        metadata: { tenantId: me.tenant.id, plan: "starter" },
+      },
+    },
+  });
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "starter" && bill.subscription.provider === "stripe", "Stripe pagada con MP vigente → queda Stripe");
   assert(cancelled.includes("mp:pre_e2e"), "la suscripción de Mercado Pago anterior se canceló");
-  mpPreapprovals.set("pre_e2e2", { id: "pre_e2e2", status: "authorized", external_reference: `sub:${me.tenant.id}:business`, next_payment_date: null });
+  mpPreapprovals.set("pre_e2e2", {
+    id: "pre_e2e2",
+    status: "authorized",
+    external_reference: `sub:${me.tenant.id}:business`,
+    next_payment_date: null,
+  });
   await mpHook("pre_e2e2", "subscription_preapproval");
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "business" && bill.subscription.provider === "mercadopago", "MP autorizada con Stripe vigente → queda MP");

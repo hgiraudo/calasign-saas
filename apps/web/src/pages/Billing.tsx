@@ -1,6 +1,14 @@
 // Ajustes → Plan y facturación: plan actual, uso del mes, planes con precios locales y suscripción.
 import { useEffect, useRef, useState } from "react";
-import { BILLING_CURRENCIES, PLAN_FEATURES, type BillingOverview, type BillingProvider, type PlanDefinition, type PlanFeature, type PlanId } from "@calasign/shared";
+import {
+  BILLING_CURRENCIES,
+  PLAN_FEATURES,
+  type BillingOverview,
+  type BillingProvider,
+  type PlanDefinition,
+  type PlanFeature,
+  type PlanId,
+} from "@calasign/shared";
 import { useAccess } from "../lib/access";
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -196,7 +204,8 @@ export function BillingPage() {
   const { plan, usage, currency } = data;
   const sub = data.subscription;
   const providerName = (id: BillingProvider) => (id === "mock" ? b("pay.provider.mock") : PROVIDER_LABEL[id]);
-  const openPortal = () => run("portal", async () => window.location.assign((await api<{ url: string }>("/v1/billing/portal", { method: "POST" })).url));
+  const openPortal = () =>
+    run("portal", async () => window.location.assign((await api<{ url: string }>("/v1/billing/portal", { method: "POST" })).url));
   const portalAvailable = sub.portalAvailable ?? sub.provider === "stripe";
   // Baja programada (Stripe): "Termina el …" en vez de "Se renueva el …".
   const endsAt = sub.cancelAt ?? (sub.cancelAtPeriodEnd ? sub.renewsAt : null);
@@ -222,7 +231,8 @@ export function BillingPage() {
           return;
         }
         // La política de usuarios no cambia (nadie pierde el acceso): solo se avisa.
-        const usersWarn = freeUsers !== null && usage.users > freeUsers ? `\n\n${b("billing.downgradeUsers", { n: usage.users, max: freeUsers })}` : "";
+        const usersWarn =
+          freeUsers !== null && usage.users > freeUsers ? `\n\n${b("billing.downgradeUsers", { n: usage.users, max: freeUsers })}` : "";
         if (!window.confirm(b("billing.downgradeConfirm") + usersWarn)) return;
         apply(await api<BillingOverview>("/v1/billing/cancel", { method: "POST" }));
         void refreshAccess();
@@ -272,7 +282,13 @@ export function BillingPage() {
             {!portalAvailable && sub.provider ? ` ${b("billing.paymentIssueNoPortal", { provider: providerName(sub.provider) })}` : ""}
           </span>
           {portalAvailable && (
-            <button type="button" className="btn btn-primary" disabled={busy !== null} aria-busy={busy === "portal"} onClick={() => void openPortal()}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy !== null}
+              aria-busy={busy === "portal"}
+              onClick={() => void openPortal()}
+            >
               {busy === "portal" ? b("billing.busy") : b("billing.updatePayment")}
             </button>
           )}
@@ -305,7 +321,11 @@ export function BillingPage() {
               <span>{b("billing.currency")}</span>
               <select
                 value={currency}
-                onChange={(e) => void run("currency", async () => apply(await api<BillingOverview>("/v1/billing/currency", { method: "PATCH", body: { currency: e.target.value } })))}
+                onChange={(e) =>
+                  void run("currency", async () =>
+                    apply(await api<BillingOverview>("/v1/billing/currency", { method: "PATCH", body: { currency: e.target.value } })),
+                  )
+                }
                 data-testid="billing-currency"
               >
                 {BILLING_CURRENCIES.map((c) => (
@@ -330,7 +350,9 @@ export function BillingPage() {
           <div className="usage-item">
             <span className="small strong">{b("usage.envelopes")}</span>
             <span className="small">
-              {plan.envelopesPerMonth === null ? b("usage.unlimited", { used: usage.envelopesSent }) : b("usage.of", { used: usage.envelopesSent, max: plan.envelopesPerMonth })}
+              {plan.envelopesPerMonth === null
+                ? b("usage.unlimited", { used: usage.envelopesSent })
+                : b("usage.of", { used: usage.envelopesSent, max: plan.envelopesPerMonth })}
             </span>
             <UsageBar used={usage.envelopesSent} max={plan.envelopesPerMonth} label={b("usage.envelopes")} />
           </div>
@@ -345,7 +367,8 @@ export function BillingPage() {
           <div className="usage-item">
             <span className="small strong">{b("usage.messages")}</span>
             <span className="small">
-              Email {n(usage.messages.email)} · WhatsApp {n(usage.messages.whatsapp)} · SMS {n(usage.messages.sms)} · Telegram {n(usage.messages.telegram)}
+              Email {n(usage.messages.email)} · WhatsApp {n(usage.messages.whatsapp)} · SMS {n(usage.messages.sms)} · Telegram{" "}
+              {n(usage.messages.telegram)}
             </span>
           </div>
           <div className="usage-item">
@@ -417,7 +440,9 @@ export function BillingPage() {
                   {price(p)} {p.price ? <small>{b("billing.perMonth")}</small> : null}
                 </div>
                 <ul>
-                  <li>{p.envelopesPerMonth === null ? b("billing.unlimitedEnvelopes") : b("billing.envelopesPerMonth", { n: p.envelopesPerMonth })}</li>
+                  <li>
+                    {p.envelopesPerMonth === null ? b("billing.unlimitedEnvelopes") : b("billing.envelopesPerMonth", { n: p.envelopesPerMonth })}
+                  </li>
                   <li>{p.users === null ? b("billing.unlimitedUsers") : b("billing.users", { n: p.users })}</li>
                   <li>
                     {p.aiTokensPerMonth === null

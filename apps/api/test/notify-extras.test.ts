@@ -26,8 +26,8 @@ vi.mock("../src/notifications/channels", async (orig) => ({
   sendTelegram: vi.fn(async () => ({ provider: "telegram-bot", messageId: "1" })),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant: string;
@@ -43,7 +43,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Org')`, [tenant, `t-${tenant.slice(-8)}`]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -59,13 +63,10 @@ async function envelopeWithSigner(opts: { expiresAt?: string | null; reminderDay
   const rec = uuidv7();
   const token = randomToken();
   const sentAt = opts.sentAt ?? new Date().toISOString();
-  await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, expires_at, reminder_every_days) VALUES ($1,$2,'Contrato','sent',$3,$4,$5)`, [
-    env,
-    tenant,
-    sentAt,
-    opts.expiresAt ?? null,
-    opts.reminderDays ?? null,
-  ]);
+  await db.query(
+    `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, expires_at, reminder_every_days) VALUES ($1,$2,'Contrato','sent',$3,$4,$5)`,
+    [env, tenant, sentAt, opts.expiresAt ?? null, opts.reminderDays ?? null],
+  );
   await db.query(
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, channels, status, sent_at, access_token_hash, access_token_enc)
      VALUES ($1,$2,$3,'signer',1,'Ana','ana@x.com',$4,'sent',$5,$6,$7)`,
@@ -79,7 +80,9 @@ describe("plantilla del código de verificación", () => {
     const { validateConfig } = await import("../src/modules/white-label/routes");
     const { OTP_MESSAGES } = await import("../src/modules/white-label/otp-text");
     const { resolveBrand } = await import("../src/modules/white-label/brand");
-    await expect(validateConfig(db, tenant, { templates: { otp_code: { es: { body: "Hola, firmá ya" } } } })).rejects.toMatchObject({ code: "otp_template_missing_code" });
+    await expect(validateConfig(db, tenant, { templates: { otp_code: { es: { body: "Hola, firmá ya" } } } })).rejects.toMatchObject({
+      code: "otp_template_missing_code",
+    });
     await expect(validateConfig(db, tenant, { templates: { otp_code: { es: { body: "Tu código: {{ code }}" } } } })).resolves.toBeUndefined();
 
     const b = await resolveBrand(db, tenant, null, { override: { templates: { otp_code: { es: { body: "Hola, firmá ya" } } } } });
@@ -199,7 +202,15 @@ describe("recordatorios", () => {
     const { env } = await envelopeWithSigner();
     const { appendEvent } = await import("../src/infra/evidence");
     for (let i = 0; i < config.reminders.manualMaxPerDay; i++) {
-      await db.tx((t) => appendEvent(t, { tenantId: tenant, envelopeId: env, type: "envelope.reminded", actor: { type: "api_key", id: "k", label: "k" }, data: { recipients: 1 } }));
+      await db.tx((t) =>
+        appendEvent(t, {
+          tenantId: tenant,
+          envelopeId: env,
+          type: "envelope.reminded",
+          actor: { type: "api_key", id: "k", label: "k" },
+          data: { recipients: 1 },
+        }),
+      );
     }
     // Fuera de la ventana de 10 minutos, dentro de las 24 h.
     // La evidencia es append-only en la base (0072): editarla en una prueba requiere el permiso explícito de mantenimiento.
@@ -229,7 +240,11 @@ describe("recordatorios", () => {
   it("con vencimiento no se cuenta para el tope; un recordatorio manual lo pone en 0", async () => {
     const { runAutomaticReminders } = await import("../src/modules/reminders");
     const start = new Date(Date.now() - 3 * 86400_000);
-    const { rec } = await envelopeWithSigner({ reminderDays: 1, sentAt: start.toISOString(), expiresAt: new Date(Date.now() + 30 * 86400_000).toISOString() });
+    const { rec } = await envelopeWithSigner({
+      reminderDays: 1,
+      sentAt: start.toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 86400_000).toISOString(),
+    });
     await runAutomaticReminders(db, new Date());
     expect((await db.one<any>(`SELECT count(*)::int AS n FROM jobs WHERE dedupe_key LIKE $1`, [`auto-reminder:${rec}:%`])).n).toBe(1);
     expect((await db.one<any>(`SELECT auto_reminders_sent FROM recipients WHERE id = $1`, [rec])).auto_reminders_sent).toBe(0);
@@ -259,7 +274,10 @@ describe("vencimiento de acuerdos", () => {
       await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'owner')`, [tenant, u]);
     }
     const file = uuidv7();
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`, [file, tenant]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`,
+      [file, tenant],
+    );
     const ag = uuidv7();
     await db.query(
       `INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title, status, expiry_date, notice_days) VALUES ($1,$2,'external',$3,'a.pdf','Locación','active', current_date + 5, 30)`,

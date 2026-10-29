@@ -32,7 +32,10 @@ export function normalizeName(s: string): string[] {
 }
 
 export function normalizeDocumentNumber(s: string | null | undefined): string {
-  return (s ?? "").normalize("NFD").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  return (s ?? "")
+    .normalize("NFD")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
 }
 
 function levenshtein(a: string, b: string): number {

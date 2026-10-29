@@ -185,14 +185,23 @@ export const CreateNotificationIntegrationInput = z.object({
   kind: z.enum(NOTIFICATION_KINDS),
   name: z.string().trim().min(1).max(100),
   url: z.string().trim().url().max(1000),
-  events: z.array(z.enum(NOTIFICATION_EVENTS)).min(1).max(NOTIFICATION_EVENTS.length * 2).transform((v) => [...new Set(v)]),
+  events: z
+    .array(z.enum(NOTIFICATION_EVENTS))
+    .min(1)
+    .max(NOTIFICATION_EVENTS.length * 2)
+    .transform((v) => [...new Set(v)]),
 });
 export type CreateNotificationIntegrationInput = z.infer<typeof CreateNotificationIntegrationInput>;
 
 export const UpdateNotificationIntegrationInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   url: z.string().trim().url().max(1000).optional(),
-  events: z.array(z.enum(NOTIFICATION_EVENTS)).min(1).max(NOTIFICATION_EVENTS.length * 2).transform((v) => [...new Set(v)]).optional(),
+  events: z
+    .array(z.enum(NOTIFICATION_EVENTS))
+    .min(1)
+    .max(NOTIFICATION_EVENTS.length * 2)
+    .transform((v) => [...new Set(v)])
+    .optional(),
   active: z.boolean().optional(),
 });
 export type UpdateNotificationIntegrationInput = z.infer<typeof UpdateNotificationIntegrationInput>;

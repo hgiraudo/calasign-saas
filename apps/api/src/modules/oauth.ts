@@ -33,7 +33,16 @@ import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, sessionCookieToken, type AuthContext, type Services } from "./context";
-import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession, ssoCodeDeadline, ssoFamilyDeadline } from "./oauth-tokens";
+import {
+  CODE_PREFIX,
+  CODE_TTL_SEC,
+  REFRESH_PREFIX,
+  assertUserTokenAllowed,
+  issueTokens,
+  requireUserSession,
+  ssoCodeDeadline,
+  ssoFamilyDeadline,
+} from "./oauth-tokens";
 import { actingPerson } from "./member-access";
 
 // ───────────────────────────── Utilidades ─────────────────────────────
@@ -151,7 +160,12 @@ async function toApp(db: Db, r: any, viewer?: AuthContext): Promise<OAuthApp> {
     revokedAt: iso(r.revoked_at),
     activeTokens: n?.n ?? 0,
     ...(viewer
-      ? { canTakeOver: await assertCanTakeOverApp(db, viewer, r, "").then(() => true, () => false) }
+      ? {
+          canTakeOver: await assertCanTakeOverApp(db, viewer, r, "").then(
+            () => true,
+            () => false,
+          ),
+        }
       : {}),
   };
 }
@@ -192,7 +206,12 @@ async function assertCanManageServiceApp(db: Db, a: AuthContext, app: { service_
  * su creador. Si no, un rol con api_keys:manage apuntaba la app "oficial" de un propietario a su servidor y mandaba el
  * link de consentimiento.
  */
-async function assertCanTakeOverApp(db: Db, a: AuthContext, app: { created_by?: string | null; created_by_api_key_id?: string | null }, what: string) {
+async function assertCanTakeOverApp(
+  db: Db,
+  a: AuthContext,
+  app: { created_by?: string | null; created_by_api_key_id?: string | null },
+  what: string,
+) {
   if (a.access?.role === "owner") return;
   if (app.created_by && app.created_by === a.userId) return;
   // La API key que la creó (directa, no la identidad de servicio de una app OAuth): si llegó acá está vigente.
@@ -229,7 +248,8 @@ async function validateAuthorize(db: Db, raw: unknown): Promise<ValidatedAuthori
   if (!client) throw badRequest("invalid_client", "Aplicación desconocida");
   if (!client.grant_types.includes("authorization_code")) throw badRequest("unauthorized_client", "La aplicación no admite autorización de usuarios");
   // La URI de redirección tiene que coincidir exactamente con una registrada (sin comodines; en loopback, cualquier puerto).
-  if (!redirectUriAllowed(client.redirect_uris, q.redirect_uri)) throw badRequest("invalid_redirect_uri", "URI de redirección no registrada para esta aplicación");
+  if (!redirectUriAllowed(client.redirect_uris, q.redirect_uri))
+    throw badRequest("invalid_redirect_uri", "URI de redirección no registrada para esta aplicación");
   // Apps registradas antes de que el alta rechazara estos esquemas: la pantalla de consentimiento navegaría a la URI
   // (también al rechazar) y `javascript:` ejecutaría código en el origen de CalaSign.
   if (!isSafeRedirectUri(q.redirect_uri)) throw badRequest("invalid_redirect_uri", "Esquema de URI de redirección no permitido");
@@ -243,7 +263,8 @@ async function validateAuthorize(db: Db, raw: unknown): Promise<ValidatedAuthori
     scopes = requested.filter((s) => client.scopes.includes(s) && (s !== "offline_access" || refreshAllowed(client))) as OAuthScope[];
     if (!scopes.length) scopes = MCP_DEFAULT_SCOPES.filter((s) => client.scopes.includes(s));
     // Registrada con refresh_token: sin offline_access el conector pediría autorizar de nuevo cada hora.
-    if (client.grant_types.includes("refresh_token") && client.scopes.includes("offline_access") && !scopes.includes("offline_access")) scopes.push("offline_access");
+    if (client.grant_types.includes("refresh_token") && client.scopes.includes("offline_access") && !scopes.includes("offline_access"))
+      scopes.push("offline_access");
     if (!scopes.length) throw badRequest("invalid_scope", "La aplicación no tiene scopes habilitados");
   } else {
     scopes = (requested.length ? requested : client.scopes) as OAuthScope[];
@@ -305,7 +326,8 @@ class RegistrationError extends Error {
 
 /** Solo https, o http en loopback (apps de escritorio y CLI). Sin esquemas propios, credenciales ni fragmento. */
 function checkDcrRedirectUri(raw: unknown): string {
-  if (typeof raw !== "string" || !raw.trim() || raw.length > 500) throw new RegistrationError("invalid_redirect_uri", "Cada redirect_uri tiene que ser una URL de hasta 500 caracteres");
+  if (typeof raw !== "string" || !raw.trim() || raw.length > 500)
+    throw new RegistrationError("invalid_redirect_uri", "Cada redirect_uri tiene que ser una URL de hasta 500 caracteres");
   const uri = raw.trim();
   let u: URL;
   try {
@@ -344,7 +366,8 @@ interface DcrMetadata {
 }
 
 export function parseDcrMetadata(body: unknown): DcrMetadata {
-  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RegistrationError("invalid_client_metadata", "El cuerpo tiene que ser un objeto JSON");
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    throw new RegistrationError("invalid_client_metadata", "El cuerpo tiene que ser un objeto JSON");
   const b = body as Record<string, unknown>;
   // Sin caracteres de control (el nombre se muestra en la pantalla de consentimiento y en Apps conectadas).
   const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f\u007f]/g, " ").trim() : "";
@@ -356,15 +379,20 @@ export function parseDcrMetadata(body: unknown): DcrMetadata {
   const redirectUris = [...new Set(b.redirect_uris.map(checkDcrRedirectUri))];
   const strList = (v: unknown, field: string, def: string[]) => {
     if (v === undefined || v === null) return def;
-    if (!Array.isArray(v) || v.length === 0 || v.some((x) => typeof x !== "string")) throw new RegistrationError("invalid_client_metadata", `${field} tiene que ser una lista de textos`);
+    if (!Array.isArray(v) || v.length === 0 || v.some((x) => typeof x !== "string"))
+      throw new RegistrationError("invalid_client_metadata", `${field} tiene que ser una lista de textos`);
     return [...new Set(v as string[])];
   };
   const grantTypes = strList(b.grant_types, "grant_types", DCR_GRANT_TYPES);
   const badGrant = grantTypes.filter((g) => !DCR_GRANT_TYPES.includes(g));
   if (badGrant.length) {
-    throw new RegistrationError("invalid_client_metadata", `grant_types no admitidos en el registro dinámico: ${badGrant.join(", ")} (solo authorization_code y refresh_token)`);
+    throw new RegistrationError(
+      "invalid_client_metadata",
+      `grant_types no admitidos en el registro dinámico: ${badGrant.join(", ")} (solo authorization_code y refresh_token)`,
+    );
   }
-  if (!grantTypes.includes("authorization_code")) throw new RegistrationError("invalid_client_metadata", "grant_types tiene que incluir authorization_code");
+  if (!grantTypes.includes("authorization_code"))
+    throw new RegistrationError("invalid_client_metadata", "grant_types tiene que incluir authorization_code");
   const responseTypes = strList(b.response_types, "response_types", ["code"]);
   if (responseTypes.some((r) => r !== "code")) throw new RegistrationError("invalid_client_metadata", 'response_types admite solo "code"');
   const authMethod = (b.token_endpoint_auth_method ?? "none") as DcrMetadata["authMethod"];
@@ -436,7 +464,8 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
       done(null, Object.fromEntries(new URLSearchParams(String(body))));
     });
     const rl = { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } };
-    const bodyOf = (req: FastifyRequest) => Object.fromEntries(Object.entries((req.body ?? {}) as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
+    const bodyOf = (req: FastifyRequest) =>
+      Object.fromEntries(Object.entries((req.body ?? {}) as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
 
     // Registro dinámico (RFC 7591). Público por diseño (así se conectan Claude, ChatGPT y las CLI): la app registrada
     // no puede nada hasta que un usuario la autorice en la pantalla de consentimiento, que la marca "no verificada".
@@ -456,7 +485,19 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, secret_prefix, name, redirect_uris, grant_types, scopes,
                                     registration, client_uri, logo_uri, token_endpoint_auth_method)
          VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, 'dynamic', $9, $10, $11) RETURNING created_at`,
-        [id, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, m.clientName, m.redirectUris, m.grantTypes, m.scopes, m.clientUri, m.logoUri, m.authMethod],
+        [
+          id,
+          clientId,
+          secret ? sha256Hex(secret) : null,
+          secret ? secret.slice(0, 12) : null,
+          m.clientName,
+          m.redirectUris,
+          m.grantTypes,
+          m.scopes,
+          m.clientUri,
+          m.logoUri,
+          m.authMethod,
+        ],
       );
       req.log.info({ clientId, name: m.clientName, redirectUris: m.redirectUris }, "app OAuth registrada dinámicamente");
       return reply.code(201).send({
@@ -493,13 +534,21 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
           const scopes = requested.length ? requested : allowed;
           const bad = scopes.filter((x) => !allowed.includes(x));
           if (bad.length) throw new OAuthError(400, "invalid_scope", `Scopes no permitidos: ${bad.join(", ")}`);
-          const tok = await issueTokens(s.db, { clientId: c.id, tenantId: c.tenant_id, userId: null, serviceApiKeyId: c.service_api_key_id, scopes, withRefresh: false });
+          const tok = await issueTokens(s.db, {
+            clientId: c.id,
+            tenantId: c.tenant_id,
+            userId: null,
+            serviceApiKeyId: c.service_api_key_id,
+            scopes,
+            withRefresh: false,
+          });
           return reply.header("cache-control", "no-store").send(tok);
         }
 
         if (grant === "authorization_code") {
           const c = await authenticateClient(s.db, req, body, { allowPublic: true });
-          if (!body.code || !body.redirect_uri || !body.code_verifier) throw new OAuthError(400, "invalid_request", "Faltan code, redirect_uri o code_verifier");
+          if (!body.code || !body.redirect_uri || !body.code_verifier)
+            throw new OAuthError(400, "invalid_request", "Faltan code, redirect_uri o code_verifier");
           if (!/^[A-Za-z0-9._~-]{43,128}$/.test(body.code_verifier)) throw new OAuthError(400, "invalid_request", "code_verifier inválido");
           const codeHash = sha256Hex(body.code);
           const result = await s.db.tx(async (t) => {
@@ -521,14 +570,25 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
               throw new OAuthError(400, "invalid_grant", "La URI de redirección del código ya no está registrada para la aplicación");
             }
             if ((code.scopes as string[]).some((x) => !(c.scopes as string[]).includes(x))) {
-              throw new OAuthError(400, "invalid_grant", "La aplicación ya no tiene habilitados todos los scopes autorizados: hay que volver a autorizarla");
+              throw new OAuthError(
+                400,
+                "invalid_grant",
+                "La aplicación ya no tiene habilitados todos los scopes autorizados: hay que volver a autorizarla",
+              );
             }
             await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE code_hash = $1`, [codeHash]);
-            await userGrantAllowed(t, { tenantId: code.tenant_id, userId: code.user_id, authMethod: code.auth_method, ssoTenantId: code.sso_tenant_id, issuedAt: new Date(code.created_at) });
+            await userGrantAllowed(t, {
+              tenantId: code.tenant_id,
+              userId: code.user_id,
+              authMethod: code.auth_method,
+              ssoTenantId: code.sso_tenant_id,
+              issuedAt: new Date(code.created_at),
+            });
             // Autorizado desde una sesión SSO: el tope de la familia arranca en esa sesión (no en el canje); si ya pasó,
             // no se emiten tokens que nacerían vencidos.
             const ssoDeadline = code.auth_method === "sso" ? await ssoCodeDeadline(t, code) : null;
-            if (ssoDeadline && ssoDeadline <= new Date()) throw new OAuthError(400, "invalid_grant", "La sesión de inicio único venció: volvé a autorizar la aplicación");
+            if (ssoDeadline && ssoDeadline <= new Date())
+              throw new OAuthError(400, "invalid_grant", "La sesión de inicio único venció: volvé a autorizar la aplicación");
             return issueTokens(t, {
               authMethod: code.auth_method,
               ssoTenantId: code.sso_tenant_id,
@@ -551,7 +611,9 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
           if (!refreshAllowed(c)) throw new OAuthError(400, "unauthorized_client", "La aplicación no admite refresh_token");
           if (!body.refresh_token?.startsWith(REFRESH_PREFIX)) throw new OAuthError(400, "invalid_grant", "refresh_token inválido");
           const result = await s.db.tx(async (t) => {
-            const old = await t.one<any>(`SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh' FOR UPDATE`, [sha256Hex(body.refresh_token)]);
+            const old = await t.one<any>(`SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh' FOR UPDATE`, [
+              sha256Hex(body.refresh_token),
+            ]);
             if (!old || old.client_id !== c.id) throw new OAuthError(400, "invalid_grant", "refresh_token inválido");
             if (old.revoked_at) throw new OAuthError(400, "invalid_grant", "refresh_token revocado");
             if (old.used_at) {
@@ -564,17 +626,26 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
             // empezó), aunque el refresh token sea anterior a ese tope (ver ssoFamilyDeadline).
             if (old.auth_method === "sso") {
               const deadline = await ssoFamilyDeadline(t, old.family_id, old.sso_tenant_id);
-              if (deadline && deadline <= new Date()) throw new OAuthError(400, "invalid_grant", "La sesión de inicio único venció: volvé a autorizar la aplicación");
+              if (deadline && deadline <= new Date())
+                throw new OAuthError(400, "invalid_grant", "La sesión de inicio único venció: volvé a autorizar la aplicación");
             }
             const requested = parseScopes(body.scope);
             const scopes = requested.length ? requested : old.scopes;
             if (scopes.some((x: string) => !old.scopes.includes(x))) throw new OAuthError(400, "invalid_scope", "No se pueden ampliar los scopes");
             if (old.user_id) {
-              await userGrantAllowed(t, { tenantId: old.tenant_id, userId: old.user_id, authMethod: old.auth_method, ssoTenantId: old.sso_tenant_id, issuedAt: new Date(old.created_at) });
+              await userGrantAllowed(t, {
+                tenantId: old.tenant_id,
+                userId: old.user_id,
+                authMethod: old.auth_method,
+                ssoTenantId: old.sso_tenant_id,
+                issuedAt: new Date(old.created_at),
+              });
             }
             await t.query(`UPDATE oauth_tokens SET used_at = now() WHERE id = $1`, [old.id]);
             // El access token anterior de la familia deja de valer al rotar.
-            await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE family_id = $1 AND kind = 'access' AND revoked_at IS NULL`, [old.family_id]);
+            await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE family_id = $1 AND kind = 'access' AND revoked_at IS NULL`, [
+              old.family_id,
+            ]);
             return issueTokens(t, {
               clientId: c.id,
               tenantId: old.tenant_id,
@@ -592,7 +663,8 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
               withRefresh: old.scopes.includes("offline_access"),
             });
           });
-          if (result === "reused") throw new OAuthError(400, "invalid_grant", "refresh_token reutilizado: se revocaron todos los tokens de esta autorización");
+          if (result === "reused")
+            throw new OAuthError(400, "invalid_grant", "refresh_token reutilizado: se revocaron todos los tokens de esta autorización");
           return reply.header("cache-control", "no-store").send(result);
         }
 
@@ -639,7 +711,13 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         if (active && t.service_api_key_id && t.key_revoked_at) active = false;
         if (active && t.user_id) {
           try {
-            await assertUserTokenAllowed(s.db, { tenantId: t.tenant_id, userId: t.user_id, authMethod: t.auth_method, ssoTenantId: t.sso_tenant_id, issuedAt: new Date(t.created_at) });
+            await assertUserTokenAllowed(s.db, {
+              tenantId: t.tenant_id,
+              userId: t.user_id,
+              authMethod: t.auth_method,
+              ssoTenantId: t.sso_tenant_id,
+              issuedAt: new Date(t.created_at),
+            });
           } catch (e) {
             if (!(e instanceof AppError)) throw e;
             active = false;
@@ -674,7 +752,11 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
       s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [a.userId]),
       s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [a.tenantId]),
       v.client.tenant_id ? s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [v.client.tenant_id]) : null,
-      s.db.one<any>(`SELECT scopes FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3`, [v.client.id, a.userId, a.tenantId]),
+      s.db.one<any>(`SELECT scopes FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3`, [
+        v.client.id,
+        a.userId,
+        a.tenantId,
+      ]),
     ]);
     const granted = new Set<string>(consent?.scopes ?? []);
     const info: AuthorizeInfo = {
@@ -700,11 +782,20 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const body = AuthorizeDecision.parse(req.body);
     const v = await validateAuthorize(s.db, body);
     if (!body.approve) {
-      return { redirectTo: withParams(v.redirectUri, { error: "access_denied", error_description: "El usuario no autorizó la aplicación", state: v.req.state, iss: config.appUrl }) };
+      return {
+        redirectTo: withParams(v.redirectUri, {
+          error: "access_denied",
+          error_description: "El usuario no autorizó la aplicación",
+          state: v.req.state,
+          iss: config.appUrl,
+        }),
+      };
     }
     // Cómo se autenticó la sesión que autoriza: los tokens lo heredan y valen solo mientras esa sesión valdría
     // (p. ej. con "SSO obligatorio", un token autorizado con contraseña deja de valer).
-    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id, expires_at FROM sessions WHERE token_hash = $1`, [sha256Hex(sessionCookieToken(req) ?? "")]);
+    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id, expires_at FROM sessions WHERE token_hash = $1`, [
+      sha256Hex(sessionCookieToken(req) ?? ""),
+    ]);
     const code = CODE_PREFIX + randomToken(32);
     await s.db.tx(async (t) => {
       await t.query(
@@ -734,7 +825,11 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     await auditFromRequest(s.db, req, a, "oauth.authorized", {
       targetType: "oauth_app",
       targetId: v.client.client_id,
-      data: { app: v.client.name, scopes: v.scopes, ...(v.client.registration === "dynamic" ? { unverified: true, redirectUri: v.redirectUri } : {}) },
+      data: {
+        app: v.client.name,
+        scopes: v.scopes,
+        ...(v.client.registration === "dynamic" ? { unverified: true, redirectUri: v.redirectUri } : {}),
+      },
     });
     // `iss` (RFC 9207): protege a los clientes con varios servidores de autorización contra la confusión de emisor.
     return { redirectTo: withParams(v.redirectUri, { code, state: v.req.state, iss: config.appUrl }) };
@@ -768,14 +863,17 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     if (!c) throw notFound("Aplicación");
     await s.db.tx(async (t) => {
       await t.query(`DELETE FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3`, [c.id, a.userId, a.tenantId]);
-      await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL`, [c.id, a.userId, a.tenantId]);
-      // Y los códigos todavía sin canjear (valen 10 minutos): canjeados después de desconectar, la app recibía tokens
-      // nuevos (con refresh token) que esta revocación ya no alcanzaba. Como al restablecer la contraseña.
-      await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND used_at IS NULL`, [
+      await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL`, [
         c.id,
         a.userId,
         a.tenantId,
       ]);
+      // Y los códigos todavía sin canjear (valen 10 minutos): canjeados después de desconectar, la app recibía tokens
+      // nuevos (con refresh token) que esta revocación ya no alcanzaba. Como al restablecer la contraseña.
+      await t.query(
+        `UPDATE oauth_authorization_codes SET used_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND used_at IS NULL`,
+        [c.id, a.userId, a.tenantId],
+      );
     });
     await auditFromRequest(s.db, req, a, "oauth.disconnected", { targetType: "oauth_app", targetId: req.params.clientId, data: { app: c.name } });
     return reply.code(204).send();
@@ -803,7 +901,20 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
       await t.query(
         `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, secret_prefix, name, description, redirect_uris, grant_types, scopes, created_by, created_by_api_key_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [id, a.tenantId, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, input.name, input.description ?? null, input.redirectUris ?? [], input.grantTypes, input.scopes, creator, a.oauth ? null : a.apiKeyId],
+        [
+          id,
+          a.tenantId,
+          clientId,
+          secret ? sha256Hex(secret) : null,
+          secret ? secret.slice(0, 12) : null,
+          input.name,
+          input.description ?? null,
+          input.redirectUris ?? [],
+          input.grantTypes,
+          input.scopes,
+          creator,
+          a.oauth ? null : a.apiKeyId,
+        ],
       );
       if (usesCc) {
         // Identidad de servicio: una API key interna sin secreto utilizable; da el rol y la propiedad de los sobres.
@@ -816,7 +927,11 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         await t.query(`UPDATE oauth_clients SET service_api_key_id = $2 WHERE id = $1`, [id, keyId]);
       }
     });
-    await auditFromRequest(s.db, req, a, "oauth_app.created", { targetType: "oauth_app", targetId: clientId, data: { name: input.name, grantTypes: input.grantTypes, scopes: input.scopes } });
+    await auditFromRequest(s.db, req, a, "oauth_app.created", {
+      targetType: "oauth_app",
+      targetId: clientId,
+      data: { name: input.name, grantTypes: input.grantTypes, scopes: input.scopes },
+    });
     const row = await s.db.one<any>(`SELECT * FROM oauth_clients WHERE id = $1`, [id]);
     reply.code(201);
     return { app: await toApp(s.db, row), clientSecret: secret };
@@ -829,7 +944,9 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     return r;
   };
 
-  app.get<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req) => toApp(s.db, await loadOwn(req.auth!, req.params.id), req.auth!));
+  app.get<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req) =>
+    toApp(s.db, await loadOwn(req.auth!, req.params.id), req.auth!),
+  );
 
   app.patch<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req) => {
     const a = req.auth!;
@@ -847,7 +964,10 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     );
     if (input.scopes) {
       // Si se quitan scopes, los tokens vigentes con scopes que ya no corresponden se revocan.
-      await s.db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND revoked_at IS NULL AND NOT (scopes <@ $2::text[])`, [r.id, input.scopes]);
+      await s.db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND revoked_at IS NULL AND NOT (scopes <@ $2::text[])`, [
+        r.id,
+        input.scopes,
+      ]);
     }
     if (input.redirectUris) {
       // Una URI quitada (p. ej. una comprometida): los tokens emitidos con códigos que se entregaron ahí se revocan.
@@ -858,9 +978,17 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         [r.id],
       );
       const gone = issued.filter((x) => !redirectUriAllowed(input.redirectUris!, x.redirect_uri)).map((x) => x.code_hash as string);
-      if (gone.length) await s.db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND code_hash = ANY($2) AND revoked_at IS NULL`, [r.id, gone]);
+      if (gone.length)
+        await s.db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND code_hash = ANY($2) AND revoked_at IS NULL`, [
+          r.id,
+          gone,
+        ]);
     }
-    await auditFromRequest(s.db, req, a, "oauth_app.updated", { targetType: "oauth_app", targetId: r.client_id, data: { fields: Object.keys(input) } });
+    await auditFromRequest(s.db, req, a, "oauth_app.updated", {
+      targetType: "oauth_app",
+      targetId: r.client_id,
+      data: { fields: Object.keys(input) },
+    });
     return toApp(s.db, await s.db.one<any>(`SELECT * FROM oauth_clients WHERE id = $1`, [r.id]));
   });
 
@@ -872,7 +1000,11 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     await assertCanManageServiceApp(s.db, a, r, "rotar el secreto de una app");
     await assertCanTakeOverApp(s.db, a, r, "rotar el secreto de esta app");
     const secret = `cssec_${randomToken(32)}`;
-    await s.db.query(`UPDATE oauth_clients SET secret_hash = $2, secret_prefix = $3, updated_at = now() WHERE id = $1`, [r.id, sha256Hex(secret), secret.slice(0, 12)]);
+    await s.db.query(`UPDATE oauth_clients SET secret_hash = $2, secret_prefix = $3, updated_at = now() WHERE id = $1`, [
+      r.id,
+      sha256Hex(secret),
+      secret.slice(0, 12),
+    ]);
     await auditFromRequest(s.db, req, a, "oauth_app.secret_rotated", { targetType: "oauth_app", targetId: r.client_id });
     return { app: await toApp(s.db, await s.db.one<any>(`SELECT * FROM oauth_clients WHERE id = $1`, [r.id])), clientSecret: secret };
   });

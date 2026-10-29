@@ -1,7 +1,16 @@
 // Conectores HRIS/CLM y gestores documentales: partes puras y llamadas HTTP contra un fetch falso (sin red).
 import { afterEach, describe, expect, it } from "vitest";
 import { encrypt } from "../src/lib/util";
-import { Conn, deliverFile, fetchRecord, normalizeCredentials, parseWebhook, peopleFromAttributes, searchRecords, writeStatus } from "../src/modules/connectors/providers";
+import {
+  Conn,
+  deliverFile,
+  fetchRecord,
+  normalizeCredentials,
+  parseWebhook,
+  peopleFromAttributes,
+  searchRecords,
+  writeStatus,
+} from "../src/modules/connectors/providers";
 import { ensureBoxFolder, parseSharepointSite } from "../src/modules/storage-export";
 
 const realFetch = globalThis.fetch;
@@ -17,16 +26,22 @@ function fakeFetch(respond: (c: Call) => { status?: number; json?: unknown; head
     const c: Call = { url: String(input), method: init.method ?? "GET", headers: init.headers ?? {}, body: init.body };
     calls.push(c);
     const r = respond(c);
-    return new Response(r.json === undefined ? null : JSON.stringify(r.json), { status: r.status ?? 200, headers: { "content-type": "application/json", ...(r.headers ?? {}) } });
+    return new Response(r.json === undefined ? null : JSON.stringify(r.json), {
+      status: r.status ?? 200,
+      headers: { "content-type": "application/json", ...(r.headers ?? {}) },
+    });
   }) as typeof fetch;
   return calls;
 }
-const conn = (provider: any, creds: any, config: any = {}) => new Conn({ id: "c1", provider, auth_type: "api_key", credentials_enc: encrypt(JSON.stringify(creds)), config }, null);
+const conn = (provider: any, creds: any, config: any = {}) =>
+  new Conn({ id: "c1", provider, auth_type: "api_key", credentials_enc: encrypt(JSON.stringify(creds)), config }, null);
 const pdf = { name: "Contrato.pdf", bytes: new TextEncoder().encode("%PDF-1.4 x"), contentType: "application/pdf" };
 
 describe("credenciales", () => {
   it("BambooHR normaliza el subdominio y rechaza lo que no es un subdominio", () => {
-    expect(normalizeCredentials("bamboohr", { companyDomain: "https://ACME.bamboohr.com/home", apiKey: "k".repeat(20) }).config).toEqual({ companyDomain: "acme" });
+    expect(normalizeCredentials("bamboohr", { companyDomain: "https://ACME.bamboohr.com/home", apiKey: "k".repeat(20) }).config).toEqual({
+      companyDomain: "acme",
+    });
     expect(() => normalizeCredentials("bamboohr", { companyDomain: "acme/../x", apiKey: "k".repeat(20) })).toThrow(/companyDomain/);
     expect(() => normalizeCredentials("bamboohr", { companyDomain: "acme", apiKey: "" })).toThrow(/apiKey/);
   });
@@ -38,14 +53,27 @@ describe("credenciales", () => {
 
 describe("webhooks entrantes", () => {
   it("entiende los cuerpos de cada proveedor y uno genérico", () => {
-    expect(parseWebhook("bamboohr", { employees: [{ id: 7, action: "Created" }, { id: 8, action: "Updated" }] })).toEqual([
+    expect(
+      parseWebhook("bamboohr", {
+        employees: [
+          { id: 7, action: "Created" },
+          { id: 8, action: "Updated" },
+        ],
+      }),
+    ).toEqual([
       { recordId: "7", event: "Created", objectType: "employee" },
       { recordId: "8", event: "Updated", objectType: "employee" },
     ]);
-    expect(parseWebhook("ironclad", { event: "workflow_updated_on_sign_step", payload: { workflowID: "wf9" } })).toEqual([{ recordId: "wf9", event: "workflow_updated_on_sign_step", objectType: "workflow" }]);
+    expect(parseWebhook("ironclad", { event: "workflow_updated_on_sign_step", payload: { workflowID: "wf9" } })).toEqual([
+      { recordId: "wf9", event: "workflow_updated_on_sign_step", objectType: "workflow" },
+    ]);
     expect(parseWebhook("ironclad", { event: "record_created", payload: { recordId: "r1" } })[0].objectType).toBe("record");
     expect(parseWebhook("juro", { event: "contract.signed", contract: { id: "j1" } })[0].recordId).toBe("j1");
-    expect(parseWebhook("hibob", { type: "employee.created", employee: { id: "h1" } })[0]).toEqual({ recordId: "h1", event: "employee.created", objectType: "employee" });
+    expect(parseWebhook("hibob", { type: "employee.created", employee: { id: "h1" } })[0]).toEqual({
+      recordId: "h1",
+      event: "employee.created",
+      objectType: "employee",
+    });
     expect(parseWebhook("factorial", { recordId: "55", event: "hired" })).toEqual([{ recordId: "55", event: "hired", objectType: null }]);
     expect(parseWebhook("bamboohr", "texto")).toEqual([]);
   });
@@ -53,7 +81,14 @@ describe("webhooks entrantes", () => {
 
 describe("personas de un contrato", () => {
   it("arma pares nombre/correo, con la contraparte primero", () => {
-    const p = peopleFromAttributes({ ownerEmail: "ana@acme.test", ownerName: "Ana", counterpartySignerEmail: "gina@globex.test", counterpartySignerName: "Gina", notes: "x", badEmail: "no-es-correo" });
+    const p = peopleFromAttributes({
+      ownerEmail: "ana@acme.test",
+      ownerName: "Ana",
+      counterpartySignerEmail: "gina@globex.test",
+      counterpartySignerName: "Gina",
+      notes: "x",
+      badEmail: "no-es-correo",
+    });
     expect(p.map((x) => [x.name, x.email, x.primary])).toEqual([
       ["Gina", "gina@globex.test", true],
       ["Ana", "ana@acme.test", false],
@@ -65,7 +100,14 @@ describe("HiBob", () => {
   it("lee el empleado con su jefe y sube al área confidencial por defecto", async () => {
     const calls = fakeFetch((c) => {
       if (c.url.endsWith("/people/42?humanReadable=replace"))
-        return { json: { id: "42", displayName: "Hugo Bob", email: "hugo@acme.test", work: { title: "Dev", reportsTo: { id: "9", displayName: "Jefa Bob", email: "jefa@acme.test" } } } };
+        return {
+          json: {
+            id: "42",
+            displayName: "Hugo Bob",
+            email: "hugo@acme.test",
+            work: { title: "Dev", reportsTo: { id: "9", displayName: "Jefa Bob", email: "jefa@acme.test" } },
+          },
+        };
       if (c.url.endsWith("/docs/people/42/confidential/upload")) return { json: { id: "doc1" } };
       return { status: 404, json: {} };
     });
@@ -85,8 +127,17 @@ describe("HiBob", () => {
 describe("Factorial", () => {
   it("usa la API versionada con x-api-key y sube al legajo con employee_id y carpeta", async () => {
     const calls = fakeFetch((c) => {
-      if (c.url.includes("/resources/employees/employees/5")) return { json: { data: { id: 5, full_name: "Flor Fact", email: "flor@acme.test", manager_id: null } } };
-      if (c.url.includes("/resources/employees/employees")) return { json: { data: [{ id: 5, full_name: "Flor Fact", email: "flor@acme.test" }, { id: 6, full_name: "Otro" }] } };
+      if (c.url.includes("/resources/employees/employees/5"))
+        return { json: { data: { id: 5, full_name: "Flor Fact", email: "flor@acme.test", manager_id: null } } };
+      if (c.url.includes("/resources/employees/employees"))
+        return {
+          json: {
+            data: [
+              { id: 5, full_name: "Flor Fact", email: "flor@acme.test" },
+              { id: 6, full_name: "Otro" },
+            ],
+          },
+        };
       if (c.url.includes("/resources/documents/documents")) return { status: 201, json: { data: { id: 77 } } };
       return { status: 404, json: {} };
     });
@@ -103,7 +154,10 @@ describe("Factorial", () => {
   });
   it("un 401 es credencial rechazada (no se reintenta solo)", async () => {
     fakeFetch(() => ({ status: 401, json: { error: "invalid api key" } }));
-    await expect(fetchRecord(conn("factorial", { apiKey: "fk-123456789" }), "employee", "5")).rejects.toMatchObject({ authFailed: true, status: 401 });
+    await expect(fetchRecord(conn("factorial", { apiKey: "fk-123456789" }), "employee", "5")).rejects.toMatchObject({
+      authFailed: true,
+      status: 401,
+    });
   });
 });
 
@@ -122,7 +176,10 @@ describe("Ironclad record", () => {
 
 describe("gestores documentales", () => {
   it("SharePoint: valida el sitio y se queda con /sites/<sitio>", () => {
-    expect(parseSharepointSite("https://acme.sharepoint.com/sites/Legal/Shared%20Documents/Forms/AllItems.aspx")).toEqual({ host: "acme.sharepoint.com", path: "/sites/Legal" });
+    expect(parseSharepointSite("https://acme.sharepoint.com/sites/Legal/Shared%20Documents/Forms/AllItems.aspx")).toEqual({
+      host: "acme.sharepoint.com",
+      path: "/sites/Legal",
+    });
     expect(parseSharepointSite("https://acme.sharepoint.com")).toEqual({ host: "acme.sharepoint.com", path: "" });
     expect(() => parseSharepointSite("https://evil.example.com/sites/Legal")).toThrow();
     expect(() => parseSharepointSite("http://acme.sharepoint.com/sites/Legal")).toThrow();
@@ -131,7 +188,8 @@ describe("gestores documentales", () => {
     let n = 0;
     const calls = fakeFetch((c) => {
       const body = JSON.parse(c.body);
-      if (body.name === "CalaSign") return { status: 409, json: { code: "item_name_in_use", context_info: { conflicts: [{ id: "111", type: "folder" }] } } };
+      if (body.name === "CalaSign")
+        return { status: 409, json: { code: "item_name_in_use", context_info: { conflicts: [{ id: "111", type: "folder" }] } } };
       return { status: 201, json: { id: String(200 + ++n) } };
     });
     expect(await ensureBoxFolder("tok", "CalaSign/RRHH/2026")).toBe("202");

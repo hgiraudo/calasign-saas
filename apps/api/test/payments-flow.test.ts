@@ -13,8 +13,8 @@ process.env.STRIPE_API_BASE = "https://stripe.test";
 process.env.MP_ACCESS_TOKEN = "TEST-flow";
 process.env.MP_API_BASE = "https://mp.test";
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant: string;
@@ -31,7 +31,11 @@ beforeAll(async () => {
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
   const { sha256Hex } = await import("../src/lib/util");
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -48,13 +52,16 @@ async function setup(o: { status?: string; provider?: string; payStatus?: string
   const recipient = uuidv7();
   const payment = uuidv7();
   const token = randomToken();
-  await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, expires_at) VALUES ($1, $2, 'Contrato', $3, $4)`, [envelope, tenant, o.status ?? "sent", o.expiresAt ?? null]);
-  await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, access_token_hash) VALUES ($1,$2,$3,'signer','Ana','ana@x.test','sent',$4)`, [
-    recipient,
-    tenant,
+  await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, expires_at) VALUES ($1, $2, 'Contrato', $3, $4)`, [
     envelope,
-    sha256Hex(token),
+    tenant,
+    o.status ?? "sent",
+    o.expiresAt ?? null,
   ]);
+  await db.query(
+    `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, access_token_hash) VALUES ($1,$2,$3,'signer','Ana','ana@x.test','sent',$4)`,
+    [recipient, tenant, envelope, sha256Hex(token)],
+  );
   await db.query(
     `INSERT INTO envelope_payments (id, tenant_id, envelope_id, recipient_id, provider, amount, currency, description, timing, status)
      VALUES ($1,$2,$3,$4,$5,100,'USD','Honorarios','before_sign',$6)`,
@@ -64,7 +71,8 @@ async function setup(o: { status?: string; provider?: string; payStatus?: string
 }
 
 const row = async (id: string) => (await db.one<any>(`SELECT * FROM envelope_payments WHERE id = $1`, [id]))!;
-const events = async (envelope: string, type: string) => db.query<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = $2`, [envelope, type]);
+const events = async (envelope: string, type: string) =>
+  db.query<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = $2`, [envelope, type]);
 
 describe("webhooks de cobro: idempotencia hasta terminar", () => {
   it("en curso → 409; terminado → duplicate; fallado → se reprocesa; abandonado → se reprocesa", async () => {
@@ -87,7 +95,9 @@ describe("webhooks de cobro: idempotencia hasta terminar", () => {
     // El proceso murió sin terminar ni borrar la marca: reciente → en curso; viejo → se vuelve a tomar.
     await db.query(`INSERT INTO payment_webhook_events (provider, event_id) VALUES ('mercadopago', 'evt_c')`);
     expect((await claimWebhookEvent(db, "mercadopago", "evt_c")).status).toBe("in_progress");
-    await db.query(`UPDATE payment_webhook_events SET received_at = now() - make_interval(secs => $1) WHERE event_id = 'evt_c'`, [WEBHOOK_IN_PROGRESS_SECONDS + 5]);
+    await db.query(`UPDATE payment_webhook_events SET received_at = now() - make_interval(secs => $1) WHERE event_id = 'evt_c'`, [
+      WEBHOOK_IN_PROGRESS_SECONDS + 5,
+    ]);
     expect(await processWebhookEvent(db, "mercadopago", "evt_c", async () => void ran++)).toBe("new");
     expect(ran).toBe(2);
     expect((await db.one<any>(`SELECT processed_at FROM payment_webhook_events WHERE event_id = 'evt_c'`))!.processed_at).not.toBeNull();
@@ -97,7 +107,10 @@ describe("webhooks de cobro: idempotencia hasta terminar", () => {
     const { claimWebhookEvent, processWebhookEvent, WEBHOOK_IN_PROGRESS_SECONDS } = await import("../src/modules/billing/webhooks");
     expect(WEBHOOK_IN_PROGRESS_SECONDS).toBeGreaterThanOrEqual(600);
     const age = (id: string) =>
-      db.query(`UPDATE payment_webhook_events SET received_at = now() - make_interval(secs => $1) WHERE event_id = $2`, [WEBHOOK_IN_PROGRESS_SECONDS + 5, id]);
+      db.query(`UPDATE payment_webhook_events SET received_at = now() - make_interval(secs => $1) WHERE event_id = $2`, [
+        WEBHOOK_IN_PROGRESS_SECONDS + 5,
+        id,
+      ]);
     // A tarda más que el umbral, B lo retoma; A falla: la marca de B sigue (antes A la borraba y un tercero lo reprocesaba).
     let b: Awaited<ReturnType<typeof claimWebhookEvent>> | undefined;
     await expect(
@@ -136,7 +149,12 @@ describe("checkouts descartados", () => {
     expect(p.checkout_id).toBeNull();
 
     // Pago del contacto anterior por el checkout descartado: mismo recipientId, pero se reembolsa (duplicate).
-    const res = await markPaymentPaid(db, s.payment, { providerPaymentId: "pi_old", receipt: {}, payerRecipientId: s.recipient, checkoutRef: "mock_1" });
+    const res = await markPaymentPaid(db, s.payment, {
+      providerPaymentId: "pi_old",
+      receipt: {},
+      payerRecipientId: s.recipient,
+      checkoutRef: "mock_1",
+    });
     expect(res).toEqual({ duplicate: "pi_old" });
     expect((await row(s.payment)).status).toBe("checkout_created");
     // Un rechazo de ese checkout tampoco toca el cobro actual.
@@ -151,7 +169,9 @@ describe("checkouts descartados", () => {
     expect(p.discarded_checkout_refs).toEqual(["mock_1", "mock_2"]); // la lista de descartados es permanente
 
     // El checkout vigente sí se acredita.
-    expect(await markPaymentPaid(db, s.payment, { providerPaymentId: "pi_new", receipt: {}, payerRecipientId: s.recipient, checkoutRef: "mock_3" })).toBeUndefined();
+    expect(
+      await markPaymentPaid(db, s.payment, { providerPaymentId: "pi_new", receipt: {}, payerRecipientId: s.recipient, checkoutRef: "mock_3" }),
+    ).toBeUndefined();
     expect((await row(s.payment)).status).toBe("paid");
   });
 
@@ -219,10 +239,16 @@ describe("reembolsos y disputas informados por el proveedor", () => {
     const s = await setup({ provider: "stripe", payStatus: "paid" });
     await db.query(`UPDATE envelope_payments SET provider_payment_id = 'pi_1', paid_at = now() WHERE id = $1`, [s.payment]);
     // Reembolso de un cobro duplicado (otro PaymentIntent): no toca el cobro.
-    await handleStripeEvent(db, { type: "charge.refunded", data: { object: { payment_intent: "pi_dup", amount: 10000, amount_refunded: 10000, refunded: true } } });
+    await handleStripeEvent(db, {
+      type: "charge.refunded",
+      data: { object: { payment_intent: "pi_dup", amount: 10000, amount_refunded: 10000, refunded: true } },
+    });
     expect((await row(s.payment)).status).toBe("paid");
     // Parcial: solo el evento.
-    await handleStripeEvent(db, { type: "charge.refunded", data: { object: { payment_intent: "pi_1", amount: 10000, amount_refunded: 2500, refunded: false } } });
+    await handleStripeEvent(db, {
+      type: "charge.refunded",
+      data: { object: { payment_intent: "pi_1", amount: 10000, amount_refunded: 2500, refunded: false } },
+    });
     expect((await row(s.payment)).status).toBe("paid");
     expect((await events(s.envelope, "payment.partially_refunded"))[0].data.amountRefunded).toBe(25);
     const full = { type: "charge.refunded", data: { object: { payment_intent: "pi_1", amount: 10000, amount_refunded: 10000, refunded: true } } };
@@ -333,7 +359,9 @@ describe("cambio de suscripción", () => {
   const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
   const completed = (tenantId: string, sub: string) => ({
     type: "checkout.session.completed",
-    data: { object: { mode: "subscription", payment_status: "paid", subscription: sub, customer: "cus_1", metadata: { tenantId, plan: "business" } } },
+    data: {
+      object: { mode: "subscription", payment_status: "paid", subscription: sub, customer: "cus_1", metadata: { tenantId, plan: "business" } },
+    },
   });
 
   it("aplica la nueva antes de cancelar la anterior: la baja de la anterior que llega en medio se ignora", async () => {
@@ -349,7 +377,10 @@ describe("cambio de suscripción", () => {
         // Al cancelarla en Stripe llega su customer.subscription.deleted (antes podía llegar con sub_old todavía vigente
         // y bajar la organización a Free). La organización no está bloqueada: si lo estuviera, esto se colgaría.
         during = await tenantRow(t2);
-        await handleStripeEvent(db, { type: "customer.subscription.deleted", data: { object: { id, status: "canceled", customer: "cus_1", metadata: { tenantId: t2 } } } });
+        await handleStripeEvent(db, {
+          type: "customer.subscription.deleted",
+          data: { object: { id, status: "canceled", customer: "cus_1", metadata: { tenantId: t2 } } },
+        });
         return json({ id, status: "canceled" });
       }
       return json({ id: "sub_new", status: "active", current_period_end: 1_900_000_000 });
@@ -363,7 +394,9 @@ describe("cambio de suscripción", () => {
     expect(during).toMatchObject({ billing_plan: "business", subscription_id: "sub_new" });
     expect(await tenantRow(t2)).toMatchObject({ billing_plan: "business", subscription_id: "sub_new", billing_provider: "stripe" });
     // La fila queda como constancia (cancelada), no se borra.
-    expect(await db.query(`SELECT subscription_id FROM subscription_cancellations WHERE tenant_id = $1 AND done_at IS NOT NULL`, [t2])).toEqual([{ subscription_id: "sub_old" }]);
+    expect(await db.query(`SELECT subscription_id FROM subscription_cancellations WHERE tenant_id = $1 AND done_at IS NOT NULL`, [t2])).toEqual([
+      { subscription_id: "sub_old" },
+    ]);
   });
 
   it("si la cancelación falla, el plan queda aplicado y el barrido la reintenta", async () => {
@@ -383,7 +416,9 @@ describe("cambio de suscripción", () => {
     try {
       await handleStripeEvent(db, completed(t2, "sub_new2"));
       expect(await tenantRow(t2)).toMatchObject({ billing_plan: "business", subscription_id: "sub_new2" });
-      const pending = await db.one<any>(`SELECT attempts, last_error FROM subscription_cancellations WHERE provider = 'stripe' AND subscription_id = 'sub_old2'`);
+      const pending = await db.one<any>(
+        `SELECT attempts, last_error FROM subscription_cancellations WHERE provider = 'stripe' AND subscription_id = 'sub_old2'`,
+      );
       expect(pending?.attempts).toBe(1);
       // Reciente: el barrido no la toma (para no pisarse con la cancelación inmediata).
       fail = false;
@@ -426,12 +461,10 @@ describe("cambio de suscripción", () => {
     const { uuidv7 } = await import("../src/lib/util");
     const t2 = await org("mercadopago", "pre_new", "business");
     const checkout = (ref: string, ago: string) =>
-      db.query(`INSERT INTO billing_checkouts (id, tenant_id, provider, plan, currency, amount, provider_ref, created_at) VALUES ($1,$2,'mercadopago','starter','USD',10,$3, now() - $4::interval)`, [
-        uuidv7(),
-        t2,
-        ref,
-        ago,
-      ]);
+      db.query(
+        `INSERT INTO billing_checkouts (id, tenant_id, provider, plan, currency, amount, provider_ref, created_at) VALUES ($1,$2,'mercadopago','starter','USD',10,$3, now() - $4::interval)`,
+        [uuidv7(), t2, ref, ago],
+      );
     await checkout("pre_old", "2 days");
     await checkout("pre_new", "1 day");
     const cancelled: string[] = [];
@@ -455,7 +488,10 @@ describe("cambio de suscripción", () => {
   it("si la reemplazada volvió a ser la vigente antes de cancelarla, el barrido no la cancela", async () => {
     const { cancelPendingSubscriptions } = await import("../src/modules/billing/webhooks");
     const t2 = await org("stripe", "sub_back");
-    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempted_at) VALUES ('stripe', 'sub_back', $1, now() - interval '5 minutes')`, [t2]);
+    await db.query(
+      `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempted_at) VALUES ('stripe', 'sub_back', $1, now() - interval '5 minutes')`,
+      [t2],
+    );
     let calls = 0;
     globalThis.fetch = (async () => {
       calls++;
@@ -473,7 +509,9 @@ describe("cambio de suscripción", () => {
     const { handleStripeEvent } = await import("../src/modules/billing/webhooks");
     const t2 = await org("stripe", "sub_s3");
     // B aplicó sub_s3 y canceló sub_s2 (que había aplicado A sin marcarse procesada).
-    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, done_at) VALUES ('stripe', 'sub_s2', $1, now())`, [t2]);
+    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, done_at) VALUES ('stripe', 'sub_s2', $1, now())`, [
+      t2,
+    ]);
     const deleted: string[] = [];
     let status = "canceled";
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -515,14 +553,19 @@ describe("cambio de suscripción", () => {
       globalThis.fetch = real;
     }
     expect(deleted).toEqual(["sub_orphan"]);
-    expect(await db.one<any>(`SELECT tenant_id, done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'sub_orphan'`)).toMatchObject({ tenant_id: ghost, done: true });
+    expect(
+      await db.one<any>(`SELECT tenant_id, done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'sub_orphan'`),
+    ).toMatchObject({ tenant_id: ghost, done: true });
   });
 
   it("barrido: backoff por intentos, máximo de intentos y sin tomar la misma fila dos veces", async () => {
     const { cancelPendingSubscriptions, SUBSCRIPTION_CANCEL_MAX_ATTEMPTS } = await import("../src/modules/billing/webhooks");
     const t2 = await org("stripe", "sub_cur_bk");
     const ins = (id: string, attempts: number, ago: string) =>
-      db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempts, attempted_at) VALUES ('stripe', $1, $2, $3, now() - $4::interval)`, [id, t2, attempts, ago]);
+      db.query(
+        `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempts, attempted_at) VALUES ('stripe', $1, $2, $3, now() - $4::interval)`,
+        [id, t2, attempts, ago],
+      );
     await ins("sub_bk_wait", 3, "5 minutes"); // backoff de 8 min: todavía no
     await ins("sub_bk_due", 3, "9 minutes");
     await ins("sub_bk_max", SUBSCRIPTION_CANCEL_MAX_ATTEMPTS, "30 days"); // agotada: no se reintenta
@@ -540,7 +583,10 @@ describe("cambio de suscripción", () => {
     }
     expect(errors).toEqual([]);
     expect(deleted).toEqual(["sub_bk_due"]);
-    const rows = await db.query<any>(`SELECT subscription_id, done_at IS NOT NULL AS done FROM subscription_cancellations WHERE tenant_id = $1 ORDER BY subscription_id`, [t2]);
+    const rows = await db.query<any>(
+      `SELECT subscription_id, done_at IS NOT NULL AS done FROM subscription_cancellations WHERE tenant_id = $1 ORDER BY subscription_id`,
+      [t2],
+    );
     expect(rows).toEqual([
       { subscription_id: "sub_bk_due", done: true },
       { subscription_id: "sub_bk_max", done: false },
@@ -551,10 +597,10 @@ describe("cambio de suscripción", () => {
   it("barrido: al llegar al máximo de intentos registra una alerta", async () => {
     const { cancelPendingSubscriptions, SUBSCRIPTION_CANCEL_MAX_ATTEMPTS } = await import("../src/modules/billing/webhooks");
     const t2 = await org("stripe", "sub_cur_al");
-    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempts, attempted_at) VALUES ('stripe', 'sub_al', $1, $2, now() - interval '2 days')`, [
-      t2,
-      SUBSCRIPTION_CANCEL_MAX_ATTEMPTS - 1,
-    ]);
+    await db.query(
+      `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempts, attempted_at) VALUES ('stripe', 'sub_al', $1, $2, now() - interval '2 days')`,
+      [t2, SUBSCRIPTION_CANCEL_MAX_ATTEMPTS - 1],
+    );
     globalThis.fetch = (async () => json({ error: { message: "caído" } }, 500)) as typeof fetch;
     const errors: any[] = [];
     try {
@@ -564,13 +610,18 @@ describe("cambio de suscripción", () => {
     }
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({ alert: true, subscriptionId: "sub_al", attempts: SUBSCRIPTION_CANCEL_MAX_ATTEMPTS });
-    expect((await db.one<any>(`SELECT attempts FROM subscription_cancellations WHERE subscription_id = 'sub_al'`))?.attempts).toBe(SUBSCRIPTION_CANCEL_MAX_ATTEMPTS);
+    expect((await db.one<any>(`SELECT attempts FROM subscription_cancellations WHERE subscription_id = 'sub_al'`))?.attempts).toBe(
+      SUBSCRIPTION_CANCEL_MAX_ATTEMPTS,
+    );
   });
 
   it("Mercado Pago: un 400 al cancelar un preapproval ya cancelado cuenta como cancelado", async () => {
     const { cancelPendingSubscriptions } = await import("../src/modules/billing/webhooks");
     const t2 = await org("mercadopago", "pre_cur_400");
-    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempted_at) VALUES ('mercadopago', 'pre_400', $1, now() - interval '5 minutes')`, [t2]);
+    await db.query(
+      `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempted_at) VALUES ('mercadopago', 'pre_400', $1, now() - interval '5 minutes')`,
+      [t2],
+    );
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "PUT") return json({ message: "cannot modify a cancelled preapproval" }, 400);
       return json({ id: String(input).split("/").pop(), status: "cancelled", external_reference: null });
@@ -582,7 +633,9 @@ describe("cambio de suscripción", () => {
       globalThis.fetch = real;
     }
     expect(errors).toEqual([]);
-    expect((await db.one<any>(`SELECT done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'pre_400'`))?.done).toBe(true);
+    expect((await db.one<any>(`SELECT done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'pre_400'`))?.done).toBe(
+      true,
+    );
   });
 
   it("barrido: 429 o 408 cuentan como proveedor caído (no se siguen tomando sus filas)", async () => {

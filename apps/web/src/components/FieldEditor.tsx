@@ -1,7 +1,15 @@
 // Editor de campos: ubicar, mover, redimensionar y borrar campos sobre las páginas.
 import { FieldLogicPanel } from "./FieldLogicPanel";
 import type { FieldCondition } from "@calasign/shared";
-import { useCallback, useEffect, useRef, useState, type DragEvent, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent as RKeyboardEvent,
+  type PointerEvent as RPointerEvent,
+} from "react";
 import type { Document, FieldType } from "@calasign/shared";
 import { FIELD_TYPES, formulaRefs, parseFormula } from "@calasign/shared";
 import { uuid } from "../lib/api";
@@ -207,7 +215,10 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
       // Borrar solo con el foco en el campo o en la página (no en un botón, enlace u otro control del panel: Supr o
       // Retroceso sobre un botón del panel borraban el campo seleccionado).
       const onCanvas =
-        !el || el === document.body || el === document.documentElement || (!!el.closest(".editor-docs") && !el.closest("button, a, [contenteditable='true']"));
+        !el ||
+        el === document.body ||
+        el === document.documentElement ||
+        (!!el.closest(".editor-docs") && !el.closest("button, a, [contenteditable='true']"));
       if ((e.key === "Delete" || e.key === "Backspace") && selected && onCanvas) {
         e.preventDefault();
         remove(selected);
@@ -536,7 +547,10 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     })
                   }
                   onBlur={(e) => {
-                    const options = e.target.value.split("\n").map((o) => o.trim().slice(0, 100)).filter(Boolean);
+                    const options = e.target.value
+                      .split("\n")
+                      .map((o) => o.trim().slice(0, 100))
+                      .filter(Boolean);
                     const known = new Map(options.map((o) => [o.toLowerCase(), o]));
                     // Un valor prellenado que ya no es una opción (se renombró o quitó) quedaba oculto: el select mostraba
                     // "—" pero se mandaba igual y el guardado fallaba con "opción inválida". Con un cambio solo de
@@ -556,7 +570,8 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     };
                     onChange(
                       fieldsRef.current.map((f) => {
-                        if (f.id === sel.id) return { ...f, options, ...(stale ? { value: prefilled, ...(prefilled ? {} : { readOnly: false }) } : {}) };
+                        if (f.id === sel.id)
+                          return { ...f, options, ...(stale ? { value: prefilled, ...(prefilled ? {} : { readOnly: false }) } : {}) };
                         const conditions = f.conditions?.map(fixCond);
                         return conditions?.some((c, i) => c !== f.conditions![i]) ? { ...f, conditions } : f;
                       }),
@@ -595,7 +610,10 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                   {sel.type === "dropdown" ? (
                     // Como en el campo de texto: sin valor deja de ser de solo lectura. Si no, la casilla quedaba oculta pero
                     // marcada y el guardado fallaba con "un campo de solo lectura necesita valor".
-                    <select value={sel.value ?? ""} onChange={(e) => update(sel.id, { value: e.target.value || null, readOnly: e.target.value ? sel.readOnly : false })}>
+                    <select
+                      value={sel.value ?? ""}
+                      onChange={(e) => update(sel.id, { value: e.target.value || null, readOnly: e.target.value ? sel.readOnly : false })}
+                    >
                       <option value="">—</option>
                       {(sel.options ?? []).filter(Boolean).map((o) => (
                         <option key={o} value={o}>

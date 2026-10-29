@@ -46,7 +46,8 @@ const es = {
   "idv.reason.face_mismatch": "La selfie no coincide con la foto del documento.",
   "idv.reason.liveness_failed": "No pudimos confirmar la prueba de vida. Movete un poco entre las dos fotos de tu cara.",
   "idv.reason.document_front_back_identical": "El frente y el dorso del documento son la misma foto.",
-  "idv.reason.level_not_met": "La verificación no incluyó todos los controles pedidos (coincidencia de la selfie o prueba de vida). No cuenta como intento: el remitente tiene que revisar la configuración y reiniciarla.",
+  "idv.reason.level_not_met":
+    "La verificación no incluyó todos los controles pedidos (coincidencia de la selfie o prueba de vida). No cuenta como intento: el remitente tiene que revisar la configuración y reiniciarla.",
   "idv.reason.provider_timeout": "No recibimos el resultado de la verificación a tiempo. Podés volver a intentarlo: no cuenta como intento.",
   "idv.reason.generic": "La verificación no fue aprobada.",
   "idv.decline": "Rechazar el sobre",
@@ -58,7 +59,8 @@ const es = {
   "idv.status.verified": "Identidad verificada",
   "idv.status.failed": "Identidad no verificada",
   "idv.reset": "Reiniciar verificación",
-  "idv.resetConfirm": "¿Reiniciar la verificación de identidad de {name}? Se anulan las anteriores y tiene que verificarse de nuevo, con todos los intentos.",
+  "idv.resetConfirm":
+    "¿Reiniciar la verificación de identidad de {name}? Se anulan las anteriores y tiene que verificarse de nuevo, con todos los intentos.",
   "idv.resetDone": "Se reinició la verificación de identidad de {name}.",
   "settings.identity": "Verificación de identidad",
   "settings.identityDesc": "Proveedores (Truora, Veriff), nivel por defecto y coincidencia de nombres.",
@@ -94,10 +96,13 @@ const es = {
   "sso.jitRole": "Rol de los usuarios dados de alta",
   "sso.enforce": "Exigir SSO (bloquea el ingreso con contraseña, salvo propietarios)",
   "sso.sessionTtl": "Duración de las sesiones SSO (horas)",
-  "sso.sessionTtlHint": "Absoluta, de 1 a 336 (14 días); por defecto 24. Al vencer, la persona vuelve a pasar por el proveedor de identidad. Bajarla acorta también las sesiones ya abiertas.",
+  "sso.sessionTtlHint":
+    "Absoluta, de 1 a 336 (14 días); por defecto 24. Al vencer, la persona vuelve a pasar por el proveedor de identidad. Bajarla acorta también las sesiones ya abiertas.",
   "sso.trustUnverifiedEmail": "Aceptar el correo aunque el IdP no envíe email_verified",
-  "sso.trustUnverifiedEmailHint": "Por defecto se exige email_verified = true en el id_token. Activalo solo si tu IdP no manda ese claim (p. ej. Microsoft Entra ID en algunas configuraciones) y controla los correos de sus cuentas. Un email_verified = false se rechaza siempre.",
-  "sso.entraWarning": "Microsoft Entra ID no envía email_verified por defecto: si la opción de abajo está apagada, es probable que nadie pueda ingresar. Activala si confiás en que Entra controla los correos de tus cuentas.",
+  "sso.trustUnverifiedEmailHint":
+    "Por defecto se exige email_verified = true en el id_token. Activalo solo si tu IdP no manda ese claim (p. ej. Microsoft Entra ID en algunas configuraciones) y controla los correos de sus cuentas. Un email_verified = false se rechaza siempre.",
+  "sso.entraWarning":
+    "Microsoft Entra ID no envía email_verified por defecto: si la opción de abajo está apagada, es probable que nadie pueda ingresar. Activala si confiás en que Entra controla los correos de tus cuentas.",
   "sso.issuer": "Issuer",
   "sso.clientId": "Client ID",
   "sso.clientSecret": "Client secret",
@@ -136,7 +141,8 @@ const es = {
   "login.ssoNotFound": "Ese dominio no tiene inicio de sesión único configurado. Ingresá con tu contraseña.",
   "login.ssoRequired": "Tu organización exige ingresar con SSO. Te llevamos a tu proveedor de identidad…",
   "login.ssoError": "No se pudo completar el inicio de sesión único ({code}).",
-  "login.ssoError.sso_plan_limit": "El plan de tu organización llegó a su cupo de usuarios, así que no se pudo crear tu acceso. Pedile a un administrador que amplíe el plan o libere un lugar.",
+  "login.ssoError.sso_plan_limit":
+    "El plan de tu organización llegó a su cupo de usuarios, así que no se pudo crear tu acceso. Pedile a un administrador que amplíe el plan o libere un lugar.",
   "login.ssoError.sso_state_invalid": "El inicio de sesión único venció o se abrió en otro navegador. Volvé a ingresar desde acá.",
   "login.ssoError.sso_scim_deactivated": "Tu proveedor de identidad te desactivó en esta organización. Pedile a un administrador que te invite.",
   "login.ssoError.sso_member_removed": "Un administrador te quitó de esta organización. Para volver a entrar, pedile que te invite de nuevo.",
@@ -189,7 +195,8 @@ const pt: Record<Key, string> = {
   "idv.reason.face_mismatch": "A selfie não coincide com a foto do documento.",
   "idv.reason.liveness_failed": "Não foi possível confirmar a prova de vida. Mexa-se um pouco entre as duas fotos do rosto.",
   "idv.reason.document_front_back_identical": "A frente e o verso do documento são a mesma foto.",
-  "idv.reason.level_not_met": "A verificação não incluiu todos os controles exigidos (correspondência da selfie ou prova de vida). Não conta como tentativa: o remetente precisa revisar a configuração e reiniciá-la.",
+  "idv.reason.level_not_met":
+    "A verificação não incluiu todos os controles exigidos (correspondência da selfie ou prova de vida). Não conta como tentativa: o remetente precisa revisar a configuração e reiniciá-la.",
   "idv.reason.provider_timeout": "Não recebemos o resultado da verificação a tempo. Você pode tentar de novo: não conta como tentativa.",
   "idv.reason.generic": "A verificação não foi aprovada.",
   "idv.decline": "Recusar o envelope",
@@ -200,7 +207,8 @@ const pt: Record<Key, string> = {
   "idv.status.verified": "Identidade verificada",
   "idv.status.failed": "Identidade não verificada",
   "idv.reset": "Reiniciar verificação",
-  "idv.resetConfirm": "Reiniciar a verificação de identidade de {name}? As anteriores são anuladas e a pessoa precisa se verificar de novo, com todas as tentativas.",
+  "idv.resetConfirm":
+    "Reiniciar a verificação de identidade de {name}? As anteriores são anuladas e a pessoa precisa se verificar de novo, com todas as tentativas.",
   "idv.resetDone": "A verificação de identidade de {name} foi reiniciada.",
   "settings.identity": "Verificação de identidade",
   "settings.identityDesc": "Provedores (Truora, Veriff), nível padrão e coincidência de nomes.",
@@ -236,10 +244,13 @@ const pt: Record<Key, string> = {
   "sso.jitRole": "Papel dos usuários cadastrados",
   "sso.enforce": "Exigir SSO (bloqueia o login com senha, exceto proprietários)",
   "sso.sessionTtl": "Duração das sessões SSO (horas)",
-  "sso.sessionTtlHint": "Absoluta, de 1 a 336 (14 dias); padrão 24. Ao expirar, a pessoa passa de novo pelo provedor de identidade. Reduzi-la também encurta as sessões já abertas.",
+  "sso.sessionTtlHint":
+    "Absoluta, de 1 a 336 (14 dias); padrão 24. Ao expirar, a pessoa passa de novo pelo provedor de identidade. Reduzi-la também encurta as sessões já abertas.",
   "sso.trustUnverifiedEmail": "Aceitar o e-mail mesmo que o IdP não envie email_verified",
-  "sso.trustUnverifiedEmailHint": "Por padrão exige-se email_verified = true no id_token. Ative apenas se o seu IdP não envia esse claim (p. ex. Microsoft Entra ID em algumas configurações) e controla os e-mails das contas. Um email_verified = false é sempre rejeitado.",
-  "sso.entraWarning": "O Microsoft Entra ID não envia email_verified por padrão: se a opção abaixo estiver desligada, é provável que ninguém consiga entrar. Ative-a se você confia que o Entra controla os e-mails das suas contas.",
+  "sso.trustUnverifiedEmailHint":
+    "Por padrão exige-se email_verified = true no id_token. Ative apenas se o seu IdP não envia esse claim (p. ex. Microsoft Entra ID em algumas configurações) e controla os e-mails das contas. Um email_verified = false é sempre rejeitado.",
+  "sso.entraWarning":
+    "O Microsoft Entra ID não envia email_verified por padrão: se a opção abaixo estiver desligada, é provável que ninguém consiga entrar. Ative-a se você confia que o Entra controla os e-mails das suas contas.",
   "sso.issuer": "Issuer",
   "sso.clientId": "Client ID",
   "sso.clientSecret": "Client secret",
@@ -277,7 +288,8 @@ const pt: Record<Key, string> = {
   "login.ssoNotFound": "Esse domínio não tem login único configurado. Entre com sua senha.",
   "login.ssoRequired": "Sua organização exige login com SSO. Levando você ao seu provedor de identidade…",
   "login.ssoError": "Não foi possível concluir o login único ({code}).",
-  "login.ssoError.sso_plan_limit": "O plano da sua organização atingiu o limite de usuários, então não foi possível criar seu acesso. Peça a um administrador para ampliar o plano ou liberar uma vaga.",
+  "login.ssoError.sso_plan_limit":
+    "O plano da sua organização atingiu o limite de usuários, então não foi possível criar seu acesso. Peça a um administrador para ampliar o plano ou liberar uma vaga.",
   "login.ssoError.sso_state_invalid": "O login único expirou ou foi aberto em outro navegador. Entre novamente por aqui.",
   "login.ssoError.sso_scim_deactivated": "Seu provedor de identidade desativou você nesta organização. Peça a um administrador que convide você.",
   "login.ssoError.sso_member_removed": "Um administrador removeu você desta organização. Para voltar a entrar, peça que convide você de novo.",
@@ -328,7 +340,8 @@ const en: Record<Key, string> = {
   "idv.reason.face_mismatch": "The selfie doesn't match the photo on the ID.",
   "idv.reason.liveness_failed": "We couldn't confirm the liveness check. Move a little between the two photos of your face.",
   "idv.reason.document_front_back_identical": "The front and back of the ID are the same photo.",
-  "idv.reason.level_not_met": "The verification didn't include all the required checks (selfie match or liveness). It doesn't count as an attempt: the sender needs to review the setup and restart it.",
+  "idv.reason.level_not_met":
+    "The verification didn't include all the required checks (selfie match or liveness). It doesn't count as an attempt: the sender needs to review the setup and restart it.",
   "idv.reason.provider_timeout": "We didn't get the verification result in time. You can try again: it doesn't count as an attempt.",
   "idv.reason.generic": "The verification was not approved.",
   "idv.decline": "Decline the envelope",
@@ -375,10 +388,13 @@ const en: Record<Key, string> = {
   "sso.jitRole": "Role of provisioned users",
   "sso.enforce": "Enforce SSO (blocks password sign-in, except owners)",
   "sso.sessionTtl": "SSO session duration (hours)",
-  "sso.sessionTtlHint": "Absolute, 1 to 336 (14 days); default 24. When it expires, the person goes through the identity provider again. Lowering it also shortens sessions already open.",
+  "sso.sessionTtlHint":
+    "Absolute, 1 to 336 (14 days); default 24. When it expires, the person goes through the identity provider again. Lowering it also shortens sessions already open.",
   "sso.trustUnverifiedEmail": "Accept the email even if the IdP does not send email_verified",
-  "sso.trustUnverifiedEmailHint": "By default email_verified = true is required in the id_token. Turn this on only if your IdP does not send that claim (e.g. Microsoft Entra ID in some configurations) and it controls its accounts' emails. email_verified = false is always rejected.",
-  "sso.entraWarning": "Microsoft Entra ID does not send email_verified by default: if the option below is off, most likely nobody will be able to sign in. Turn it on if you trust Entra to control your accounts' emails.",
+  "sso.trustUnverifiedEmailHint":
+    "By default email_verified = true is required in the id_token. Turn this on only if your IdP does not send that claim (e.g. Microsoft Entra ID in some configurations) and it controls its accounts' emails. email_verified = false is always rejected.",
+  "sso.entraWarning":
+    "Microsoft Entra ID does not send email_verified by default: if the option below is off, most likely nobody will be able to sign in. Turn it on if you trust Entra to control your accounts' emails.",
   "sso.issuer": "Issuer",
   "sso.clientId": "Client ID",
   "sso.clientSecret": "Client secret",
@@ -416,7 +432,8 @@ const en: Record<Key, string> = {
   "login.ssoNotFound": "That domain has no single sign-on configured. Sign in with your password.",
   "login.ssoRequired": "Your organization requires SSO. Taking you to your identity provider…",
   "login.ssoError": "Single sign-on couldn't be completed ({code}).",
-  "login.ssoError.sso_plan_limit": "Your organization's plan has reached its user limit, so your access couldn't be created. Ask an administrator to upgrade the plan or free up a seat.",
+  "login.ssoError.sso_plan_limit":
+    "Your organization's plan has reached its user limit, so your access couldn't be created. Ask an administrator to upgrade the plan or free up a seat.",
   "login.ssoError.sso_state_invalid": "Single sign-on expired or was opened in another browser. Sign in again from here.",
   "login.ssoError.sso_scim_deactivated": "Your identity provider deactivated you in this organization. Ask an administrator to invite you.",
   "login.ssoError.sso_member_removed": "An administrator removed you from this organization. To get back in, ask them to invite you again.",

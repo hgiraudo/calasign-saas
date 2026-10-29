@@ -20,7 +20,16 @@ export interface Prepared {
   dataToSign: string;
   signatureAlgorithm: SignatureAlgorithm;
   namedCurve: string | null;
-  certificate: { subject: string; issuer: string; commonName: string | null; serialNumber: string; notBefore: string; notAfter: string; sha256: string; trusted: boolean };
+  certificate: {
+    subject: string;
+    issuer: string;
+    commonName: string | null;
+    serialNumber: string;
+    notBefore: string;
+    notAfter: string;
+    sha256: string;
+    trusted: boolean;
+  };
   warnings: string[];
 }
 

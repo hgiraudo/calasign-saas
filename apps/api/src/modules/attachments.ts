@@ -28,7 +28,10 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
    */
   async function discard(fileId: string | null) {
     if (!fileId) return;
-    const row = await s.db.one<any>(`UPDATE files SET purged_at = now() WHERE id = $1 AND kind = 'attachment' AND purged_at IS NULL RETURNING storage_key`, [fileId]);
+    const row = await s.db.one<any>(
+      `UPDATE files SET purged_at = now() WHERE id = $1 AND kind = 'attachment' AND purged_at IS NULL RETURNING storage_key`,
+      [fileId],
+    );
     if (row) await s.blobs.delete(row.storage_key).catch(() => {});
   }
 
@@ -85,30 +88,28 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     let previous: string | null = null;
     // Si la transacción falla (el firmante completó o se cerró el sobre entre la subida y acá), el archivo ya subido no
     // lo referencia nada: sin fila en `files` la retención nunca lo borra (como las imágenes de firma en signing.ts).
-    const field = await s.db.tx(async (t) => {
-      const { e, r, f } = await guard(t, r0, e0, req.params.fieldId);
-      previous = f.attachment_file_id ?? null;
-      await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'attachment',$3,$4,$5,$6)`, [
-        fileId,
-        e.tenant_id,
-        key,
-        type,
-        buf.length,
-        sha,
-      ]);
-      await t.query(`UPDATE fields SET attachment_file_id = $2, value = $3, filled_at = now() WHERE id = $1`, [f.id, fileId, name]);
-      await appendEvent(t, {
-        tenantId: e.tenant_id,
-        envelopeId: e.id,
-        type: "recipient.attachment_uploaded",
-        actor: { type: "recipient", id: r.id, label: r.email ? `${r.name} <${r.email}>` : r.name, ip, userAgent },
-        data: { fieldId: f.id, name, contentType: type, sizeBytes: buf.length, sha256: sha },
+    const field = await s.db
+      .tx(async (t) => {
+        const { e, r, f } = await guard(t, r0, e0, req.params.fieldId);
+        previous = f.attachment_file_id ?? null;
+        await t.query(
+          `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'attachment',$3,$4,$5,$6)`,
+          [fileId, e.tenant_id, key, type, buf.length, sha],
+        );
+        await t.query(`UPDATE fields SET attachment_file_id = $2, value = $3, filled_at = now() WHERE id = $1`, [f.id, fileId, name]);
+        await appendEvent(t, {
+          tenantId: e.tenant_id,
+          envelopeId: e.id,
+          type: "recipient.attachment_uploaded",
+          actor: { type: "recipient", id: r.id, label: r.email ? `${r.name} <${r.email}>` : r.name, ip, userAgent },
+          data: { fieldId: f.id, name, contentType: type, sizeBytes: buf.length, sha256: sha },
+        });
+        return t.one(`SELECT * FROM fields WHERE id = $1`, [f.id]);
+      })
+      .catch(async (err) => {
+        await s.blobs.delete(key).catch(() => {});
+        throw err;
       });
-      return t.one(`SELECT * FROM fields WHERE id = $1`, [f.id]);
-    }).catch(async (err) => {
-      await s.blobs.delete(key).catch(() => {});
-      throw err;
-    });
     await discard(previous);
     return toField(field);
   });

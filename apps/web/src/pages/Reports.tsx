@@ -93,7 +93,8 @@ export function ReportsPage() {
   const nf = new Intl.NumberFormat(locale);
   const pf = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
   const avg = data?.totals.avgHoursToComplete;
-  const avgText = avg == null ? "—" : avg >= 48 ? x("reports.days", { n: nf.format(Math.round((avg / 24) * 10) / 10) }) : x("reports.hours", { n: nf.format(avg) });
+  const avgText =
+    avg == null ? "—" : avg >= 48 ? x("reports.days", { n: nf.format(Math.round((avg / 24) * 10) / 10) }) : x("reports.hours", { n: nf.format(avg) });
 
   return (
     <div className="page reports">
@@ -207,7 +208,10 @@ function MonthChart({ data }: { data: ReportsSummary }) {
   const { locale } = useI18n();
   const rows = data.byMonth.map((m) => ({
     month: m.month,
-    values: { completed: m.completed, inProgress: m.inProgress, closed: m.declined + m.voided + m.expired, draft: m.draft } as Record<SeriesKey, number>,
+    values: { completed: m.completed, inProgress: m.inProgress, closed: m.declined + m.voided + m.expired, draft: m.draft } as Record<
+      SeriesKey,
+      number
+    >,
     total: m.created,
   }));
   const max = Math.max(1, ...rows.map((r) => r.total));

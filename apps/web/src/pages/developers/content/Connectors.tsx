@@ -28,22 +28,47 @@ export function ConnectorsPage() {
     <DocPage title={t("conn.title")} lead={t("conn.lead")}>
       <H2 id="connectors">{t("conn.cards.h")}</H2>
       <CardGrid>
-        <Card icon="⚡" title="Power Automate / Logic Apps" to="/developers/connectors#power-automate" action={<ActionLink to="/developers/connectors#power-automate" label={t("conn.card.a")} />}>
+        <Card
+          icon="⚡"
+          title="Power Automate / Logic Apps"
+          to="/developers/connectors#power-automate"
+          action={<ActionLink to="/developers/connectors#power-automate" label={t("conn.card.a")} />}
+        >
           {t("conn.card.pa.d")}
         </Card>
-        <Card icon="✱" title="Zapier" to="/developers/connectors#zapier" action={<ActionLink to="/developers/connectors#zapier" label={t("conn.card.a")} />}>
+        <Card
+          icon="✱"
+          title="Zapier"
+          to="/developers/connectors#zapier"
+          action={<ActionLink to="/developers/connectors#zapier" label={t("conn.card.a")} />}
+        >
           {t("conn.card.zap.d")}
         </Card>
-        <Card icon="◐" title="Make" to="/developers/connectors#make" action={<ActionLink to="/developers/connectors#make" label={t("conn.card.a")} />}>
+        <Card
+          icon="◐"
+          title="Make"
+          to="/developers/connectors#make"
+          action={<ActionLink to="/developers/connectors#make" label={t("conn.card.a")} />}
+        >
           {t("conn.card.make.d")}
         </Card>
         <Card icon="⧉" title="n8n" to="/developers/connectors#n8n" action={<ActionLink to="/developers/connectors#n8n" label={t("conn.card.a")} />}>
           {t("conn.card.n8n.d")}
         </Card>
-        <Card icon="▦" title="Dynamics 365" to="/developers/connectors#dynamics365" action={<ActionLink to="/developers/connectors#dynamics365" label={t("conn.card.a")} />}>
+        <Card
+          icon="▦"
+          title="Dynamics 365"
+          to="/developers/connectors#dynamics365"
+          action={<ActionLink to="/developers/connectors#dynamics365" label={t("conn.card.a")} />}
+        >
           {t("conn.card.d365.d")}
         </Card>
-        <Card icon="✉" title="Google Workspace" to="/developers/connectors#google-workspace" action={<ActionLink to="/developers/connectors#google-workspace" label={t("conn.card.a")} />}>
+        <Card
+          icon="✉"
+          title="Google Workspace"
+          to="/developers/connectors#google-workspace"
+          action={<ActionLink to="/developers/connectors#google-workspace" label={t("conn.card.a")} />}
+        >
           {t("conn.card.gws.d")}
         </Card>
       </CardGrid>
@@ -51,19 +76,44 @@ export function ConnectorsPage() {
       <H2 id="native">{t("conn.native.h")}</H2>
       <Md text={t("conn.native.p")} />
       <CardGrid>
-        <Card icon="◎" title={t("conn.native.crm.t")} to="/developers/guides/crm" action={<ActionLink to="/developers/guides/crm" label={t("conn.native.a")} />}>
+        <Card
+          icon="◎"
+          title={t("conn.native.crm.t")}
+          to="/developers/guides/crm"
+          action={<ActionLink to="/developers/guides/crm" label={t("conn.native.a")} />}
+        >
           {t("conn.native.crm.d")}
         </Card>
-        <Card icon="☺" title="HRIS" to="/developers/guides/hr-contracts#providers" action={<ActionLink to="/developers/guides/hr-contracts#providers" label={t("conn.native.a")} />}>
+        <Card
+          icon="☺"
+          title="HRIS"
+          to="/developers/guides/hr-contracts#providers"
+          action={<ActionLink to="/developers/guides/hr-contracts#providers" label={t("conn.native.a")} />}
+        >
           {t("conn.native.hr.d")}
         </Card>
-        <Card icon="§" title="CLM" to="/developers/guides/hr-contracts#flows" action={<ActionLink to="/developers/guides/hr-contracts#flows" label={t("conn.native.a")} />}>
+        <Card
+          icon="§"
+          title="CLM"
+          to="/developers/guides/hr-contracts#flows"
+          action={<ActionLink to="/developers/guides/hr-contracts#flows" label={t("conn.native.a")} />}
+        >
           {t("conn.native.clm.d")}
         </Card>
-        <Card icon="▤" title="DMS" to="/developers/guides/hr-contracts#dms" action={<ActionLink to="/developers/guides/hr-contracts#dms" label={t("conn.native.a")} />}>
+        <Card
+          icon="▤"
+          title="DMS"
+          to="/developers/guides/hr-contracts#dms"
+          action={<ActionLink to="/developers/guides/hr-contracts#dms" label={t("conn.native.a")} />}
+        >
           {t("conn.native.dms.d")}
         </Card>
-        <Card icon="✉" title={t("conn.native.notify.t")} to="/app/settings/notifications" action={<ActionLink to="/app/settings/notifications" label={t("conn.native.config")} />}>
+        <Card
+          icon="✉"
+          title={t("conn.native.notify.t")}
+          to="/app/settings/notifications"
+          action={<ActionLink to="/app/settings/notifications" label={t("conn.native.config")} />}
+        >
           {t("conn.native.notify.d")}
         </Card>
         <Card icon="✦" title={t("conn.native.ai.t")} to="/developers/ai" action={<ActionLink to="/developers/ai" label={t("conn.native.a")} />}>
@@ -90,7 +140,10 @@ export function ConnectorsPage() {
         <DownloadButton href={A.zapier} label={file(A.zapier)} />
       </p>
       <Md text={t("conn.zap.p")} />
-      <Code lang="bash" code={`curl -LO ${BASE}${A.zapier}\nunzip ${file(A.zapier)} -d calasign-zapier && cd calasign-zapier\nnpm install\nnpx zapier-platform validate --without-style\nnpx zapier-platform login && npx zapier-platform register "CalaSign" && npx zapier-platform push`} />
+      <Code
+        lang="bash"
+        code={`curl -LO ${BASE}${A.zapier}\nunzip ${file(A.zapier)} -d calasign-zapier && cd calasign-zapier\nnpm install\nnpx zapier-platform validate --without-style\nnpx zapier-platform login && npx zapier-platform register "CalaSign" && npx zapier-platform push`}
+      />
 
       <H2 id="make">{t("conn.make.h")}</H2>
       <p>

@@ -189,7 +189,8 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
     const amount = priceOf(input.plan, currency);
     if (!amount) throw badRequest("invalid_plan", "Ese plan no tiene precio en esa moneda");
     const provider = await pickProvider(input.provider, currency).catch((err) => {
-      if (err instanceof AppError && err.code === "provider_unavailable") reply.header("retry-after", String((err.details as { retryAfterSeconds: number }).retryAfterSeconds));
+      if (err instanceof AppError && err.code === "provider_unavailable")
+        reply.header("retry-after", String((err.details as { retryAfterSeconds: number }).retryAfterSeconds));
       throw err;
     });
     // Cambio de plan con una suscripción vigente: es un checkout nuevo. Cuando se confirma, el webhook cancela la
@@ -226,7 +227,10 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
         const c = await stripeCreateSubscriptionCheckout({ ...params, customerId: reuse }).catch((err) => {
           // Solo si el problema es el customer (no existe en esta cuenta, otra moneda): un 429 o una clave inválida no
           // tienen que terminar en un customer duplicado.
-          const customerProblem = err instanceof ProviderError && err.status === 400 && (err.param === "customer" || /customer|currenc/i.test(`${err.code ?? ""} ${err.message}`));
+          const customerProblem =
+            err instanceof ProviderError &&
+            err.status === 400 &&
+            (err.param === "customer" || /customer|currenc/i.test(`${err.code ?? ""} ${err.message}`));
           if (reuse && customerProblem) {
             return stripeCreateSubscriptionCheckout({ ...params, customerId: null });
           }
@@ -294,7 +298,13 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
       if (err instanceof ProviderError) throw new AppError(502, "billing_provider_error", err.message);
       throw err;
     }
-    await applySubscription(s.db, a.tenantId, { plan: "free", provider: null, subscriptionId: null, status: "canceled", source: a.actor.label ?? "usuario" });
+    await applySubscription(s.db, a.tenantId, {
+      plan: "free",
+      provider: null,
+      subscriptionId: null,
+      status: "canceled",
+      source: a.actor.label ?? "usuario",
+    });
     return billingOverview(s.db, a.tenantId);
   });
 
@@ -335,7 +345,8 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
           if (t?.subscription_id && t.billing_provider === "stripe") await stripeCancelSubscription(t.subscription_id);
           if (t?.subscription_id && t.billing_provider === "mercadopago") await mpCancelPreapproval(t.subscription_id);
         } catch (err) {
-          if (err instanceof ProviderError) throw new AppError(502, "billing_provider_error", `No se pudo cancelar la suscripción anterior: ${err.message}`);
+          if (err instanceof ProviderError)
+            throw new AppError(502, "billing_provider_error", `No se pudo cancelar la suscripción anterior: ${err.message}`);
           throw err;
         }
         await s.db.query(`UPDATE billing_checkouts SET status = 'completed', completed_at = now() WHERE id = $1`, [c.id]);

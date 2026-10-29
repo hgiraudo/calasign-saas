@@ -40,7 +40,7 @@ function methodLabels(p: PaymentProviderInfo | undefined, b: ReturnType<typeof u
   const codes = p.methodCodes ?? [];
   if (!codes.length) return p.methods.join(", ");
   return codes
-    .map((c, i) => ((PAYMENT_METHOD_CODES as readonly string[]).includes(c) ? b(`pay.method.${c}` as "pay.method.card") : p.methods[i] ?? c))
+    .map((c, i) => ((PAYMENT_METHOD_CODES as readonly string[]).includes(c) ? b(`pay.method.${c}` as "pay.method.card") : (p.methods[i] ?? c)))
     .join(", ");
 }
 
@@ -203,7 +203,13 @@ export function PaymentOptionsPanel({
             <div className="row-wrap">
               <label className="field grow">
                 <span>{b("pay.amount")}</span>
-                <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="150,00" data-testid="payment-amount" />
+                <input
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="150,00"
+                  data-testid="payment-amount"
+                />
               </label>
               <label className="field">
                 <span>{b("pay.currency")}</span>
@@ -242,7 +248,16 @@ export function PaymentOptionsPanel({
                 </select>
               </label>
             </div>
-            {provider && <p className="muted small">{b("pay.methods", { methods: methodLabels(configured.find((p) => p.id === provider), b) })}</p>}
+            {provider && (
+              <p className="muted small">
+                {b("pay.methods", {
+                  methods: methodLabels(
+                    configured.find((p) => p.id === provider),
+                    b,
+                  ),
+                })}
+              </p>
+            )}
             <fieldset className="stack-sm">
               <legend className="small strong">{b("pay.timing")}</legend>
               {(["after_sign", "before_sign"] as const).map((x) => (
@@ -281,7 +296,15 @@ export function PaymentOptionsPanel({
 }
 
 /** Estado del cobro en el detalle del sobre. No muestra nada si el sobre no cobra. */
-export function EnvelopePaymentSummary({ envelopeId, recipients, envelopeStatus }: { envelopeId: string; recipients: Recipient[]; envelopeStatus: string }) {
+export function EnvelopePaymentSummary({
+  envelopeId,
+  recipients,
+  envelopeStatus,
+}: {
+  envelopeId: string;
+  recipients: Recipient[];
+  envelopeStatus: string;
+}) {
   const b = useBillingText();
   const { locale } = useI18n();
   const [p, setP] = useState<EnvelopePayment | null>(null);
@@ -297,7 +320,9 @@ export function EnvelopePaymentSummary({ envelopeId, recipients, envelopeStatus 
     <section className="card pad stack-sm" aria-labelledby="payment-summary-title" data-testid="payment-summary">
       <h2 id="payment-summary-title" className="h3">
         {b("pay.detailTitle")}{" "}
-        <span className={`badge ${p.status === "paid" ? "badge-ok" : p.status === "refunded" ? "badge-voided" : ""}`}>{b(`pay.status.${p.status}`)}</span>
+        <span className={`badge ${p.status === "paid" ? "badge-ok" : p.status === "refunded" ? "badge-voided" : ""}`}>
+          {b(`pay.status.${p.status}`)}
+        </span>
       </h2>
       <p className="small">{b("pay.detailLine", { amount: formatMoney(p.amount, p.currency, locale), description: p.description, payer })}</p>
       {p.status === "refunded" && <p className="small muted">{b("pay.refundedLine")}</p>}
@@ -430,8 +455,16 @@ function SignerPaymentPanel({
       <p>{info.timing === "before_sign" ? b("signerPay.before") : b("signerPay.after")}</p>
       <p className="small muted">{info.description}</p>
       <p style={{ fontSize: 26, fontWeight: 700, margin: 0 }}>{amount}</p>
-      {returned === "success" && !confirmStopped && <p className="small" role="status">{b("signerPay.confirming")}</p>}
-      {returned === "cancel" && <p className="small" role="alert">{b("signerPay.canceled")}</p>}
+      {returned === "success" && !confirmStopped && (
+        <p className="small" role="status">
+          {b("signerPay.confirming")}
+        </p>
+      )}
+      {returned === "cancel" && (
+        <p className="small" role="alert">
+          {b("signerPay.canceled")}
+        </p>
+      )}
       {info.canPay && (
         <button type="button" className="btn btn-primary btn-block" disabled={busy} onClick={() => void pay()} data-testid="signer-pay-button">
           {busy ? b("signerPay.redirecting") : b("signerPay.button", { amount })}

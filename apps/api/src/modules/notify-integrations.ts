@@ -126,10 +126,16 @@ async function recordResult(db: Db, id: string, r: { status: number | null; ok: 
 }
 
 /** Job: avisa un evento de un sobre a una integración. */
-export async function deliverNotificationJob(db: Db, p: { integrationId: string; envelopeId: string; event: NotificationEvent; recipientId?: string | null }) {
+export async function deliverNotificationJob(
+  db: Db,
+  p: { integrationId: string; envelopeId: string; event: NotificationEvent; recipientId?: string | null },
+) {
   const it = await db.one<any>(`SELECT * FROM notification_integrations WHERE id = $1 AND active`, [p.integrationId]);
   if (!it) return;
-  const e = await db.one<any>(`SELECT e.id, e.subject, e.tenant_id, e.brand_id, t.name AS org, t.default_locale FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1`, [p.envelopeId]);
+  const e = await db.one<any>(
+    `SELECT e.id, e.subject, e.tenant_id, e.brand_id, t.name AS org, t.default_locale FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1`,
+    [p.envelopeId],
+  );
   if (!e) return;
   const r = p.recipientId ? await db.one<any>(`SELECT name FROM recipients WHERE id = $1`, [p.recipientId]) : null;
   const L = TXT[(e.default_locale as keyof typeof TXT) ?? "es"] ?? TXT.es;
@@ -186,7 +192,11 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
         [id, a.tenantId, input.kind, input.name, encrypt(url), hintOf(url), input.events, a.userId],
       );
     });
-    await auditFromRequest(s.db, req, a, "notification_integration.created", { targetType: "notification_integration", targetId: id, data: { kind: input.kind, name: input.name } });
+    await auditFromRequest(s.db, req, a, "notification_integration.created", {
+      targetType: "notification_integration",
+      targetId: id,
+      data: { kind: input.kind, name: input.name },
+    });
     reply.code(201);
     return toApi(await load(a.tenantId, id));
   });
@@ -201,7 +211,11 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
          events = COALESCE($5, events), active = COALESCE($6, active), updated_at = now() WHERE id = $1`,
       [r.id, input.name ?? null, url ? encrypt(url) : null, url ? hintOf(url) : null, input.events ?? null, input.active ?? null],
     );
-    await auditFromRequest(s.db, req, a, "notification_integration.updated", { targetType: "notification_integration", targetId: r.id, data: { fields: Object.keys(input) } });
+    await auditFromRequest(s.db, req, a, "notification_integration.updated", {
+      targetType: "notification_integration",
+      targetId: r.id,
+      data: { fields: Object.keys(input) },
+    });
     return toApi(await load(a.tenantId, r.id));
   });
 
@@ -209,24 +223,32 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
     const a = req.auth!;
     const r = await load(a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM notification_integrations WHERE id = $1`, [r.id]);
-    await auditFromRequest(s.db, req, a, "notification_integration.deleted", { targetType: "notification_integration", targetId: r.id, data: { name: r.name } });
+    await auditFromRequest(s.db, req, a, "notification_integration.deleted", {
+      targetType: "notification_integration",
+      targetId: r.id,
+      data: { name: r.name },
+    });
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string } }>("/v1/notification-integrations/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req) => {
-    const a = req.auth!;
-    const r = await load(a.tenantId, req.params.id);
-    const t = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
-    const L = TXT[(t?.default_locale as keyof typeof TXT) ?? "es"] ?? TXT.es;
-    try {
-      const product = productLabel(await resolveBrand(s.db, a.tenantId, null));
-      const res = await postToChannel(r.kind, decrypt(r.url_enc), { title: L.test(product), event: "test", product });
-      await recordResult(s.db, r.id, { status: res.status, ok: res.ok, error: res.ok ? null : `HTTP ${res.status}: ${res.text}` });
-      return { ok: res.ok, status: res.status, error: res.ok ? null : res.text || `HTTP ${res.status}` };
-    } catch (err) {
-      const msg = String((err as Error).message ?? err).slice(0, 300);
-      await recordResult(s.db, r.id, { status: null, ok: false, error: msg });
-      return { ok: false, status: null, error: msg };
-    }
-  });
+  app.post<{ Params: { id: string } }>(
+    "/v1/notification-integrations/:id/test",
+    { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } },
+    async (req) => {
+      const a = req.auth!;
+      const r = await load(a.tenantId, req.params.id);
+      const t = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
+      const L = TXT[(t?.default_locale as keyof typeof TXT) ?? "es"] ?? TXT.es;
+      try {
+        const product = productLabel(await resolveBrand(s.db, a.tenantId, null));
+        const res = await postToChannel(r.kind, decrypt(r.url_enc), { title: L.test(product), event: "test", product });
+        await recordResult(s.db, r.id, { status: res.status, ok: res.ok, error: res.ok ? null : `HTTP ${res.status}: ${res.text}` });
+        return { ok: res.ok, status: res.status, error: res.ok ? null : res.text || `HTTP ${res.status}` };
+      } catch (err) {
+        const msg = String((err as Error).message ?? err).slice(0, 300);
+        await recordResult(s.db, r.id, { status: null, ok: false, error: msg });
+        return { ok: false, status: null, error: msg };
+      }
+    },
+  );
 }

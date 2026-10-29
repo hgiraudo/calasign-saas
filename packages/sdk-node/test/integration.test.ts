@@ -6,7 +6,11 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { CalaSign, constructWebhookEvent } from "../src/index";
 
 const BASE = process.env.CALASIGN_TEST_BASE;
-const up = BASE ? await fetch(`${BASE}/healthz`).then((r) => r.ok).catch(() => false) : false;
+const up = BASE
+  ? await fetch(`${BASE}/healthz`)
+      .then((r) => r.ok)
+      .catch(() => false)
+  : false;
 
 function tinyPdf() {
   const content = "BT /F1 18 Tf 72 760 Td (SDK Node) Tj ET";
@@ -41,7 +45,11 @@ describe.skipIf(!up)("SDK contra la API local", () => {
       body: JSON.stringify({ name: "SDK", email: `sdk+${stamp}@example.com`, password: "una-clave-segura-123", organization: `SDK ${stamp}` }),
     });
     cookie = res.headers.get("set-cookie")!.split(";")[0];
-    const k = await fetch(`${BASE}/v1/api-keys`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "sdk" }) });
+    const k = await fetch(`${BASE}/v1/api-keys`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "sdk" }),
+    });
     apiKey = ((await k.json()) as any).secret;
   });
 
@@ -55,7 +63,9 @@ describe.skipIf(!up)("SDK contra la API local", () => {
     const doc = await cs.envelopes.uploadDocument(id, tinyPdf(), "contrato.pdf");
     const signer = randomUUID();
     await cs.envelopes.setRecipients(id, [{ id: signer, name: "Ana SDK", email: `ana-sdk+${stamp}@example.com` }]);
-    await cs.envelopes.setFields(id, [{ documentId: doc.id, recipientId: signer, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }]);
+    await cs.envelopes.setFields(id, [
+      { documentId: doc.id, recipientId: signer, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 },
+    ]);
     const sent = await cs.envelopes.send(id);
     expect(sent.envelope.status).toBe("sent");
     const again = await cs.envelopes.send(id); // misma Idempotency-Key: respuesta repetida, sin error

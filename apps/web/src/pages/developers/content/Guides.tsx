@@ -23,7 +23,14 @@ export function TemplatesGuide() {
         })}
       />
       <Md text={t("g.tpl.roles.list")} />
-      <CodeTabs tabs={apiTabs({ method: "GET", path: "/v1/templates", query: { q: "contrato" }, extra: [sdkPy(`templates = cs.templates.list(q="contrato")`), sdkNode(`const templates = await cs.templates.list("contrato");`)] })} />
+      <CodeTabs
+        tabs={apiTabs({
+          method: "GET",
+          path: "/v1/templates",
+          query: { q: "contrato" },
+          extra: [sdkPy(`templates = cs.templates.list(q="contrato")`), sdkNode(`const templates = await cs.templates.list("contrato");`)],
+        })}
+      />
 
       <H2 id="send">{t("g.tpl.send.h")}</H2>
       <Md text={t("g.tpl.send.p")} />
@@ -118,7 +125,9 @@ export function EmbeddedGuide() {
           body: { returnUrl: "https://app.tuempresa.com/firma-lista" },
           extra: [
             sdkPy(`r = cs.envelopes.signing_url(envelope_id, recipient_id, return_url="https://app.tuempresa.com/firma-lista")`),
-            sdkNode(`const { url } = await cs.envelopes.signingUrl(envelopeId, recipientId, { returnUrl: "https://app.tuempresa.com/firma-lista" });`),
+            sdkNode(
+              `const { url } = await cs.envelopes.signingUrl(envelopeId, recipientId, { returnUrl: "https://app.tuempresa.com/firma-lista" });`,
+            ),
           ],
         })}
       />
@@ -158,7 +167,11 @@ export function AnchorsGuide() {
           body: {
             fields: [
               { recipientId: "CLIENTE_ID", type: "signature", anchor: { text: "[[firma_cliente]]", offsetY: -40, width: 160, height: 40 } },
-              { recipientId: "CLIENTE_ID", type: "date_signed", anchor: { text: "[[fecha_cliente]]", width: 90, height: 14, ignoreIfNotPresent: true } },
+              {
+                recipientId: "CLIENTE_ID",
+                type: "date_signed",
+                anchor: { text: "[[fecha_cliente]]", width: 90, height: 14, ignoreIfNotPresent: true },
+              },
               { recipientId: "CLIENTE_ID", type: "dropdown", options: ["Mensual", "Anual"], anchor: { text: "[[plan]]", width: 120, height: 18 } },
             ],
           },
@@ -198,7 +211,12 @@ João Silva,joao@example.com.br,+5511999990000,email;whatsapp,2300,Contrato Joã
         tabs={apiTabs({
           method: "POST",
           path: "/v1/bulk-sends",
-          body: { templateId: "TEMPLATE_ID", name: "Renovaciones octubre", csv: "Cliente.name,Cliente.email,…\nAna Pérez,ana@example.com,…", skipInvalid: true },
+          body: {
+            templateId: "TEMPLATE_ID",
+            name: "Renovaciones octubre",
+            csv: "Cliente.name,Cliente.email,…\nAna Pérez,ana@example.com,…",
+            skipInvalid: true,
+          },
         })}
       />
       <H2 id="json">{t("g.bulk.json.h")}</H2>
@@ -270,7 +288,13 @@ export function RemindersGuide() {
       />
       <H2 id="manual">{t("g.rem.manual.h")}</H2>
       <Md text={t("g.rem.manual.p")} />
-      <CodeTabs tabs={apiTabs({ method: "POST", path: "/v1/envelopes/{envelopeId}/remind", extra: [sdkPy(`cs.envelopes.remind(envelope_id)  # {"notified": 1}`)] })} />
+      <CodeTabs
+        tabs={apiTabs({
+          method: "POST",
+          path: "/v1/envelopes/{envelopeId}/remind",
+          extra: [sdkPy(`cs.envelopes.remind(envelope_id)  # {"notified": 1}`)],
+        })}
+      />
       <H2 id="expiration">{t("g.rem.exp.h")}</H2>
       <Md text={t("g.rem.exp.p")} />
       <H2 id="corrections">{t("g.rem.corr.h")}</H2>
@@ -367,7 +391,14 @@ export function PaymentsGuide() {
         tabs={apiTabs({
           method: "PUT",
           path: "/v1/envelopes/{envelopeId}/payment",
-          body: { amount: 150.5, currency: "BRL", description: "Primera cuota", payerRecipientId: "RECIPIENT_ID", timing: "after_sign", provider: "mercadopago" },
+          body: {
+            amount: 150.5,
+            currency: "BRL",
+            description: "Primera cuota",
+            payerRecipientId: "RECIPIENT_ID",
+            timing: "after_sign",
+            provider: "mercadopago",
+          },
         })}
       />
       <H2 id="timing">{t("g.pay.timing.h")}</H2>
@@ -431,7 +462,13 @@ export function BrandingGuide() {
   return (
     <DocPage title={t("g.brand.title")} lead={t("g.brand.lead")}>
       <H2 id="api">{t("g.brand.api.h")}</H2>
-      <CodeTabs tabs={apiTabs({ method: "PATCH", path: "/v1/settings/branding", body: { primaryColor: "#0d9488", emailFooter: "Inmobiliaria Caribe · Santo Domingo" } })} />
+      <CodeTabs
+        tabs={apiTabs({
+          method: "PATCH",
+          path: "/v1/settings/branding",
+          body: { primaryColor: "#0d9488", emailFooter: "Inmobiliaria Caribe · Santo Domingo" },
+        })}
+      />
       <CodeTabs tabs={apiTabs({ method: "POST", path: "/v1/settings/branding/logo", multipart: { field: "file", file: "logo.png" } })} />
       <Md text={t("g.brand.api.p")} />
     </DocPage>

@@ -36,7 +36,8 @@ const es = {
   "team.remove": "Quitar",
   "team.leave": "Salir de la organización",
   "team.removeConfirm": "¿Quitar a {name} de la organización? Pierde el acceso enseguida.",
-  "team.removeSsoNote": "Si la organización usa inicio de sesión único (SSO) o SCIM, no lo vuelven a sumar automáticamente: para que vuelva, invitalo de nuevo.",
+  "team.removeSsoNote":
+    "Si la organización usa inicio de sesión único (SSO) o SCIM, no lo vuelven a sumar automáticamente: para que vuelva, invitalo de nuevo.",
   "team.invite": "Invitar",
   "team.inviteTitle": "Invitar a una persona",
   "team.inviteSent": "Invitación enviada a {email}. También podés compartir este link:",
@@ -72,7 +73,8 @@ const es = {
   "groups.none": "Todavía no hay grupos.",
   "groups.members": "Integrantes",
   "groups.delete": "Borrar",
-  "groups.addRestricted": "Sumar personas a este grupo les da acceso a lo que se compartió con él: lo hace un integrante del grupo, un propietario o quien ve todos los sobres y administra las plantillas. Podés quitar integrantes.",
+  "groups.addRestricted":
+    "Sumar personas a este grupo les da acceso a lo que se compartió con él: lo hace un integrante del grupo, un propietario o quien ve todos los sobres y administra las plantillas. Podés quitar integrantes.",
   "share.title": "Compartir con grupos",
   "share.intro": "Los integrantes de estos grupos pueden ver el sobre y su avance (no modificarlo).",
   "share.introTemplate": "Elegí quién puede ver y usar esta plantilla.",
@@ -82,7 +84,8 @@ const es = {
   "share.visibility.organization": "Toda la organización",
   "share.visibility.restricted": "Solo yo, gestores de plantillas y los grupos elegidos",
   "audit.title": "Auditoría de la cuenta",
-  "audit.intro": "Registro de las acciones administrativas (solo se agregan entradas): ingresos, miembros, roles, API keys, webhooks, ajustes y plantillas.",
+  "audit.intro":
+    "Registro de las acciones administrativas (solo se agregan entradas): ingresos, miembros, roles, API keys, webhooks, ajustes y plantillas.",
   "audit.when": "Fecha",
   "audit.action": "Acción",
   "audit.actor": "Quién",
@@ -93,7 +96,8 @@ const es = {
   "audit.to": "Hasta",
   "audit.export": "Exportar CSV",
   "audit.more": "Ver más",
-  "audit.csvTruncated": "El CSV tiene los registros más recientes; hay más. Para el resto, continuá la exportación (descarga la parte siguiente) o acotá las fechas.",
+  "audit.csvTruncated":
+    "El CSV tiene los registros más recientes; hay más. Para el resto, continuá la exportación (descarga la parte siguiente) o acotá las fechas.",
   "audit.exportContinue": "Continuar exportación",
   "audit.empty": "No hay registros con esos filtros.",
   "sec.title": "Seguridad",
@@ -111,7 +115,8 @@ const es = {
   "sec.recoveryHelp": "Guardalos en un lugar seguro: cada uno sirve una sola vez para ingresar si perdés el teléfono. No se vuelven a mostrar.",
   "sec.regenerate": "Generar códigos nuevos",
   "sec.passwordConfirm": "Confirmá tu contraseña para continuar",
-  "sec.passwordConfirmHelp": "Por seguridad, activar la verificación en dos pasos o generar códigos nuevos pide tu contraseña (o haber ingresado hace menos de 10 minutos).",
+  "sec.passwordConfirmHelp":
+    "Por seguridad, activar la verificación en dos pasos o generar códigos nuevos pide tu contraseña (o haber ingresado hace menos de 10 minutos).",
   "sec.continue": "Continuar",
   "sec.sessions": "Sesiones",
   "sec.sessionsHelp": "Dispositivos con una sesión abierta en tu cuenta. Si no reconocés alguna, cerrala y cambiá tu contraseña.",
@@ -130,7 +135,8 @@ const es = {
   "sec.retention": "Retención de documentos",
   "sec.retentionHelp":
     "Días después de terminado un sobre (completado, anulado, rechazado o vencido) en que se borran los originales, las imágenes de firma, los adjuntos y las fotos de identidad. El PDF firmado y el registro de evidencia se conservan siempre. Vacío = no borrar.",
-  "sec.retentionConfirm": "Los originales, imágenes de firma y adjuntos de los sobres terminados hace más de {n} días se van a borrar para siempre. ¿Continuar?",
+  "sec.retentionConfirm":
+    "Los originales, imágenes de firma y adjuntos de los sobres terminados hace más de {n} días se van a borrar para siempre. ¿Continuar?",
   "sec.days": "días",
   "sec.save": "Guardar",
   "sec.saved": "Guardado.",
@@ -192,7 +198,8 @@ const pt: Record<Key, string> = {
   "team.remove": "Remover",
   "team.leave": "Sair da organização",
   "team.removeConfirm": "Remover {name} da organização? O acesso é perdido imediatamente.",
-  "team.removeSsoNote": "Se a organização usa login único (SSO) ou SCIM, a pessoa não é adicionada de novo automaticamente: para que volte, convide-a novamente.",
+  "team.removeSsoNote":
+    "Se a organização usa login único (SSO) ou SCIM, a pessoa não é adicionada de novo automaticamente: para que volte, convide-a novamente.",
   "team.invite": "Convidar",
   "team.inviteTitle": "Convidar uma pessoa",
   "team.inviteSent": "Convite enviado para {email}. Você também pode compartilhar este link:",
@@ -228,7 +235,8 @@ const pt: Record<Key, string> = {
   "groups.none": "Ainda não há grupos.",
   "groups.members": "Integrantes",
   "groups.delete": "Excluir",
-  "groups.addRestricted": "Adicionar pessoas a este grupo dá acesso ao que foi compartilhado com ele: só um integrante do grupo, um proprietário ou quem vê todos os envelopes e gerencia os modelos pode fazer isso. Você pode remover integrantes.",
+  "groups.addRestricted":
+    "Adicionar pessoas a este grupo dá acesso ao que foi compartilhado com ele: só um integrante do grupo, um proprietário ou quem vê todos os envelopes e gerencia os modelos pode fazer isso. Você pode remover integrantes.",
   "share.title": "Compartilhar com grupos",
   "share.intro": "Os integrantes destes grupos podem ver o envelope e seu andamento (sem modificá-lo).",
   "share.introTemplate": "Escolha quem pode ver e usar este modelo.",
@@ -249,7 +257,8 @@ const pt: Record<Key, string> = {
   "audit.to": "Até",
   "audit.export": "Exportar CSV",
   "audit.more": "Ver mais",
-  "audit.csvTruncated": "O CSV tem os registros mais recentes; há mais. Para o restante, continue a exportação (baixa a parte seguinte) ou reduza as datas.",
+  "audit.csvTruncated":
+    "O CSV tem os registros mais recentes; há mais. Para o restante, continue a exportação (baixa a parte seguinte) ou reduza as datas.",
   "audit.exportContinue": "Continuar exportação",
   "audit.empty": "Não há registros com esses filtros.",
   "sec.title": "Segurança",
@@ -267,7 +276,8 @@ const pt: Record<Key, string> = {
   "sec.recoveryHelp": "Guarde-os em local seguro: cada um serve uma única vez para entrar se você perder o celular. Não são mostrados de novo.",
   "sec.regenerate": "Gerar novos códigos",
   "sec.passwordConfirm": "Confirme sua senha para continuar",
-  "sec.passwordConfirmHelp": "Por segurança, ativar a verificação em duas etapas ou gerar novos códigos pede sua senha (ou ter entrado há menos de 10 minutos).",
+  "sec.passwordConfirmHelp":
+    "Por segurança, ativar a verificação em duas etapas ou gerar novos códigos pede sua senha (ou ter entrado há menos de 10 minutos).",
   "sec.continue": "Continuar",
   "sec.sessions": "Sessões",
   "sec.sessionsHelp": "Dispositivos com uma sessão aberta na sua conta. Se não reconhecer alguma, encerre-a e troque sua senha.",
@@ -279,14 +289,16 @@ const pt: Record<Key, string> = {
   "sec.sessionUnknown": "Dispositivo desconhecido",
   "sec.sessionClose": "Encerrar",
   "sec.logoutAll": "Encerrar todas as sessões",
-  "sec.logoutAllConfirm": "Todas as sessões da sua conta serão encerradas (inclusive esta) e os acessos dos apps conectados serão revogados. Continuar?",
+  "sec.logoutAllConfirm":
+    "Todas as sessões da sua conta serão encerradas (inclusive esta) e os acessos dos apps conectados serão revogados. Continuar?",
   "sec.org": "Políticas da organização",
   "sec.require2fa": "Exigir verificação em duas etapas de todos os membros",
   "sec.require2faHelp": "Quem não a tiver ativa só poderá configurá-la até fazê-lo.",
   "sec.retention": "Retenção de documentos",
   "sec.retentionHelp":
     "Dias após o encerramento de um envelope (concluído, anulado, recusado ou expirado) em que os originais, as imagens de assinatura, os anexos e as fotos de identidade são apagados. O PDF assinado e o registro de evidências são sempre mantidos. Vazio = não apagar.",
-  "sec.retentionConfirm": "Os originais, imagens de assinatura e anexos dos envelopes encerrados há mais de {n} dias serão apagados para sempre. Continuar?",
+  "sec.retentionConfirm":
+    "Os originais, imagens de assinatura e anexos dos envelopes encerrados há mais de {n} dias serão apagados para sempre. Continuar?",
   "sec.days": "dias",
   "sec.save": "Salvar",
   "sec.saved": "Salvo.",
@@ -346,7 +358,8 @@ const en: Record<Key, string> = {
   "team.remove": "Remove",
   "team.leave": "Leave organization",
   "team.removeConfirm": "Remove {name} from the organization? They lose access immediately.",
-  "team.removeSsoNote": "If the organization uses single sign-on (SSO) or SCIM, they won't be added back automatically: to bring them back, invite them again.",
+  "team.removeSsoNote":
+    "If the organization uses single sign-on (SSO) or SCIM, they won't be added back automatically: to bring them back, invite them again.",
   "team.invite": "Invite",
   "team.inviteTitle": "Invite someone",
   "team.inviteSent": "Invitation sent to {email}. You can also share this link:",
@@ -382,7 +395,8 @@ const en: Record<Key, string> = {
   "groups.none": "No groups yet.",
   "groups.members": "Members",
   "groups.delete": "Delete",
-  "groups.addRestricted": "Adding people to this group gives them access to what was shared with it: only a group member, an owner or someone who can view all envelopes and manage templates can do it. You can remove members.",
+  "groups.addRestricted":
+    "Adding people to this group gives them access to what was shared with it: only a group member, an owner or someone who can view all envelopes and manage templates can do it. You can remove members.",
   "share.title": "Share with groups",
   "share.intro": "Members of these groups can view the envelope and its progress (not modify it).",
   "share.introTemplate": "Choose who can see and use this template.",
@@ -403,7 +417,8 @@ const en: Record<Key, string> = {
   "audit.to": "To",
   "audit.export": "Export CSV",
   "audit.more": "Load more",
-  "audit.csvTruncated": "The CSV has the most recent entries; there are more. For the rest, continue the export (downloads the next part) or narrow the dates.",
+  "audit.csvTruncated":
+    "The CSV has the most recent entries; there are more. For the rest, continue the export (downloads the next part) or narrow the dates.",
   "audit.exportContinue": "Continue export",
   "audit.empty": "No entries match these filters.",
   "sec.title": "Security",
@@ -421,7 +436,8 @@ const en: Record<Key, string> = {
   "sec.recoveryHelp": "Keep them somewhere safe: each one works once to sign in if you lose your phone. They won't be shown again.",
   "sec.regenerate": "Generate new codes",
   "sec.passwordConfirm": "Confirm your password to continue",
-  "sec.passwordConfirmHelp": "For security, turning on two-step verification or generating new codes asks for your password (or a sign-in less than 10 minutes ago).",
+  "sec.passwordConfirmHelp":
+    "For security, turning on two-step verification or generating new codes asks for your password (or a sign-in less than 10 minutes ago).",
   "sec.continue": "Continue",
   "sec.sessions": "Sessions",
   "sec.sessionsHelp": "Devices with an open session on your account. If you don't recognize one, sign it out and change your password.",
@@ -433,14 +449,16 @@ const en: Record<Key, string> = {
   "sec.sessionUnknown": "Unknown device",
   "sec.sessionClose": "Sign out",
   "sec.logoutAll": "Sign out of all sessions",
-  "sec.logoutAllConfirm": "All sessions on your account will be signed out (including this one) and connected apps' access will be revoked. Continue?",
+  "sec.logoutAllConfirm":
+    "All sessions on your account will be signed out (including this one) and connected apps' access will be revoked. Continue?",
   "sec.org": "Organization policies",
   "sec.require2fa": "Require two-step verification for all members",
   "sec.require2faHelp": "Members without it can only set it up until they do.",
   "sec.retention": "Document retention",
   "sec.retentionHelp":
     "Days after an envelope ends (completed, voided, declined or expired) when originals, signature images, attachments and ID photos are deleted. The signed PDF and the evidence log are always kept. Empty = never delete.",
-  "sec.retentionConfirm": "Originals, signature images and attachments of envelopes that ended more than {n} days ago will be permanently deleted. Continue?",
+  "sec.retentionConfirm":
+    "Originals, signature images and attachments of envelopes that ended more than {n} days ago will be permanently deleted. Continue?",
   "sec.days": "days",
   "sec.save": "Save",
   "sec.saved": "Saved.",
@@ -476,7 +494,7 @@ export type TeamsKey = Key;
 export function useRoleLabel() {
   const tt = useTeamsText();
   return (role: string, roleName?: string | null) =>
-    role === "owner" || role === "admin" || role === "member" ? tt(`role.${role}` as Key) : roleName ?? role;
+    role === "owner" || role === "admin" || role === "member" ? tt(`role.${role}` as Key) : (roleName ?? role);
 }
 
 export function useTeamsText() {

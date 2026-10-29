@@ -49,30 +49,25 @@ interface NewContact {
  * Reemplaza un destinatario pendiente por otro: el nuevo hereda rol, orden y campos; el anterior queda
  * 'delegated' o 'reassigned' con su link revocado. Debe correr con el sobre bloqueado.
  */
-export async function replaceRecipient(
-  db: Db,
-  e: any,
-  old: any,
-  c: NewContact,
-  kind: "delegated" | "reassigned",
-  actor: Actor,
-) {
+export async function replaceRecipient(db: Db, e: any, old: any, c: NewContact, kind: "delegated" | "reassigned", actor: Actor) {
   if (!["signer", "approver"].includes(old.role)) throw conflict("not_replaceable", "Solo se reemplazan firmantes o aprobadores");
   if (!["created", "sent", "viewed"].includes(old.status)) throw conflict("not_replaceable", "Este destinatario ya no está pendiente");
   // Cada delegación suma un destinatario, una invitación y una línea en el certificado: con tope por sobre.
   const reps = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM recipients WHERE envelope_id = $1 AND replaces IS NOT NULL`, [e.id]);
   if ((reps?.n ?? 0) >= 20) throw conflict("too_many_replacements", "Este sobre ya tuvo demasiadas delegaciones o reasignaciones");
-  const channels = c.channels?.length ? c.channels : [...(c.email ? (["email"] as const) : []), ...(!c.email && c.phone ? (["whatsapp"] as const) : [])];
+  const channels = c.channels?.length
+    ? c.channels
+    : [...(c.email ? (["email"] as const) : []), ...(!c.email && c.phone ? (["whatsapp"] as const) : [])];
   if (channels.includes("email") && !c.email) throw conflict("invalid_channels", "El canal email requiere email");
   if (channels.includes("whatsapp") && !c.phone) throw conflict("invalid_channels", "El canal WhatsApp requiere teléfono");
   // El reemplazo hereda la verificación que pidió el remitente: no se baja a "solo link" en silencio.
   // En persona: el reemplazo firma con el mismo anfitrión (sin anfitrión nadie podría abrirlo y no recibe invitación).
   // Si el anfitrión ya no es miembro de la organización (no puede abrir la sesión en persona), el reemplazo firma por link.
   const hostId = old.auth_method === "in_person" ? (old.in_person_host_user_id ?? null) : null;
-  const host =
-    hostId && (await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [e.tenant_id, hostId])) ? hostId : null;
+  const host = hostId && (await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [e.tenant_id, hostId])) ? hostId : null;
   const auth = old.auth_method === "in_person" && !host ? "link" : (old.auth_method ?? "link");
-  if (auth === "otp_email" && !c.email) throw conflict("otp_destination_required", "Este firmante se verifica con un código por correo: indicá el correo de la persona");
+  if (auth === "otp_email" && !c.email)
+    throw conflict("otp_destination_required", "Este firmante se verifica con un código por correo: indicá el correo de la persona");
   if ((auth === "otp_sms" || auth === "otp_whatsapp") && !c.phone)
     throw conflict("otp_destination_required", "Este firmante se verifica con un código por SMS/WhatsApp: indicá el teléfono de la persona");
 
@@ -140,11 +135,10 @@ export async function replaceRecipient(
   const { idDocumentSource: _prevSource, ...inheritedReqs } = inherited ?? {};
   const delegatorDoc = kind === "delegated" && idDocumentNumber !== null;
   const reqs = inherited || delegatorDoc ? { ...inheritedReqs, ...(delegatorDoc ? { idDocumentSource: "delegator" } : {}) } : null;
-  await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = ${downgradeIdMatchSql("$3::jsonb", "id_document_number")} WHERE id = $1`, [
-    id,
-    old.signature_type ?? "electronic",
-    reqs ? JSON.stringify(reqs) : null,
-  ]);
+  await db.query(
+    `UPDATE recipients SET signature_type = $2, certificate_requirements = ${downgradeIdMatchSql("$3::jsonb", "id_document_number")} WHERE id = $1`,
+    [id, old.signature_type ?? "electronic", reqs ? JSON.stringify(reqs) : null],
+  );
   await db.query(
     `UPDATE recipients SET status = $2, replaced_by = $3, replace_reason = $4, access_token_hash = NULL, access_token_enc = NULL WHERE id = $1`,
     [old.id, kind, id, c.reason ?? null],
@@ -159,9 +153,7 @@ export async function replaceRecipient(
       from: { id: old.id, name: old.name },
       to: { id, name: c.name, email: c.email ? maskDestination(c.email) : null, phone: c.phone ? maskDestination(c.phone) : null },
       reason: c.reason ?? null,
-      ...(idDocumentNumber
-        ? { idDocument: maskDocNumber(idDocumentNumber), idDocumentSource: kind === "delegated" ? "delegator" : "sender" }
-        : {}),
+      ...(idDocumentNumber ? { idDocument: maskDocNumber(idDocumentNumber), idDocumentSource: kind === "delegated" ? "delegator" : "sender" } : {}),
     },
   });
   // Si el anterior ya estaba invitado, el nuevo recibe la invitación ahora; si no, cuando llegue su turno.

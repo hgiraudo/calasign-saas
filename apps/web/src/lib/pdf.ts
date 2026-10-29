@@ -13,13 +13,12 @@ let lib: Promise<PdfJs> | null = null;
 /** El módulo de pdf.js (TextLayer, getDocument…), cargado una sola vez. */
 export function pdfjs(): Promise<PdfJs> {
   if (!lib) {
-    lib = Promise.all([
-      import("pdfjs-dist/legacy/build/pdf.mjs") as Promise<PdfJs>,
-      import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
-    ]).then(([m, worker]) => {
-      m.GlobalWorkerOptions.workerSrc = worker.default;
-      return m;
-    });
+    lib = Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs") as Promise<PdfJs>, import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url")]).then(
+      ([m, worker]) => {
+        m.GlobalWorkerOptions.workerSrc = worker.default;
+        return m;
+      },
+    );
     // Un fallo (red, deploy) no queda guardado: el próximo intento vuelve a pedirlo.
     lib.catch(() => {
       lib = null;
@@ -83,15 +82,16 @@ function loadPdf(url: string): Promise<PDFDocumentProxy> {
   let p = cache.get(url);
   if (!p) {
     p = Promise.all([fetchArrayBuffer(url), pdfjs()])
-      .then(([data, m]) =>
-        m.getDocument({
-          data: new Uint8Array(data),
-          isEvalSupported: false,
-          // Fuentes estándar y CMaps servidos por la propia app (ver vite.config.ts).
-          standardFontDataUrl: "/pdfjs/standard_fonts/",
-          cMapUrl: "/pdfjs/cmaps/",
-          cMapPacked: true,
-        }).promise,
+      .then(
+        ([data, m]) =>
+          m.getDocument({
+            data: new Uint8Array(data),
+            isEvalSupported: false,
+            // Fuentes estándar y CMaps servidos por la propia app (ver vite.config.ts).
+            standardFontDataUrl: "/pdfjs/standard_fonts/",
+            cMapUrl: "/pdfjs/cmaps/",
+            cMapPacked: true,
+          }).promise,
       )
       .catch((e: unknown) => {
         // Mientras se recarga la página no se muestra el error (la promesa queda pendiente).

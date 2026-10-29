@@ -81,7 +81,11 @@ export function tokenizeFormula(src: string): Tok[] {
   return out;
 }
 
-export type FormulaNode = { t: "num"; v: number } | { t: "ref"; v: string } | { t: "neg"; e: FormulaNode } | { t: "bin"; op: string; a: FormulaNode; b: FormulaNode };
+export type FormulaNode =
+  | { t: "num"; v: number }
+  | { t: "ref"; v: string }
+  | { t: "neg"; e: FormulaNode }
+  | { t: "bin"; op: string; a: FormulaNode; b: FormulaNode };
 
 /** Parser recursivo descendente (sin eval): expr := term (('+'|'-') term)*; term := unary (('*'|'/') unary)*. */
 export function parseFormula(src: string): FormulaNode {
@@ -234,10 +238,13 @@ export function computeHidden(fields: LogicField[], valueOf: (id: string) => str
  * Ocultos y calculados juntos. Una condición que cita un campo con fórmula mira el valor CALCULADO, no el que haya
  * mandado el firmante ni el guardado (antes, mandando "" en el total se ocultaba un campo obligatorio que dependía de él).
  */
-export function computeLogic(fields: LogicField[], valueOf: (id: string) => string | null): { hidden: Set<string>; computed: Map<string, string | null> } {
+export function computeLogic(
+  fields: LogicField[],
+  valueOf: (id: string) => string | null,
+): { hidden: Set<string>; computed: Map<string, string | null> } {
   const isFormula = new Set(fields.filter((f) => f.formula).map((f) => f.id));
   const pre = computeFormulas(fields, valueOf, new Set());
-  const hidden = computeHidden(fields, (id) => (isFormula.has(id) ? pre.get(id) ?? null : valueOf(id)));
+  const hidden = computeHidden(fields, (id) => (isFormula.has(id) ? (pre.get(id) ?? null) : valueOf(id)));
   return { hidden, computed: computeFormulas(fields, valueOf, hidden) };
 }
 
@@ -254,10 +261,15 @@ export function computeFormulas(fields: LogicField[], valueOf: (id: string) => s
       if (!out.has(f.id)) {
         if (visiting.has(f.id)) return null;
         visiting.add(f.id);
-        out.set(f.id, formatComputed(evaluateFormula(f.formula, (label) => {
-          const ref = byLabel.get(label.trim().toLowerCase());
-          return ref ? numOf(ref) : null;
-        })));
+        out.set(
+          f.id,
+          formatComputed(
+            evaluateFormula(f.formula, (label) => {
+              const ref = byLabel.get(label.trim().toLowerCase());
+              return ref ? numOf(ref) : null;
+            }),
+          ),
+        );
         visiting.delete(f.id);
       }
       const v = out.get(f.id);
@@ -269,7 +281,6 @@ export function computeFormulas(fields: LogicField[], valueOf: (id: string) => s
   for (const f of numbers) if (f.formula && !hidden.has(f.id)) numOf(f);
   return out;
 }
-
 
 /** Lo que fija el servidor al completar en los campos propios cuyo valor no decide el firmante. */
 export interface SignerFixedValues {

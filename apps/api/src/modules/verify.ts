@@ -55,7 +55,12 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
       match: true,
       sha256,
       // Marca blanca: el nombre de la marca del sobre (sub-marca o nombre visible de la organización).
-      envelope: { id: hit.id, subject: hit.subject, organizationName: await brandForEnvelope(s.db, hit).then((b) => b.name || hit.org), completedAt: iso(hit.completed_at) },
+      envelope: {
+        id: hit.id,
+        subject: hit.subject,
+        organizationName: await brandForEnvelope(s.db, hit).then((b) => b.name || hit.org),
+        completedAt: iso(hit.completed_at),
+      },
       participants: participants.map((p) => ({ name: p.name, role: p.role, signedAt: iso(p.signed_at) })),
       seal: { format: seal.format ?? null, provider: seal.provider ?? null, timestamped: /^PAdES-B-(T|LT|LTA)$/.test(seal.format ?? "") },
       chain: { ok: chain.ok, events: rows.length, head: chain.head, ...(chain.reason ? { reason: chain.reason } : {}) },
@@ -81,7 +86,12 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
  *    error de lectura no se guarda como ''.
  * `cached` devuelve files.chain_head para compararlo con lo leído del PDF (no puede contradecirlo).
  */
-export async function printedChainHead(s: Services, fileId: string, stored: string | null, bytes: Uint8Array): Promise<{ head: string | null; cached: string | null }> {
+export async function printedChainHead(
+  s: Services,
+  fileId: string,
+  stored: string | null,
+  bytes: Uint8Array,
+): Promise<{ head: string | null; cached: string | null }> {
   const cached = stored || null;
   const fromBytes = findChainHeadKeyword(bytes);
   if (fromBytes) return { head: fromBytes, cached };

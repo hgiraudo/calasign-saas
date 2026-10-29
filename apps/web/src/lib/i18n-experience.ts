@@ -27,7 +27,8 @@ const es = {
   "inperson.declinedText": "El rechazo quedó registrado. Devolvé el dispositivo a {host}.",
   "correct.button": "Corregir",
   "correct.title": "Corregir el sobre en curso",
-  "correct.intro": "Los cambios de correo, teléfono o canales envían un link nuevo y anulan el anterior. Quien ya firmó no se puede modificar, y solo se quitan destinatarios que todavía no abrieron el sobre.",
+  "correct.intro":
+    "Los cambios de correo, teléfono o canales envían un link nuevo y anulan el anterior. Quien ya firmó no se puede modificar, y solo se quitan destinatarios que todavía no abrieron el sobre.",
   "correct.message": "Mensaje para los firmantes",
   "correct.expires": "Vence",
   "correct.recipients": "Destinatarios pendientes",
@@ -114,7 +115,8 @@ const pt: Dict = {
   "inperson.declinedText": "A recusa foi registrada. Devolva o dispositivo para {host}.",
   "correct.button": "Corrigir",
   "correct.title": "Corrigir o envelope em andamento",
-  "correct.intro": "Mudanças de e-mail, telefone ou canais enviam um link novo e anulam o anterior. Quem já assinou não pode ser alterado, e só se removem destinatários que ainda não abriram o envelope.",
+  "correct.intro":
+    "Mudanças de e-mail, telefone ou canais enviam um link novo e anulam o anterior. Quem já assinou não pode ser alterado, e só se removem destinatários que ainda não abriram o envelope.",
   "correct.message": "Mensagem para os signatários",
   "correct.expires": "Expira",
   "correct.recipients": "Destinatários pendentes",
@@ -198,7 +200,8 @@ const en: Dict = {
   "inperson.declinedText": "Your decline was recorded. Please hand the device back to {host}.",
   "correct.button": "Correct",
   "correct.title": "Correct the envelope in progress",
-  "correct.intro": "Changing email, phone or channels sends a new link and revokes the previous one. Signers who already signed can't be changed, and only recipients who haven't opened the envelope can be removed.",
+  "correct.intro":
+    "Changing email, phone or channels sends a new link and revokes the previous one. Signers who already signed can't be changed, and only recipients who haven't opened the envelope can be removed.",
   "correct.message": "Message to signers",
   "correct.expires": "Expires",
   "correct.recipients": "Pending recipients",

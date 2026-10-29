@@ -40,7 +40,7 @@ export function ApiKeysPage() {
   // Como la API (assertCanGrant / assertCanManageApiKey): solo roles o keys con permisos que quien está en la sesión tiene.
   const canGrant = (perms: readonly string[] | null | undefined) => canManagePerms(access, perms);
   const keyPerms = (k: KeyRole | undefined) =>
-    !k ? null : roleOptions.find((o) => o.value === (k.role === "custom" ? `custom:${k.roleId}` : k.role))?.permissions ?? null;
+    !k ? null : (roleOptions.find((o) => o.value === (k.role === "custom" ? `custom:${k.roleId}` : k.role))?.permissions ?? null);
 
   const load = () =>
     Promise.all([api<{ items: ApiKey[] }>("/v1/api-keys"), api<{ items: KeyRole[] }>("/v1/api-keys/roles")])
@@ -51,7 +51,9 @@ export function ApiKeysPage() {
       .catch((e) => setError(errorText(e)));
 
   useEffect(() => {
-    api<{ items: { id: string; name: string; permissions: Permission[] }[]; builtin: { role: string; name: string; permissions: Permission[] }[] }>("/v1/roles")
+    api<{ items: { id: string; name: string; permissions: Permission[] }[]; builtin: { role: string; name: string; permissions: Permission[] }[] }>(
+      "/v1/roles",
+    )
       .then((r) =>
         setRoleOptions([
           ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, role: b.role, name: null, permissions: b.permissions })),
@@ -144,7 +146,10 @@ export function ApiKeysPage() {
             </select>
           </label>
         )}
-        <button className="btn btn-primary" disabled={busy || !name.trim() || !inPlan || !canGrant(roleOptions.find((o) => o.value === role)?.permissions)}>
+        <button
+          className="btn btn-primary"
+          disabled={busy || !name.trim() || !inPlan || !canGrant(roleOptions.find((o) => o.value === role)?.permissions)}
+        >
           {t("keys.create")}
         </button>
       </form>

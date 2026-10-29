@@ -68,7 +68,8 @@ export function InviteAcceptPage() {
 
   const body = () => {
     if (!inv) return error ? <ErrorBox error={error} /> : <Spinner />;
-    if (inv.status !== "pending") return <div className="alert alert-warn">{tt("inv.invalid", { status: tt(`team.status.${inv.status}` as const) })}</div>;
+    if (inv.status !== "pending")
+      return <div className="alert alert-warn">{tt("inv.invalid", { status: tt(`team.status.${inv.status}` as const) })}</div>;
     if (challenge) return <TwoFactorStep challengeToken={challenge} onDone={done} onBack={() => setChallenge(null)} />;
     const vars = { org: inv.organizationName, role: roleLabel(inv.role, inv.roleName), inviter: inv.invitedByName ?? "", email: inv.email };
     return (
@@ -93,7 +94,14 @@ export function InviteAcceptPage() {
             </label>
             <label className="field">
               <span>{tt("inv.passwordNew")}</span>
-              <input type="password" autoComplete="new-password" required minLength={10} value={password} onChange={(e) => setPassword(e.target.value)} />
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={10}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
             </label>
           </>
         )}

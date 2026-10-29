@@ -39,7 +39,8 @@ const es = {
   deactivate: "Desactivar",
   test: "Probar",
   testOk: "La conexión funciona.",
-  testAccountUnknown: "La conexión funciona, pero no se pudo determinar la compañía de Factorial (¿todavía no tiene empleados?): al desconectarla se revoca el acceso de la app aunque otra conexión use la misma cuenta. Volvé a probarla después de cargar un empleado.",
+  testAccountUnknown:
+    "La conexión funciona, pero no se pudo determinar la compañía de Factorial (¿todavía no tiene empleados?): al desconectarla se revoca el acceso de la app aunque otra conexión use la misma cuenta. Volvé a probarla después de cargar un empleado.",
   delete: "Quitar",
   lastError: "Último error",
   lastSuccess: "Último uso correcto",
@@ -124,7 +125,8 @@ type Key = keyof typeof es;
 
 const pt: Record<Key, string> = {
   "card.title": "RH e contratos",
-  "card.desc": "Enviar para assinatura a partir do BambooHR, HiBob, Factorial, Ironclad ou Juro e devolver o assinado com a evidência ao prontuário ou ao contrato.",
+  "card.desc":
+    "Enviar para assinatura a partir do BambooHR, HiBob, Factorial, Ironclad ou Juro e devolver o assinado com a evidência ao prontuário ou ao contrato.",
   back: "← Configurações",
   title: "Recursos humanos e contratos",
   intro:
@@ -157,7 +159,8 @@ const pt: Record<Key, string> = {
   deactivate: "Desativar",
   test: "Testar",
   testOk: "A conexão funciona.",
-  testAccountUnknown: "A conexão funciona, mas não foi possível determinar a empresa no Factorial (ainda não tem funcionários?): ao desconectá-la, o acesso do app é revogado mesmo que outra conexão use a mesma conta. Teste de novo depois de cadastrar um funcionário.",
+  testAccountUnknown:
+    "A conexão funciona, mas não foi possível determinar a empresa no Factorial (ainda não tem funcionários?): ao desconectá-la, o acesso do app é revogado mesmo que outra conexão use a mesma conta. Teste de novo depois de cadastrar um funcionário.",
   delete: "Remover",
   lastError: "Último erro",
   lastSuccess: "Último uso correto",
@@ -241,7 +244,8 @@ const pt: Record<Key, string> = {
 
 const en: Record<Key, string> = {
   "card.title": "HR and contracts",
-  "card.desc": "Send for signature from BambooHR, HiBob, Factorial, Ironclad or Juro and return the signed copy with its evidence to the employee file or contract.",
+  "card.desc":
+    "Send for signature from BambooHR, HiBob, Factorial, Ironclad or Juro and return the signed copy with its evidence to the employee file or contract.",
   back: "← Settings",
   title: "HR and contracts",
   intro:
@@ -274,7 +278,8 @@ const en: Record<Key, string> = {
   deactivate: "Deactivate",
   test: "Test",
   testOk: "The connection works.",
-  testAccountUnknown: "The connection works, but the Factorial company could not be determined (no employees yet?): disconnecting it revokes the app's access even if another connection uses the same account. Test it again after adding an employee.",
+  testAccountUnknown:
+    "The connection works, but the Factorial company could not be determined (no employees yet?): disconnecting it revokes the app's access even if another connection uses the same account. Test it again after adding an employee.",
   delete: "Remove",
   lastError: "Last error",
   lastSuccess: "Last successful use",

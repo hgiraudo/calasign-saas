@@ -73,7 +73,8 @@ export async function applyCertificateFlags(
 ) {
   for (const r of list) {
     if (r.signatureType === undefined && r.certificateRequirements === undefined) continue;
-    if (r.signatureType === "certificate" && (r.role ?? "signer") !== "signer") throw badRequest("certificate_not_applicable", "Solo un firmante puede firmar con certificado");
+    if (r.signatureType === "certificate" && (r.role ?? "signer") !== "signer")
+      throw badRequest("certificate_not_applicable", "Solo un firmante puede firmar con certificado");
     await db.query(
       `UPDATE recipients SET signature_type = COALESCE($3, signature_type),
          certificate_requirements = CASE WHEN $4::boolean THEN $5::jsonb ELSE certificate_requirements END
@@ -82,7 +83,10 @@ export async function applyCertificateFlags(
     );
   }
   // Un rol que dejó de ser firmante no puede seguir con firma con certificado.
-  await db.query(`UPDATE recipients SET signature_type = 'electronic' WHERE envelope_id = $1 AND role <> 'signer' AND signature_type = 'certificate'`, [envelopeId]);
+  await db.query(
+    `UPDATE recipients SET signature_type = 'electronic' WHERE envelope_id = $1 AND role <> 'signer' AND signature_type = 'certificate'`,
+    [envelopeId],
+  );
   // Exigir que el certificado corresponda al documento sin cargar el documento: antes el control se salteaba en silencio
   // y firmaba cualquier certificado válido. Solo los destinatarios de este guardado (un alta suelta no se traba por otro).
   const missing = await db.one<{ name: string }>(
@@ -114,7 +118,10 @@ export async function discardCertsignFiles(db: Db, blobs: BlobStore, envelopeId:
   let ok = true;
   // Códigos sin usar: ya no sirven (el sobre está cerrado).
   await db.query(`UPDATE certsign_sessions SET status = 'expired' WHERE envelope_id = $1 AND status IN ('created','prepared')`, [envelopeId]);
-  const sessions = await db.query<{ id: string; prepared_key: string }>(`SELECT id, prepared_key FROM certsign_sessions WHERE envelope_id = $1 AND prepared_key IS NOT NULL`, [envelopeId]);
+  const sessions = await db.query<{ id: string; prepared_key: string }>(
+    `SELECT id, prepared_key FROM certsign_sessions WHERE envelope_id = $1 AND prepared_key IS NOT NULL`,
+    [envelopeId],
+  );
   for (const x of sessions) {
     try {
       await blobs.delete(x.prepared_key);
@@ -255,36 +262,47 @@ export async function certsignStage(
   const sha = sha256Hex(working);
   const key = `tenants/${e.tenant_id}/envelopes/${e.id}/certsign/${uuidv7()}-working.pdf`;
   await d.blobs.put(key, working, "application/pdf");
-  const ordered = [...certSigners].sort((a, b) => a.routing_order - b.routing_order || String(a.created_at).localeCompare(String(b.created_at)) || a.id.localeCompare(b.id));
-  const stored = await d.db.tx(async (t) => {
-    const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-    if (cur?.status !== "finalizing") return false;
-    if (await t.one(`SELECT 1 FROM envelope_certsign WHERE envelope_id = $1`, [e.id])) return false;
-    await t.query(
-      `INSERT INTO envelope_certsign (envelope_id, tenant_id, working_key, working_sha256, completed_at, chain_head) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [e.id, e.tenant_id, key, sha, input.certificate.completedAt, input.certificate.chainHead],
-    );
-    for (const [i, r] of ordered.entries()) {
+  const ordered = [...certSigners].sort(
+    (a, b) => a.routing_order - b.routing_order || String(a.created_at).localeCompare(String(b.created_at)) || a.id.localeCompare(b.id),
+  );
+  const stored = await d.db
+    .tx(async (t) => {
+      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      if (cur?.status !== "finalizing") return false;
+      if (await t.one(`SELECT 1 FROM envelope_certsign WHERE envelope_id = $1`, [e.id])) return false;
       await t.query(
-        `INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name) VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT (recipient_id) DO NOTHING`,
-        [uuidv7(), e.tenant_id, e.id, r.id, i + 1, `FirmaCertificado${i + 1}`],
+        `INSERT INTO envelope_certsign (envelope_id, tenant_id, working_key, working_sha256, completed_at, chain_head) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [e.id, e.tenant_id, key, sha, input.certificate.completedAt, input.certificate.chainHead],
       );
-    }
-    await t.query(`UPDATE envelopes SET status = 'awaiting_certificates', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
-    await appendEvent(t, {
-      tenantId: e.tenant_id,
-      envelopeId: e.id,
-      type: "envelope.awaiting_certificates",
-      actor: SYSTEM,
-      data: { workingSha256: sha, signers: ordered.map((r, i) => ({ recipientId: r.id, name: r.name, position: i + 1 })) },
+      for (const [i, r] of ordered.entries()) {
+        await t.query(
+          `INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name) VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (recipient_id) DO NOTHING`,
+          [uuidv7(), e.tenant_id, e.id, r.id, i + 1, `FirmaCertificado${i + 1}`],
+        );
+      }
+      await t.query(`UPDATE envelopes SET status = 'awaiting_certificates', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [
+        e.id,
+      ]);
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "envelope.awaiting_certificates",
+        actor: SYSTEM,
+        data: { workingSha256: sha, signers: ordered.map((r, i) => ({ recipientId: r.id, name: r.name, position: i + 1 })) },
+      });
+      await enqueue(
+        t,
+        "notify",
+        { kind: "certificate_request", envelopeId: e.id, recipientId: ordered[0].id, tenantId: e.tenant_id },
+        { dedupeKey: `certificate_request:${ordered[0].id}` },
+      );
+      return true;
+    })
+    .catch(async (err) => {
+      await d.blobs.delete(key).catch(() => {});
+      throw err;
     });
-    await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: ordered[0].id, tenantId: e.tenant_id }, { dedupeKey: `certificate_request:${ordered[0].id}` });
-    return true;
-  }).catch(async (err) => {
-    await d.blobs.delete(key).catch(() => {});
-    throw err;
-  });
   // Otra corrida ya armó el PDF de trabajo (o el sobre cambió de estado): este no lo referencia nada.
   if (!stored) await d.blobs.delete(key).catch(() => {});
   d.log.info({ envelopeId: e.id, signers: ordered.length }, "sobre esperando firmas con certificado");
@@ -305,7 +323,8 @@ export async function certificateStepFor(db: Db, r: any, e: any): Promise<Signin
   const mine = rows.find((x) => x.recipient_id === r.id);
   const pending = rows.find((x) => x.status === "pending");
   const signedCount = rows.filter((x) => x.status === "signed").length;
-  const status: SigningCertificateStep["status"] = mine?.status === "signed" ? "signed" : e.status === "awaiting_certificates" && pending?.recipient_id === r.id ? "your_turn" : "waiting";
+  const status: SigningCertificateStep["status"] =
+    mine?.status === "signed" ? "signed" : e.status === "awaiting_certificates" && pending?.recipient_id === r.id ? "your_turn" : "waiting";
   return {
     status,
     position: mine?.position ?? 0,
@@ -341,7 +360,8 @@ async function sessionByCode(db: Db, code: string) {
   const s = await db.one<any>(`SELECT * FROM certsign_sessions WHERE code_hash = $1`, [codeHash(code)]);
   if (!s) throw notFound("Código");
   if (s.status === "completed") throw new AppError(410, "code_used", "Este código ya se usó");
-  if (s.status === "expired" || new Date(s.expires_at) < new Date()) throw new AppError(410, "code_expired", "El código venció: generá uno nuevo desde el link de firma");
+  if (s.status === "expired" || new Date(s.expires_at) < new Date())
+    throw new AppError(410, "code_expired", "El código venció: generá uno nuevo desde el link de firma");
   if (s.status === "failed") throw new AppError(410, "code_failed", "El código quedó inválido: generá uno nuevo desde el link de firma");
   return s;
 }
@@ -349,7 +369,8 @@ async function sessionByCode(db: Db, code: string) {
 /** El firmante sigue siendo el de turno y el PDF no cambió desde que se generó el código. */
 async function assertStillCurrent(db: Db, s: any) {
   const e = await db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [s.envelope_id]);
-  if (!e || e.status !== "awaiting_certificates" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no espera firmas con certificado");
+  if (!e || e.status !== "awaiting_certificates" || pastExpiry(e))
+    throw new AppError(410, "envelope_closed", "El sobre ya no espera firmas con certificado");
   const pending = await currentPending(db, e.id);
   if (pending?.recipient_id !== s.recipient_id) throw conflict("not_your_turn", "No es el turno de este firmante");
   const cs = await db.one<any>(`SELECT * FROM envelope_certsign WHERE envelope_id = $1`, [e.id]);
@@ -431,7 +452,10 @@ export async function checkChainRevocation(chainDer: Uint8Array[], fetcher = gua
     timer = setTimeout(() => res({ status: "not_checked", source: null, checkedAt: checkedAt.toISOString() }), REVOCATION_DEADLINE_MS);
   });
   try {
-    return await Promise.race([run().catch(() => ({ status: "not_checked", source: null, checkedAt: checkedAt.toISOString() }) as CertsignRevocation), deadline]);
+    return await Promise.race([
+      run().catch(() => ({ status: "not_checked", source: null, checkedAt: checkedAt.toISOString() }) as CertsignRevocation),
+      deadline,
+    ]);
   } finally {
     clearTimeout(timer);
   }
@@ -599,7 +623,10 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     // Solo si la sesión sigue abierta: una firma concurrente ya pudo completarla (o un código nuevo, vencerla).
     const replaced = await s.db
       .tx(async (t) => {
-        const cur = await t.one<{ status: string; prepared_key: string | null }>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
+        const cur = await t.one<{ status: string; prepared_key: string | null }>(
+          `SELECT status, prepared_key FROM certsign_sessions WHERE id = $1 FOR UPDATE`,
+          [sess.id],
+        );
         if (!cur || !["created", "prepared"].includes(cur.status)) return null;
         await t.query(
           `UPDATE certsign_sessions SET status = 'prepared', prepared_key = $2, byte_range = $3, signed_attrs = $4, chain_der = $5,
@@ -696,7 +723,8 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     }
     // Control final: la firma nueva y las anteriores siguen íntegras.
     const report = await validatePdf(pdf, { trustAnchors: await trustAnchors() });
-    if (!report.signatures.length || !report.signatures.every((x) => x.integrity.valid)) throw badRequest("signature_failed", "El PDF firmado no verifica");
+    if (!report.signatures.length || !report.signatures.every((x) => x.integrity.valid))
+      throw badRequest("signature_failed", "El PDF firmado no verifica");
     const check = sess.cert_check as any;
     const sha = sha256Hex(pdf);
     const key = `tenants/${sess.tenant_id}/envelopes/${sess.envelope_id}/certsign/${uuidv7()}-working.pdf`;
@@ -704,81 +732,98 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     const actor = recipientActorFromSession(req, r);
     let envelopeStatus = "awaiting_certificates";
     let superseded: string[] = [];
-    await s.db.tx(async (t) => {
-      const e = await lockEnvelope(t, sess.tenant_id, sess.envelope_id);
-      const cur = await t.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
-      if (cur?.status !== "prepared") throw new AppError(410, "code_used", "Este código ya se usó");
-      // Control optimista: si el certificado se volvió a mandar mientras tanto (preparación nueva), esta firma es de los
-      // atributos anteriores y el PDF que se armó sale de un preparado que ya no es el vigente.
-      if (cur.prepared_key !== sess.prepared_key) throw conflict("document_changed", "El documento se volvió a preparar: firmá de nuevo");
-      const { pending, cs: prev } = await assertStillCurrent(t, sess);
-      // El PDF de trabajo anterior y el preparado de esta sesión ya no los usa nada (ninguno tiene fila en `files`,
-      // así que la retención no los ve): se borran después de confirmar.
-      superseded = [prev.working_key, sess.prepared_key].filter(Boolean);
-      await t.query(`UPDATE envelope_certsign SET working_key = $2, working_sha256 = $3, updated_at = now() WHERE envelope_id = $1`, [e.id, key, sha]);
-      await t.query(
-        `UPDATE certificate_signatures SET status = 'signed', subject = $2, issuer = $3, common_name = $4, serial_number = $5, not_before = $6,
-           not_after = $7, cert_sha256 = $8, trusted = $9, identity_source = $10, signed_at = now(), signed_pdf_sha256 = $11 WHERE id = $1`,
-        [
-          pending.id,
-          check.subject,
-          check.issuer,
-          check.commonName,
-          check.serialNumber,
-          check.notBefore,
-          check.notAfter,
-          check.sha256,
-          Boolean(check.trusted),
-          check.identityMatch?.source ?? null,
+    await s.db
+      .tx(async (t) => {
+        const e = await lockEnvelope(t, sess.tenant_id, sess.envelope_id);
+        const cur = await t.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
+        if (cur?.status !== "prepared") throw new AppError(410, "code_used", "Este código ya se usó");
+        // Control optimista: si el certificado se volvió a mandar mientras tanto (preparación nueva), esta firma es de los
+        // atributos anteriores y el PDF que se armó sale de un preparado que ya no es el vigente.
+        if (cur.prepared_key !== sess.prepared_key) throw conflict("document_changed", "El documento se volvió a preparar: firmá de nuevo");
+        const { pending, cs: prev } = await assertStillCurrent(t, sess);
+        // El PDF de trabajo anterior y el preparado de esta sesión ya no los usa nada (ninguno tiene fila en `files`,
+        // así que la retención no los ve): se borran después de confirmar.
+        superseded = [prev.working_key, sess.prepared_key].filter(Boolean);
+        await t.query(`UPDATE envelope_certsign SET working_key = $2, working_sha256 = $3, updated_at = now() WHERE envelope_id = $1`, [
+          e.id,
+          key,
           sha,
-        ],
-      );
-      await t.query(`UPDATE certsign_sessions SET status = 'completed', completed_at = now(), prepared_key = NULL WHERE id = $1`, [sess.id]);
-      await appendEvent(t, {
-        tenantId: e.tenant_id,
-        envelopeId: e.id,
-        type: "recipient.certificate_signed",
-        actor,
-        data: {
-          recipientId: r.id,
-          position: pending.position,
-          fieldName: pending.field_name,
-          subject: check.subject,
-          issuer: check.issuer,
-          serialNumber: check.serialNumber,
-          notBefore: check.notBefore,
-          notAfter: check.notAfter,
-          certSha256: check.sha256,
-          trusted: Boolean(check.trusted),
-          identityMatch: check.identityMatch?.source ?? null,
-          // Se pedía corresponder al documento pero no había documento con qué comparar: el control no se aplicó.
-          ...(check.idDocumentMatch ? { idDocumentMatch: check.idDocumentMatch } : {}),
-          // El número de documento lo indicó quien delegó la firma.
-          ...(check.idDocumentSource ? { idDocumentSource: check.idDocumentSource } : {}),
-          // Estado de revocación al momento de preparar la firma ("not_checked" si la CA no respondió).
-          revocation: check.revocation?.status ?? "not_checked",
-          revocationSource: check.revocation?.source ?? null,
-          revocationCheckedAt: check.revocation?.checkedAt ?? null,
-          signatureAlgorithm: sess.signature_algorithm,
-          timestamped,
-          signedPdfSha256: sha,
-        },
+        ]);
+        await t.query(
+          `UPDATE certificate_signatures SET status = 'signed', subject = $2, issuer = $3, common_name = $4, serial_number = $5, not_before = $6,
+           not_after = $7, cert_sha256 = $8, trusted = $9, identity_source = $10, signed_at = now(), signed_pdf_sha256 = $11 WHERE id = $1`,
+          [
+            pending.id,
+            check.subject,
+            check.issuer,
+            check.commonName,
+            check.serialNumber,
+            check.notBefore,
+            check.notAfter,
+            check.sha256,
+            Boolean(check.trusted),
+            check.identityMatch?.source ?? null,
+            sha,
+          ],
+        );
+        await t.query(`UPDATE certsign_sessions SET status = 'completed', completed_at = now(), prepared_key = NULL WHERE id = $1`, [sess.id]);
+        await appendEvent(t, {
+          tenantId: e.tenant_id,
+          envelopeId: e.id,
+          type: "recipient.certificate_signed",
+          actor,
+          data: {
+            recipientId: r.id,
+            position: pending.position,
+            fieldName: pending.field_name,
+            subject: check.subject,
+            issuer: check.issuer,
+            serialNumber: check.serialNumber,
+            notBefore: check.notBefore,
+            notAfter: check.notAfter,
+            certSha256: check.sha256,
+            trusted: Boolean(check.trusted),
+            identityMatch: check.identityMatch?.source ?? null,
+            // Se pedía corresponder al documento pero no había documento con qué comparar: el control no se aplicó.
+            ...(check.idDocumentMatch ? { idDocumentMatch: check.idDocumentMatch } : {}),
+            // El número de documento lo indicó quien delegó la firma.
+            ...(check.idDocumentSource ? { idDocumentSource: check.idDocumentSource } : {}),
+            // Estado de revocación al momento de preparar la firma ("not_checked" si la CA no respondió).
+            revocation: check.revocation?.status ?? "not_checked",
+            revocationSource: check.revocation?.source ?? null,
+            revocationCheckedAt: check.revocation?.checkedAt ?? null,
+            signatureAlgorithm: sess.signature_algorithm,
+            timestamped,
+            signedPdfSha256: sha,
+          },
+        });
+        const next = await currentPending(t, e.id);
+        if (next) {
+          await enqueue(
+            t,
+            "notify",
+            { kind: "certificate_request", envelopeId: e.id, recipientId: next.recipient_id, tenantId: e.tenant_id },
+            { dedupeKey: `certificate_request:${next.recipient_id}` },
+          );
+        } else {
+          await t.query(`UPDATE envelope_certsign SET ready = true, updated_at = now() WHERE envelope_id = $1`, [e.id]);
+          await t.query(`UPDATE envelopes SET status = 'finalizing', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
+          await appendEvent(t, {
+            tenantId: e.tenant_id,
+            envelopeId: e.id,
+            type: "envelope.finalizing",
+            actor: SYSTEM,
+            data: { afterCertificateSignatures: true },
+          });
+          await enqueue(t, "finalize", { envelopeId: e.id, tenantId: e.tenant_id }, { dedupeKey: `finalize-certsign:${e.id}` });
+          envelopeStatus = "finalizing";
+        }
+      })
+      .catch(async (err) => {
+        // El PDF firmado ya subido no lo referencia nada si la transacción no se confirmó.
+        await s.blobs.delete(key).catch(() => {});
+        throw err;
       });
-      const next = await currentPending(t, e.id);
-      if (next) {
-        await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: next.recipient_id, tenantId: e.tenant_id }, { dedupeKey: `certificate_request:${next.recipient_id}` });
-      } else {
-        await t.query(`UPDATE envelope_certsign SET ready = true, updated_at = now() WHERE envelope_id = $1`, [e.id]);
-        await t.query(`UPDATE envelopes SET status = 'finalizing', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
-        await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalizing", actor: SYSTEM, data: { afterCertificateSignatures: true } });
-        await enqueue(t, "finalize", { envelopeId: e.id, tenantId: e.tenant_id }, { dedupeKey: `finalize-certsign:${e.id}` });
-        envelopeStatus = "finalizing";
-      }
-    }).catch(async (err) => {
-      // El PDF firmado ya subido no lo referencia nada si la transacción no se confirmó.
-      await s.blobs.delete(key).catch(() => {});
-      throw err;
-    });
     await deleteBlobsQuietly(s.blobs, superseded);
     const res: CertsignResult = { status: "completed", signedPdfSha256: sha, envelopeStatus };
     return res;

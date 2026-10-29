@@ -111,14 +111,24 @@ export async function setup({ call, tables, webResource, dryRun = false, log = c
   let publisherId = pub?.value?.[0]?.publisherid;
   if (!publisherId) {
     await act("publicador CalaSign", async () => {
-      await call("POST", "/publishers", { uniquename: PREFIX, friendlyname: "CalaSign", customizationprefix: PREFIX, customizationoptionvalueprefix: 74210 });
+      await call("POST", "/publishers", {
+        uniquename: PREFIX,
+        friendlyname: "CalaSign",
+        customizationprefix: PREFIX,
+        customizationoptionvalueprefix: 74210,
+      });
       publisherId = (await call("GET", `/publishers?$select=publisherid&$filter=uniquename eq '${PREFIX}'`))?.value?.[0]?.publisherid;
     });
   }
   const sol = await call("GET", `/solutions?$select=solutionid&$filter=uniquename eq '${SOLUTION}'`);
   if (!sol?.value?.length) {
     await act("solución CalaSign", () =>
-      call("POST", "/solutions", { uniquename: SOLUTION, friendlyname: "CalaSign", version: "1.0.0.0", "publisherid@odata.bind": `/publishers(${publisherId ?? "00000000-0000-0000-0000-000000000000"})` }),
+      call("POST", "/solutions", {
+        uniquename: SOLUTION,
+        friendlyname: "CalaSign",
+        version: "1.0.0.0",
+        "publisherid@odata.bind": `/publishers(${publisherId ?? "00000000-0000-0000-0000-000000000000"})`,
+      }),
     );
   }
   const inSolution = { "MSCRM.SolutionUniqueName": SOLUTION };

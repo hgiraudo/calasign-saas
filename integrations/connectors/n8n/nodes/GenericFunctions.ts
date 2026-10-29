@@ -1,44 +1,44 @@
-import { createHmac, timingSafeEqual } from 'crypto';
-import type { IDataObject, IExecuteFunctions, IHookFunctions, IHttpRequestMethods, IHttpRequestOptions, ILoadOptionsFunctions } from 'n8n-workflow';
+import { createHmac, timingSafeEqual } from "crypto";
+import type { IDataObject, IExecuteFunctions, IHookFunctions, IHttpRequestMethods, IHttpRequestOptions, ILoadOptionsFunctions } from "n8n-workflow";
 
 type Ctx = IExecuteFunctions | IHookFunctions | ILoadOptionsFunctions;
 
-export const DEFAULT_BASE_URL = '{{BASE_URL}}';
+export const DEFAULT_BASE_URL = "{{BASE_URL}}";
 
-export function credentialType(ctx: Ctx, itemIndex = 0): 'calaSignApi' | 'calaSignOAuth2Api' {
-	let auth = 'apiKey';
-	try {
-		auth = (ctx as IExecuteFunctions).getNodeParameter('authentication', itemIndex, 'apiKey') as string;
-	} catch {
-		auth = 'apiKey';
-	}
-	return auth === 'oAuth2' ? 'calaSignOAuth2Api' : 'calaSignApi';
+export function credentialType(ctx: Ctx, itemIndex = 0): "calaSignApi" | "calaSignOAuth2Api" {
+  let auth = "apiKey";
+  try {
+    auth = (ctx as IExecuteFunctions).getNodeParameter("authentication", itemIndex, "apiKey") as string;
+  } catch {
+    auth = "apiKey";
+  }
+  return auth === "oAuth2" ? "calaSignOAuth2Api" : "calaSignApi";
 }
 
 export async function baseUrl(ctx: Ctx, itemIndex = 0): Promise<string> {
-	const creds = await ctx.getCredentials(credentialType(ctx, itemIndex));
-	return String(creds.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const creds = await ctx.getCredentials(credentialType(ctx, itemIndex));
+  return String(creds.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "");
 }
 
 /** Pedido autenticado a la API de CalaSign. `body` Buffer = cuerpo crudo (multipart). */
 /** Pedido autenticado a la API de CalaSign. T: forma de la respuesta JSON (o ArrayBuffer con binary). */
 export async function calaSignRequest<T = IDataObject>(
-	ctx: Ctx,
-	method: IHttpRequestMethods,
-	path: string,
-	opts: { body?: IDataObject | Buffer; qs?: IDataObject; headers?: IDataObject; binary?: boolean } = {},
-	itemIndex = 0,
+  ctx: Ctx,
+  method: IHttpRequestMethods,
+  path: string,
+  opts: { body?: IDataObject | Buffer; qs?: IDataObject; headers?: IDataObject; binary?: boolean } = {},
+  itemIndex = 0,
 ): Promise<T> {
-	const options: IHttpRequestOptions = {
-		method,
-		url: `${await baseUrl(ctx, itemIndex)}${path}`,
-		headers: { 'User-Agent': 'CalaSign-n8n/{{VERSION}}', ...(opts.headers ?? {}) },
-		qs: opts.qs,
-		json: !Buffer.isBuffer(opts.body) && !opts.binary,
-	};
-	if (opts.body !== undefined) options.body = opts.body;
-	if (opts.binary) options.encoding = 'arraybuffer';
-	return (await ctx.helpers.httpRequestWithAuthentication.call(ctx, credentialType(ctx, itemIndex), options)) as T;
+  const options: IHttpRequestOptions = {
+    method,
+    url: `${await baseUrl(ctx, itemIndex)}${path}`,
+    headers: { "User-Agent": "CalaSign-n8n/{{VERSION}}", ...(opts.headers ?? {}) },
+    qs: opts.qs,
+    json: !Buffer.isBuffer(opts.body) && !opts.binary,
+  };
+  if (opts.body !== undefined) options.body = opts.body;
+  if (opts.binary) options.encoding = "arraybuffer";
+  return (await ctx.helpers.httpRequestWithAuthentication.call(ctx, credentialType(ctx, itemIndex), options)) as T;
 }
 
 /**
@@ -48,29 +48,35 @@ export async function calaSignRequest<T = IDataObject>(
  * Sin id de ejecución (contextos de prueba) no se manda clave.
  */
 export function idempotencyKey(ctx: IExecuteFunctions, itemIndex: number, operation: string): string | undefined {
-	let execution = '';
-	let node = '';
-	let run = 0;
-	try {
-		execution = String(ctx.getExecutionId() ?? '');
-		const n = ctx.getNode();
-		node = String(n.id || n.name || '');
-	} catch {
-		return undefined;
-	}
-	try {
-		run = Number(ctx.getWorkflowDataProxy(itemIndex).$thisRunIndex) || 0;
-	} catch {
-		run = 0;
-	}
-	if (!execution) return undefined;
-	return `n8n-${execution}-${node}-${run}-${operation}-${itemIndex}`.slice(0, 190);
+  let execution = "";
+  let node = "";
+  let run = 0;
+  try {
+    execution = String(ctx.getExecutionId() ?? "");
+    const n = ctx.getNode();
+    node = String(n.id || n.name || "");
+  } catch {
+    return undefined;
+  }
+  try {
+    run = Number(ctx.getWorkflowDataProxy(itemIndex).$thisRunIndex) || 0;
+  } catch {
+    run = 0;
+  }
+  if (!execution) return undefined;
+  return `n8n-${execution}-${node}-${run}-${operation}-${itemIndex}`.slice(0, 190);
 }
 
 /** Adaptador para quicksend: request(method, path, { json, body, headers }). */
 export function requester(ctx: IExecuteFunctions, itemIndex: number) {
-	return async (method: string, path: string, o: { json?: unknown; body?: unknown; headers?: Record<string, string> } = {}) =>
-		calaSignRequest<Record<string, unknown>>(ctx, method as IHttpRequestMethods, path, { body: (o.json ?? o.body) as IDataObject | Buffer | undefined, headers: o.headers }, itemIndex);
+  return async (method: string, path: string, o: { json?: unknown; body?: unknown; headers?: Record<string, string> } = {}) =>
+    calaSignRequest<Record<string, unknown>>(
+      ctx,
+      method as IHttpRequestMethods,
+      path,
+      { body: (o.json ?? o.body) as IDataObject | Buffer | undefined, headers: o.headers },
+      itemIndex,
+    );
 }
 
 /**
@@ -78,22 +84,26 @@ export function requester(ctx: IExecuteFunctions, itemIndex: number) {
  * tolerancia. Durante una rotación del secreto la API manda varios v1: vale si coincide cualquiera.
  */
 export function verifySignature(secret: string, header: string | undefined, rawBody: Buffer, now = Date.now()): boolean {
-	if (!header) return false;
-	let t = '';
-	const v1: string[] = [];
-	for (const part of header.split(',')) {
-		const i = part.indexOf('=');
-		if (i < 0) continue;
-		const k = part.slice(0, i).trim();
-		const v = part.slice(i + 1).trim();
-		if (k === 't') t = v;
-		else if (k === 'v1') v1.push(v);
-	}
-	const ts = Number(t);
-	if (!t || !v1.length || !Number.isFinite(ts) || Math.abs(now / 1000 - ts) > 300) return false;
-	const expected = Buffer.from(createHmac('sha256', secret).update(`${t}.${rawBody.toString('utf8')}`).digest('hex'));
-	return v1.some((sig) => {
-		const b = Buffer.from(sig);
-		return b.length === expected.length && timingSafeEqual(expected, b);
-	});
+  if (!header) return false;
+  let t = "";
+  const v1: string[] = [];
+  for (const part of header.split(",")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    const v = part.slice(i + 1).trim();
+    if (k === "t") t = v;
+    else if (k === "v1") v1.push(v);
+  }
+  const ts = Number(t);
+  if (!t || !v1.length || !Number.isFinite(ts) || Math.abs(now / 1000 - ts) > 300) return false;
+  const expected = Buffer.from(
+    createHmac("sha256", secret)
+      .update(`${t}.${rawBody.toString("utf8")}`)
+      .digest("hex"),
+  );
+  return v1.some((sig) => {
+    const b = Buffer.from(sig);
+    return b.length === expected.length && timingSafeEqual(expected, b);
+  });
 }

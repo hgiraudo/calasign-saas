@@ -93,7 +93,13 @@ function MyTwoFactor() {
         <div className="stack">
           <label className="field">
             <span>{tt("sec.passwordConfirm")}</span>
-            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ maxWidth: 320 }} />
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{ maxWidth: 320 }}
+            />
           </label>
           <span className="muted small">{tt("sec.passwordConfirmHelp")}</span>
         </div>
@@ -192,13 +198,29 @@ function MySessions() {
       {items && (
         <ul className="stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {items.map((x) => (
-            <li key={x.id} className="row-wrap" style={{ justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+            <li
+              key={x.id}
+              className="row-wrap"
+              style={{ justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}
+            >
               <span className="stack" style={{ gap: 2 }}>
                 <strong>
                   {x.userAgent ?? tt("sec.sessionUnknown")}
-                  {x.current && <span className="badge" style={{ marginLeft: 8 }}>{tt("sec.sessionCurrent")}</span>}
-                  {x.method === "sso" && <span className="badge" style={{ marginLeft: 8 }}>{tt("sec.sessionSso")}</span>}
-                  {x.rememberMe && <span className="badge" style={{ marginLeft: 8 }}>{tt("sec.sessionRemembered")}</span>}
+                  {x.current && (
+                    <span className="badge" style={{ marginLeft: 8 }}>
+                      {tt("sec.sessionCurrent")}
+                    </span>
+                  )}
+                  {x.method === "sso" && (
+                    <span className="badge" style={{ marginLeft: 8 }}>
+                      {tt("sec.sessionSso")}
+                    </span>
+                  )}
+                  {x.rememberMe && (
+                    <span className="badge" style={{ marginLeft: 8 }}>
+                      {tt("sec.sessionRemembered")}
+                    </span>
+                  )}
                 </strong>
                 <span className="muted small">
                   {x.ip ?? ""} · {tt("sec.sessionCreated", { date: fmt(x.createdAt) })} · {tt("sec.sessionLastSeen", { date: fmt(x.lastSeenAt) })}
@@ -275,14 +297,31 @@ function OrgPolicies() {
         <label htmlFor="sec-retention-days">
           <strong>{tt("sec.retention")}</strong>
         </label>
-        <span id="sec-retention-help" className="muted small">{tt("sec.retentionHelp")}</span>
+        <span id="sec-retention-help" className="muted small">
+          {tt("sec.retentionHelp")}
+        </span>
         <div className="row-wrap">
-          <input id="sec-retention-days" aria-describedby="sec-retention-help sec-retention-unit" type="number" min={1} max={36500} value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 120 }} />
-          <span id="sec-retention-unit" className="muted">{tt("sec.days")}</span>
+          <input
+            id="sec-retention-days"
+            aria-describedby="sec-retention-help sec-retention-unit"
+            type="number"
+            min={1}
+            max={36500}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            style={{ width: 120 }}
+          />
+          <span id="sec-retention-unit" className="muted">
+            {tt("sec.days")}
+          </span>
           <button className="btn btn-primary">{tt("sec.save")}</button>
         </div>
       </form>
-      {msg && <div className="alert alert-success" role="status">{msg}</div>}
+      {msg && (
+        <div className="alert alert-success" role="status">
+          {msg}
+        </div>
+      )}
       <ErrorBox error={error} />
     </section>
   );

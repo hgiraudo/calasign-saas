@@ -110,14 +110,23 @@ export function EnvelopeListPage() {
             </button>
           ))}
         </div>
-        <input className="search" type="search" placeholder={t("list.search")} value={q} onChange={(e) => setQ(e.target.value)} aria-label={t("list.search")} />
+        <input
+          className="search"
+          type="search"
+          placeholder={t("list.search")}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label={t("list.search")}
+        />
       </div>
 
       <ErrorBox error={error} />
       {loading ? (
         <Spinner />
       ) : items.length === 0 ? (
-        error ? null : <div className="empty">{t("list.empty")}</div>
+        error ? null : (
+          <div className="empty">{t("list.empty")}</div>
+        )
       ) : (
         <div className="card list-card">
           <table className="table">
@@ -131,7 +140,11 @@ export function EnvelopeListPage() {
             </thead>
             <tbody>
               {items.map((e) => (
-                <tr key={e.id} className="clickable" onClick={() => nav(e.status === "draft" ? `/app/envelopes/${e.id}/edit` : `/app/envelopes/${e.id}`)}>
+                <tr
+                  key={e.id}
+                  className="clickable"
+                  onClick={() => nav(e.status === "draft" ? `/app/envelopes/${e.id}/edit` : `/app/envelopes/${e.id}`)}
+                >
                   <td>
                     <Link to={e.status === "draft" ? `/app/envelopes/${e.id}/edit` : `/app/envelopes/${e.id}`} onClick={(ev) => ev.stopPropagation()}>
                       {e.subject}

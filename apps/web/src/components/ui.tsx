@@ -48,9 +48,11 @@ export function Modal({
       if (e.key === "Escape") onCloseRef.current();
       if (e.key !== "Tab" || !ref.current) return;
       // Trampa de foco: Tab y Shift+Tab no salen del modal.
-      const items = [...ref.current.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )].filter((el) => el.offsetParent !== null);
+      const items = [
+        ...ref.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter((el) => el.offsetParent !== null);
       if (!items.length) return;
       const first = items[0];
       const last = items[items.length - 1];
@@ -114,7 +116,7 @@ export function Logo({ light }: { light?: boolean }) {
   // Marca blanca: el logo (o el nombre) de la marca activa en lugar del de la plataforma.
   const brand = useBrandTheme();
   if (brand && (rebrands(brand) || brand.logoUrl)) {
-    const src = light ? brand.logoDarkUrl ?? brand.logoUrl : brand.logoUrl;
+    const src = light ? (brand.logoDarkUrl ?? brand.logoUrl) : brand.logoUrl;
     return (
       <span className={`logo brand-logo ${light ? "logo-light" : ""}`}>
         {src ? <img src={src} alt={productName(brand)} style={{ maxHeight: 28, maxWidth: 160 }} /> : <span>{productName(brand)}</span>}
@@ -125,14 +127,7 @@ export function Logo({ light }: { light?: boolean }) {
     <span className={`logo ${light ? "logo-light" : ""}`}>
       <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
         <rect width="32" height="32" rx="7" fill="#0B1F3A" />
-        <path
-          d="M8 20c3-7 6-9 8-6s-2 7 1 7 4-5 7-8"
-          fill="none"
-          stroke="#14B8A6"
-          strokeWidth="2.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <path d="M8 20c3-7 6-9 8-6s-2 7 1 7 4-5 7-8" fill="none" stroke="#14B8A6" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       <span>
         Cala<b>Sign</b>
@@ -162,7 +157,10 @@ export function OrderInput({
   min = 1,
   max = 100,
   ...rest
-}: { value: number; onChange: (n: number) => void; min?: number; max?: number } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type" | "min" | "max">) {
+}: { value: number; onChange: (n: number) => void; min?: number; max?: number } & Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  "value" | "onChange" | "type" | "min" | "max"
+>) {
   const [text, setText] = useState(String(value));
   useEffect(() => {
     if (Number(text) !== value) setText(String(value));

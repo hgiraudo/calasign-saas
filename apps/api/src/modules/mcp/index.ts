@@ -58,7 +58,11 @@ const PDF_MAX_BASE64 = maxBase64Length(PDF_MAX_BYTES);
 
 /** Nombre de archivo seguro para el documento. */
 function pdfFileName(raw: string | null | undefined): string {
-  let n = (raw ?? "").normalize("NFKD").replace(/[^\w .()-]/g, "_").trim().slice(0, 150);
+  let n = (raw ?? "")
+    .normalize("NFKD")
+    .replace(/[^\w .()-]/g, "_")
+    .trim()
+    .slice(0, 150);
   if (!n) n = "documento";
   return /\.pdf$/i.test(n) ? n : `${n}.pdf`;
 }
@@ -106,7 +110,8 @@ function hasUntrusted(v: unknown): boolean {
 
 /** Resultado de herramienta: JSON, con el aviso de contenido no confiable si lo hay. */
 export function toolText(data: unknown): string {
-  const withNotice = hasUntrusted(data) && data && typeof data === "object" && !Array.isArray(data) ? { _notice: UNTRUSTED_NOTICE, ...(data as object) } : data;
+  const withNotice =
+    hasUntrusted(data) && data && typeof data === "object" && !Array.isArray(data) ? { _notice: UNTRUSTED_NOTICE, ...(data as object) } : data;
   return JSON.stringify(withNotice, null, 2);
 }
 
@@ -203,14 +208,16 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   const resourceUrl = `${config.appUrl}/mcp`;
 
   function unauthorizedReply(reply: FastifyReply, message: string) {
-    return reply
-      .code(401)
-      // RFC 9728 §5.1: la URL de metadatos del recurso /mcp; `scope`, lo que necesitan las herramientas (MCP 2025-11-25).
-      .header(
-        "www-authenticate",
-        `Bearer resource_metadata="${config.appUrl}/.well-known/oauth-protected-resource/mcp", scope="${MCP_DEFAULT_SCOPES.join(" ")}"`,
-      )
-      .send({ error: { code: "unauthorized", message } });
+    return (
+      reply
+        .code(401)
+        // RFC 9728 §5.1: la URL de metadatos del recurso /mcp; `scope`, lo que necesitan las herramientas (MCP 2025-11-25).
+        .header(
+          "www-authenticate",
+          `Bearer resource_metadata="${config.appUrl}/.well-known/oauth-protected-resource/mcp", scope="${MCP_DEFAULT_SCOPES.join(" ")}"`,
+        )
+        .send({ error: { code: "unauthorized", message } })
+    );
   }
 
   /**
@@ -236,7 +243,13 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       // organización exige SSO ya no vale. Con 401 (y no un error en cada herramienta) el conector vuelve a autorizar.
       if (o.userId) {
         try {
-          await assertUserTokenAllowed(s.db, { tenantId: o.tenantId, userId: o.userId, authMethod: o.authMethod, ssoTenantId: o.ssoTenantId, issuedAt: o.createdAt });
+          await assertUserTokenAllowed(s.db, {
+            tenantId: o.tenantId,
+            userId: o.userId,
+            authMethod: o.authMethod,
+            ssoTenantId: o.ssoTenantId,
+            issuedAt: o.createdAt,
+          });
         } catch (e) {
           if (e instanceof AppError) return null;
           throw e;
@@ -255,7 +268,16 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     }
     const k = await s.db.one<any>(`SELECT id, tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`, [sha256Hex(token)]);
     if (!k) return null;
-    return { authorization: authz, tenantId: k.tenant_id, name: `MCP · ${k.name}`, ip: req.ip, scopes: null, principal: `k:${k.id}`, apiKeyId: k.id, oauthTokenId: null };
+    return {
+      authorization: authz,
+      tenantId: k.tenant_id,
+      name: `MCP · ${k.name}`,
+      ip: req.ip,
+      scopes: null,
+      principal: `k:${k.id}`,
+      apiKeyId: k.id,
+      oauthTokenId: null,
+    };
   }
 
   /** Llama a la API v1 con la credencial del agente. */
@@ -329,7 +351,12 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     try {
       return { d: await api(c, "GET", `/v1/envelopes/${r.json.envelope.id}`), replayed: true };
     } catch (err) {
-      if (err instanceof ToolError && err.status === 404) throw new ToolError("El sobre de este pedido ya se había creado y ya no existe (o no lo podés ver). Para crear otro, usá un requestId nuevo.", 409, "already_created");
+      if (err instanceof ToolError && err.status === 404)
+        throw new ToolError(
+          "El sobre de este pedido ya se había creado y ya no existe (o no lo podés ver). Para crear otro, usá un requestId nuevo.",
+          409,
+          "already_created",
+        );
       throw err;
     }
   }
@@ -341,10 +368,13 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   });
   /** Vista previa de una acción con efecto: no hace nada, devuelve el resumen y el token para confirmarla. */
   const preview = (message: string, summary: Record<string, unknown>, token: { confirmToken: string; expiresAt: string }) =>
-    fail(`Confirmación requerida: ${message} Mostrale este resumen al usuario y, solo si lo aprueba, volvé a llamar con los mismos argumentos y confirmToken.`, {
-      ...summary,
-      ...token,
-    });
+    fail(
+      `Confirmación requerida: ${message} Mostrale este resumen al usuario y, solo si lo aprueba, volvé a llamar con los mismos argumentos y confirmToken.`,
+      {
+        ...summary,
+        ...token,
+      },
+    );
   /** Envuelve una herramienta: los errores de la API vuelven como resultado con isError (no como error de protocolo). */
   const makeGuard =
     (log: FastifyRequest["log"], reqId: string) =>
@@ -467,11 +497,15 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           subject: untrusted(d.envelope.subject),
           status: d.envelope.status,
           completedAt: d.envelope.completedAt,
-          signed: signers.filter((r: any) => r.status === "signed" || r.status === "completed").map((r: any) => ({ id: r.id, name: untrusted(r.name), at: r.signedAt })),
+          signed: signers
+            .filter((r: any) => r.status === "signed" || r.status === "completed")
+            .map((r: any) => ({ id: r.id, name: untrusted(r.name), at: r.signedAt })),
           pending: signers
             .filter((r: any) => !["signed", "completed", "declined", "delegated", "reassigned"].includes(r.status))
             .map((r: any) => ({ id: r.id, name: untrusted(r.name), status: r.status })),
-          declined: signers.filter((r: any) => r.status === "declined").map((r: any) => ({ id: r.id, name: untrusted(r.name), reason: untrusted(r.declineReason) })),
+          declined: signers
+            .filter((r: any) => r.status === "declined")
+            .map((r: any) => ({ id: r.id, name: untrusted(r.name), reason: untrusted(r.declineReason) })),
           signedPdfAvailable: d.envelope.status === "completed",
           lastEvents: ev.items.slice(-15).map((x: any) => ({ at: x.occurredAt, type: x.type, actor: untrusted(x.actorLabel) })),
         };
@@ -511,14 +545,21 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           templateId: z.string().uuid(),
           subject: z.string().min(1).max(300).optional(),
           message: z.string().max(5000).optional(),
-          locale: z.enum(LOCALES).optional().describe("Idioma de los correos, la página de firma y el certificado (es, pt-BR, en); sin él, el de la plantilla u organización"),
+          locale: z
+            .enum(LOCALES)
+            .optional()
+            .describe("Idioma de los correos, la página de firma y el certificado (es, pt-BR, en); sin él, el de la plantilla u organización"),
           recipients: z
             .array(
               z.object({
                 role: z.string().max(100).describe("Nombre del rol de la plantilla"),
                 name: z.string().min(1).max(200),
                 email: z.string().email().optional(),
-                phone: z.string().regex(/^\+[1-9]\d{6,14}$/).optional().describe("E.164, ej. +5511999990000"),
+                phone: z
+                  .string()
+                  .regex(/^\+[1-9]\d{6,14}$/)
+                  .optional()
+                  .describe("E.164, ej. +5511999990000"),
                 channels: z.array(z.enum(["email", "whatsapp", "telegram"])).optional(),
               }),
             )
@@ -527,10 +568,23 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           prefill: z.record(z.string(), z.string().max(2000)).optional().describe("Valores de campos por etiqueta o id"),
           send: z.boolean().optional().describe("true: además lo envía (requiere el confirmToken de la vista previa)"),
           confirmToken: z.string().max(300).optional().describe("Token de la vista previa (llamada sin él); solo después de que el usuario apruebe"),
-          requestId: z.string().min(1).max(100).optional().describe("Opcional (recomendado): id propio del pedido. El mismo requestId devuelve el mismo sobre (con replayed: true y su estado actual) en vez de crear otro, durante 7 días; sin él, solo los reintentos con los mismos argumentos en ~10 minutos. Con send=true, pasá el mismo requestId en la vista previa y en la confirmación. Usá uno nuevo para crear a propósito un sobre igual a uno anterior"),
+          requestId: z
+            .string()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe(
+              "Opcional (recomendado): id propio del pedido. El mismo requestId devuelve el mismo sobre (con replayed: true y su estado actual) en vez de crear otro, durante 7 días; sin él, solo los reintentos con los mismos argumentos en ~10 minutos. Con send=true, pasá el mismo requestId en la vista previa y en la confirmación. Usá uno nuevo para crear a propósito un sobre igual a uno anterior",
+            ),
         },
         // Crea un sobre nuevo (los reintentos con los mismos argumentos devuelven el mismo); con send=true avisa a personas reales.
-        annotations: { title: "Crear sobre desde plantilla", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        annotations: {
+          title: "Crear sobre desde plantilla",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
       },
       guard(async (a: any) => {
         if (a.send) {
@@ -551,22 +605,28 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           }
           if (!verifyConfirmToken(c, "create_envelope_from_template", target, a.confirmToken)) return fail(INVALID_CONFIRM);
         }
-        const { d, replayed } = await createEnvelope(c, "/v1/envelopes/from-template", {
-          templateId: a.templateId,
-          subject: a.subject,
-          locale: a.locale,
-          message: a.message,
-          prefill: a.prefill,
-          recipients: a.recipients.map((r: any) => ({
-            role: r.role,
-            name: r.name,
-            email: r.email ?? null,
-            phone: r.phone ?? null,
-            channels: r.channels ?? (r.email ? ["email"] : ["whatsapp"]),
-          })),
-          send: Boolean(a.send),
-        }, mcpIdempotencyKeys(c.principal, "create_envelope_from_template", a));
-        if (replayed) return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
+        const { d, replayed } = await createEnvelope(
+          c,
+          "/v1/envelopes/from-template",
+          {
+            templateId: a.templateId,
+            subject: a.subject,
+            locale: a.locale,
+            message: a.message,
+            prefill: a.prefill,
+            recipients: a.recipients.map((r: any) => ({
+              role: r.role,
+              name: r.name,
+              email: r.email ?? null,
+              phone: r.phone ?? null,
+              channels: r.channels ?? (r.email ? ["email"] : ["whatsapp"]),
+            })),
+            send: Boolean(a.send),
+          },
+          mcpIdempotencyKeys(c.principal, "create_envelope_from_template", a),
+        );
+        if (replayed)
+          return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
         if (a.send) return summarizeDetail(d);
         return { ...summarizeDetail(d), next: NEXT_DRAFT };
       }),
@@ -658,7 +718,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       },
       guard(async (a: { envelopeId: string }) => {
         const d = await api(c, "GET", `/v1/envelopes/${a.envelopeId}`); // control de acceso de la API
-        if (d.envelope.status !== "completed") return fail(`El sobre está en estado "${d.envelope.status}": el PDF firmado existe recién cuando se completa.`);
+        if (d.envelope.status !== "completed")
+          return fail(`El sobre está en estado "${d.envelope.status}": el PDF firmado existe recién cuando se completa.`);
         const token = randomToken(32);
         const expiresAt = new Date(Date.now() + config.mcp.downloadLinkTtlSec * 1000);
         // Versión vigente leída en la misma sentencia que crea el link: si una renovación del sello de archivo se
@@ -678,7 +739,14 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           actor: await linkActor(s.db, c.apiKeyId, c.oauthTokenId, `agente IA (${c.name})`),
           targetType: "envelope",
           targetId: a.envelopeId,
-          data: { via: "mcp", linkId: link.id, expiresAt: expiresAt.toISOString(), maxDownloads: DOWNLOAD_MAX, apiKeyId: c.apiKeyId, oauthTokenId: c.oauthTokenId },
+          data: {
+            via: "mcp",
+            linkId: link.id,
+            expiresAt: expiresAt.toISOString(),
+            maxDownloads: DOWNLOAD_MAX,
+            apiKeyId: c.apiKeyId,
+            oauthTokenId: c.oauthTokenId,
+          },
           ip: c.ip ?? null,
         }).catch(() => {});
         return { url: `${config.appUrl}/v1/downloads/${token}`, expiresAt: expiresAt.toISOString(), maxDownloads: DOWNLOAD_MAX, sha256: link.sha256 };
@@ -694,18 +762,25 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           "llamada. Por defecto queda en BORRADOR; con send=true la primera llamada devuelve una vista previa con un " +
           "confirmToken y, repetida con ese confirmToken (después de que el usuario lo apruebe), también lo envía. " +
           `PDF de hasta ${Math.round(PDF_MAX_BYTES / 1048576)} MB. ` +
-          "Campos opcionales por texto ancla (p. ej. un texto \"Firma:\" del documento); a cada firmante sin campo de firma " +
+          'Campos opcionales por texto ancla (p. ej. un texto "Firma:" del documento); a cada firmante sin campo de firma ' +
           "se le agrega uno al pie de la última página.",
         inputSchema: {
           subject: z.string().trim().min(1).max(300),
           message: z.string().max(5000).optional().describe("Mensaje para los destinatarios"),
-          locale: z.enum(LOCALES).optional().describe("Idioma de los correos, la página de firma y el certificado (es, pt-BR, en); sin él, el de la plantilla u organización"),
+          locale: z
+            .enum(LOCALES)
+            .optional()
+            .describe("Idioma de los correos, la página de firma y el certificado (es, pt-BR, en); sin él, el de la plantilla u organización"),
           recipients: z
             .array(
               z.object({
                 name: z.string().trim().min(1).max(200),
                 email: z.string().email().max(320).optional(),
-                phone: z.string().regex(/^\+[1-9]\d{6,14}$/).optional().describe("E.164, ej. +5511999990000 (recibe por WhatsApp)"),
+                phone: z
+                  .string()
+                  .regex(/^\+[1-9]\d{6,14}$/)
+                  .optional()
+                  .describe("E.164, ej. +5511999990000 (recibe por WhatsApp)"),
                 role: z.enum(RECIPIENT_ROLES).optional().describe("signer (por defecto), approver o cc (recibe copia)"),
                 routingOrder: z.number().int().min(1).max(100).optional().describe("Orden de firma (1 = primero); igual orden = en paralelo"),
               }),
@@ -736,7 +811,14 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             .optional(),
           send: z.boolean().optional().describe("true: además lo envía (requiere el confirmToken de la vista previa)"),
           confirmToken: z.string().max(300).optional().describe("Token de la vista previa (llamada sin él); solo después de que el usuario apruebe"),
-          requestId: z.string().min(1).max(100).optional().describe("Opcional (recomendado): id propio del pedido. El mismo requestId devuelve el mismo sobre (con replayed: true y su estado actual) en vez de crear otro, durante 7 días; sin él, solo los reintentos con los mismos argumentos en ~10 minutos. Con send=true, pasá el mismo requestId en la vista previa y en la confirmación. Usá uno nuevo para crear a propósito un sobre igual a uno anterior"),
+          requestId: z
+            .string()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe(
+              "Opcional (recomendado): id propio del pedido. El mismo requestId devuelve el mismo sobre (con replayed: true y su estado actual) en vez de crear otro, durante 7 días; sin él, solo los reintentos con los mismos argumentos en ~10 minutos. Con send=true, pasá el mismo requestId en la vista previa y en la confirmación. Usá uno nuevo para crear a propósito un sobre igual a uno anterior",
+            ),
         },
         annotations: { title: "Crear sobre desde un PDF", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
@@ -757,7 +839,9 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             let pdf: Buffer;
             try {
               pdf = await mcpPdfSlots.run(c.tenantId, async () =>
-                a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES, MCP_PDF_FETCH_TIMEOUT_MS),
+                a.document.base64
+                  ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES)
+                  : await fetchPdf(a.document.url, PDF_MAX_BYTES, MCP_PDF_FETCH_TIMEOUT_MS),
               );
             } catch (e) {
               if (e instanceof PdfSlotBusyError) throw e;
@@ -795,7 +879,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
               pageCount = (await inspectPdf(pdf)).pageCount;
             } catch (e) {
               // Sin lugar para procesar el PDF ahora: no es un PDF inválido, se puede reintentar con los mismos argumentos.
-              if (e instanceof PdfIngestBusyError) return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
+              if (e instanceof PdfIngestBusyError)
+                return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
               return fail(`El PDF no es válido: ${(e as Error).message}`);
             }
             const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };
@@ -831,23 +916,29 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
               slot++;
             });
             // Una sola llamada a la API (atómica): si algo falla, no queda un borrador a medias.
-            const { d, replayed } = await createEnvelope(c, "/v1/envelopes", {
-              subject: a.subject,
-              locale: a.locale,
-              message: a.message ?? null,
-              documents: [{ name: fileName, base64: pdf.toString("base64") }],
-              recipients: a.recipients.map((r: any) => ({
-                name: r.name,
-                email: r.email ?? null,
-                phone: r.phone ?? null,
-                role: r.role ?? "signer",
-                routingOrder: r.routingOrder ?? 1,
-                channels: r.email ? ["email"] : ["whatsapp"],
-              })),
-              fields,
-              send: Boolean(a.send),
-            }, mcpIdempotencyKeys(c.principal, "create_envelope", a, pdfSha));
-            if (replayed) return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
+            const { d, replayed } = await createEnvelope(
+              c,
+              "/v1/envelopes",
+              {
+                subject: a.subject,
+                locale: a.locale,
+                message: a.message ?? null,
+                documents: [{ name: fileName, base64: pdf.toString("base64") }],
+                recipients: a.recipients.map((r: any) => ({
+                  name: r.name,
+                  email: r.email ?? null,
+                  phone: r.phone ?? null,
+                  role: r.role ?? "signer",
+                  routingOrder: r.routingOrder ?? 1,
+                  channels: r.email ? ["email"] : ["whatsapp"],
+                })),
+                fields,
+                send: Boolean(a.send),
+              },
+              mcpIdempotencyKeys(c.principal, "create_envelope", a, pdfSha),
+            );
+            if (replayed)
+              return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
             return {
               ...summarizeDetail(d),
               ...(slot ? { note: `Se agregó un campo de firma al pie de la última página para ${slot} firmante(s) sin campo.` } : {}),
@@ -855,7 +946,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             };
           });
         } catch (e) {
-          if (e instanceof PdfSlotBusyError) return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
+          if (e instanceof PdfSlotBusyError)
+            return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
           throw e;
         }
       }),
@@ -883,7 +975,9 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
               subject: untrusted(d.envelope.subject),
               status: d.envelope.status,
               updatedAt: d.envelope.updatedAt,
-              pending: d.recipients.filter((r: any) => r.role !== "cc" && (r.status === "sent" || r.status === "viewed")).map((r: any) => recipientLine(r, false)),
+              pending: d.recipients
+                .filter((r: any) => r.role !== "cc" && (r.status === "sent" || r.status === "viewed"))
+                .map((r: any) => recipientLine(r, false)),
             },
             issueConfirmToken(c, "remind_recipients", a.envelopeId, d.envelope.updatedAt),
           );
@@ -928,86 +1022,96 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
 
   // bodyLimit: create_envelope puede traer el PDF en base64 (tope PDF_MAX_BYTES, ~4/3 en base64).
   // rateLimitByCredential: /mcp autentica por su cuenta (resolveCaller), con una credencial válida, el límite propio cuenta por su organización.
-  app.post("/mcp", { bodyLimit: PDF_MAX_BASE64 + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req, reply) => {
-    const caller = await resolveCaller(req);
-    if (!caller) return unauthorizedReply(reply, "Hace falta un access token OAuth o una API key válidos");
-    const { plan } = await tenantPlan(s.db, caller.tenantId);
-    if (!plan.features.includes("api")) {
-      return reply.code(402).send({ error: { code: "plan_limit", message: `El acceso por API y MCP no está incluido en el plan ${plan.name}` } });
-    }
-    // Sin lotes JSON-RPC con varios pedidos (un array de mensajes): el transporte del SDK los aceptaba (hasta 100) y los
-    // ejecutaba en paralelo, salteando el límite por pedido (100 tools/call, p. ej. 100 descargas de PDF, en un solo
-    // POST). La especificación los sacó en 2025-06-18 y los clientes MCP actuales mandan un mensaje por POST. Para no
-    // romper a los de 2025-03-26 (que pueden mandar todo como lote) se acepta un lote de un solo mensaje y uno de solo
-    // notificaciones (sin id: no ejecutan herramientas ni responden, 202 sin cuerpo): no hay paralelismo de pedidos.
-    // Un lote de un solo pedido se le pasa al transporte como mensaje suelto y la respuesta (JSON, 200) se devuelve dentro
-    // de un array: el SDK, con un lote de una respuesta, contestaba un objeto suelto y no el lote que espera ese cliente
-    // (JSON-RPC 2.0: a un lote se responde con un array). Los errores del transporte (4xx/5xx, que responden al pedido
-    // HTTP y no a un mensaje del lote) quedan como objeto.
-    let body: unknown = req.body;
-    let asBatch = false;
-    if (Array.isArray(req.body)) {
-      const batch = req.body as unknown[];
-      const isNotification = (m: unknown) => !!m && typeof m === "object" && !Array.isArray(m) && !("id" in (m as object));
-      const ok = batch.length === 1 || (batch.length > 0 && batch.length <= MCP_MAX_NOTIFICATION_BATCH && batch.every(isNotification));
-      if (!ok) {
-        return reply.code(400).send({
-          jsonrpc: "2.0",
-          error: { code: -32600, message: "Invalid Request: este servidor MCP no acepta lotes JSON-RPC con varios pedidos; mandá un mensaje por pedido" },
-          id: null,
-        });
+  app.post(
+    "/mcp",
+    { bodyLimit: PDF_MAX_BASE64 + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" }, rateLimitByCredential: true } },
+    async (req, reply) => {
+      const caller = await resolveCaller(req);
+      if (!caller) return unauthorizedReply(reply, "Hace falta un access token OAuth o una API key válidos");
+      const { plan } = await tenantPlan(s.db, caller.tenantId);
+      if (!plan.features.includes("api")) {
+        return reply.code(402).send({ error: { code: "plan_limit", message: `El acceso por API y MCP no está incluido en el plan ${plan.name}` } });
       }
-      if (batch.length === 1 && !isNotification(batch[0])) {
-        body = batch[0];
-        asBatch = true;
-      }
-    }
-    const server = buildServer(caller, req);
-    if (asBatch) {
-      // Con el transporte web (Request/Response) para poder envolver la respuesta antes de mandarla.
-      const web = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      try {
-        await server.connect(web);
-        const headers = new Headers();
-        for (const [k, v] of Object.entries(req.headers)) {
-          if (v === undefined || k === "host" || k === "content-length" || k === "connection" || k === "transfer-encoding") continue;
-          headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+      // Sin lotes JSON-RPC con varios pedidos (un array de mensajes): el transporte del SDK los aceptaba (hasta 100) y los
+      // ejecutaba en paralelo, salteando el límite por pedido (100 tools/call, p. ej. 100 descargas de PDF, en un solo
+      // POST). La especificación los sacó en 2025-06-18 y los clientes MCP actuales mandan un mensaje por POST. Para no
+      // romper a los de 2025-03-26 (que pueden mandar todo como lote) se acepta un lote de un solo mensaje y uno de solo
+      // notificaciones (sin id: no ejecutan herramientas ni responden, 202 sin cuerpo): no hay paralelismo de pedidos.
+      // Un lote de un solo pedido se le pasa al transporte como mensaje suelto y la respuesta (JSON, 200) se devuelve dentro
+      // de un array: el SDK, con un lote de una respuesta, contestaba un objeto suelto y no el lote que espera ese cliente
+      // (JSON-RPC 2.0: a un lote se responde con un array). Los errores del transporte (4xx/5xx, que responden al pedido
+      // HTTP y no a un mensaje del lote) quedan como objeto.
+      let body: unknown = req.body;
+      let asBatch = false;
+      if (Array.isArray(req.body)) {
+        const batch = req.body as unknown[];
+        const isNotification = (m: unknown) => !!m && typeof m === "object" && !Array.isArray(m) && !("id" in (m as object));
+        const ok = batch.length === 1 || (batch.length > 0 && batch.length <= MCP_MAX_NOTIFICATION_BATCH && batch.every(isNotification));
+        if (!ok) {
+          return reply.code(400).send({
+            jsonrpc: "2.0",
+            error: {
+              code: -32600,
+              message: "Invalid Request: este servidor MCP no acepta lotes JSON-RPC con varios pedidos; mandá un mensaje por pedido",
+            },
+            id: null,
+          });
         }
-        const res = await web.handleRequest(new Request(new URL(req.url, config.appUrl), { method: "POST", headers }), { parsedBody: body });
-        const text = await res.text();
-        const json = res.status === 200 && /application\/json/i.test(res.headers.get("content-type") ?? "");
-        res.headers.forEach((v, k) => {
-          if (k !== "content-length") reply.header(k, v);
-        });
-        return reply.code(res.status).send(json ? `[${text}]` : text);
+        if (batch.length === 1 && !isNotification(batch[0])) {
+          body = batch[0];
+          asBatch = true;
+        }
+      }
+      const server = buildServer(caller, req);
+      if (asBatch) {
+        // Con el transporte web (Request/Response) para poder envolver la respuesta antes de mandarla.
+        const web = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+        try {
+          await server.connect(web);
+          const headers = new Headers();
+          for (const [k, v] of Object.entries(req.headers)) {
+            if (v === undefined || k === "host" || k === "content-length" || k === "connection" || k === "transfer-encoding") continue;
+            headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+          }
+          const res = await web.handleRequest(new Request(new URL(req.url, config.appUrl), { method: "POST", headers }), { parsedBody: body });
+          const text = await res.text();
+          const json = res.status === 200 && /application\/json/i.test(res.headers.get("content-type") ?? "");
+          res.headers.forEach((v, k) => {
+            if (k !== "content-length") reply.header(k, v);
+          });
+          return reply.code(res.status).send(json ? `[${text}]` : text);
+        } catch (err) {
+          req.log.error({ err }, "error en el servidor MCP");
+          return reply.code(500).send({ jsonrpc: "2.0", error: { code: -32603, message: "Error interno" }, id: null });
+        } finally {
+          await web.close().catch(() => {});
+          await server.close().catch(() => {});
+        }
+      }
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      reply.hijack();
+      reply.raw.on("close", () => {
+        void transport.close();
+        void server.close();
+      });
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req.raw, reply.raw, body);
       } catch (err) {
         req.log.error({ err }, "error en el servidor MCP");
-        return reply.code(500).send({ jsonrpc: "2.0", error: { code: -32603, message: "Error interno" }, id: null });
-      } finally {
-        await web.close().catch(() => {});
-        await server.close().catch(() => {});
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(500, { "content-type": "application/json" });
+          reply.raw.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32603, message: "Error interno" }, id: null }));
+        }
       }
-    }
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    reply.hijack();
-    reply.raw.on("close", () => {
-      void transport.close();
-      void server.close();
-    });
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(req.raw, reply.raw, body);
-    } catch (err) {
-      req.log.error({ err }, "error en el servidor MCP");
-      if (!reply.raw.headersSent) {
-        reply.raw.writeHead(500, { "content-type": "application/json" });
-        reply.raw.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32603, message: "Error interno" }, id: null }));
-      }
-    }
-  });
+    },
+  );
 
   const notAllowed = async (_req: FastifyRequest, reply: FastifyReply) =>
-    reply.code(405).header("allow", "POST").send({ jsonrpc: "2.0", error: { code: -32000, message: "Método no permitido: este servidor MCP no usa sesiones" }, id: null });
+    reply
+      .code(405)
+      .header("allow", "POST")
+      .send({ jsonrpc: "2.0", error: { code: -32000, message: "Método no permitido: este servidor MCP no usa sesiones" }, id: null });
   app.get("/mcp", notAllowed);
   app.delete("/mcp", notAllowed);
 
@@ -1086,20 +1190,24 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
 
   // HEAD propio (sin el HEAD automático de Fastify, que ejecutaba el GET): las vistas previas de links de los chats y
   // los gestores de descargas preguntan antes de bajar, y cada HEAD gastaba una de las DOWNLOAD_MAX descargas.
-  app.head<{ Params: { token: string } }>("/v1/downloads/:token", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
-    if (!tokenOk(req.params.token)) throw notFound("Link");
-    const l = await s.db.one<any>(
-      `SELECT f.size_bytes FROM download_links l, files f, envelopes e WHERE ${LINK_VALID} AND l.downloads < $2`,
-      [sha256Hex(req.params.token), DOWNLOAD_MAX],
-    );
-    if (!l) throw notFound("Link");
-    reply
-      .header("content-type", "application/pdf")
-      .header("content-length", String(l.size_bytes))
-      .header("accept-ranges", "bytes")
-      .header("cache-control", "private, no-store");
-    return reply.send();
-  });
+  app.head<{ Params: { token: string } }>(
+    "/v1/downloads/:token",
+    { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (req, reply) => {
+      if (!tokenOk(req.params.token)) throw notFound("Link");
+      const l = await s.db.one<any>(`SELECT f.size_bytes FROM download_links l, files f, envelopes e WHERE ${LINK_VALID} AND l.downloads < $2`, [
+        sha256Hex(req.params.token),
+        DOWNLOAD_MAX,
+      ]);
+      if (!l) throw notFound("Link");
+      reply
+        .header("content-type", "application/pdf")
+        .header("content-length", String(l.size_bytes))
+        .header("accept-ranges", "bytes")
+        .header("cache-control", "private, no-store");
+      return reply.send();
+    },
+  );
 
   app.get<{ Params: { token: string } }>(
     "/v1/downloads/:token",
@@ -1142,7 +1250,10 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       if (!m) return sendPdf(reply, bytes, l.subject);
       const end = Math.min(m[2] ? Number(m[2]) : bytes.length - 1, bytes.length - 1);
       if (start >= bytes.length || end < start) {
-        return reply.code(416).header("content-range", `bytes */${bytes.length}`).send({ error: { code: "range_not_satisfiable", message: "Rango fuera del archivo" } });
+        return reply
+          .code(416)
+          .header("content-range", `bytes */${bytes.length}`)
+          .send({ error: { code: "range_not_satisfiable", message: "Rango fuera del archivo" } });
       }
       reply.code(206).header("content-range", `bytes ${start}-${end}/${bytes.length}`);
       return sendPdf(reply, Buffer.from(bytes).subarray(start, end + 1), l.subject);
@@ -1154,7 +1265,12 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
  * Actor de auditoría de una credencial de agente (la que pidió el link): la API key, o la persona (o la key de servicio)
  * del token OAuth.
  */
-async function linkActor(db: Services["db"], apiKeyId: string | null, oauthTokenId: string | null, label: string | null): Promise<AuditRecord["actor"]> {
+async function linkActor(
+  db: Services["db"],
+  apiKeyId: string | null,
+  oauthTokenId: string | null,
+  label: string | null,
+): Promise<AuditRecord["actor"]> {
   if (apiKeyId) return { type: "api_key", id: apiKeyId, label };
   if (oauthTokenId) {
     const o = await db.one<any>(`SELECT user_id, service_api_key_id FROM oauth_tokens WHERE id = $1`, [oauthTokenId]);
@@ -1163,4 +1279,3 @@ async function linkActor(db: Services["db"], apiKeyId: string | null, oauthToken
   }
   return { type: "system", label };
 }
-

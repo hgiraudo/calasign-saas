@@ -9,10 +9,10 @@ function idemKey_(cardKey, step, obj) {
   var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(obj), Utilities.Charset.UTF_8);
   var hex = digest
     .map(function (b) {
-      return ('0' + (b & 0xff).toString(16)).slice(-2);
+      return ("0" + (b & 0xff).toString(16)).slice(-2);
     })
-    .join('');
-  return 'gws-' + cardKey + '-' + step + '-' + hex.slice(0, 32);
+    .join("");
+  return "gws-" + cardKey + "-" + step + "-" + hex.slice(0, 32);
 }
 
 function shallowMerge_(a, b) {
@@ -36,9 +36,9 @@ function shallowMerge_(a, b) {
  */
 function sendDocument_(c) {
   var parsed = parseSignerLines_(c.signersText);
-  if (parsed.invalid.length) throw new CsInputError('errInvalidSigners', { list: parsed.invalid.join(', ') });
+  if (parsed.invalid.length) throw new CsInputError("errInvalidSigners", { list: parsed.invalid.join(", ") });
   var signers = parsed.signers;
-  var hasText = typeof c.text === 'string';
+  var hasText = typeof c.text === "string";
   var anchors = hasText ? findAnchors_(c.text) : null;
   var placement = resolvePlacement_(c.placementChoice, anchors, signers.length, hasText);
   var base = {
@@ -55,30 +55,34 @@ function sendDocument_(c) {
     return { envelopeId: detail.envelope.id, sent: sent, subject: detail.envelope.subject, signers: signers.length };
   }
 
-  if (placement === 'anchors' || placement === 'auto-pdf') {
+  if (placement === "anchors" || placement === "auto-pdf") {
     var conventional = !hasText;
     var req = buildEnvelopeRequest_(
-      shallowMerge_(base, { placement: 'anchors', anchors: conventional ? conventionalAnchors_(signers.length) : anchors, ignoreMissingAnchors: conventional }),
+      shallowMerge_(base, {
+        placement: "anchors",
+        anchors: conventional ? conventionalAnchors_(signers.length) : anchors,
+        ignoreMissingAnchors: conventional,
+      }),
     );
     try {
       // UNA llamada: PDF + firmantes + campos + envío. Es atómica: si falla, no queda nada creado.
-      return result(calaRequest_('post', '/v1/envelopes', { json: req, idempotencyKey: idemKey_(c.cardKey, 'a', req) }), true);
+      return result(calaRequest_("post", "/v1/envelopes", { json: req, idempotencyKey: idemKey_(c.cardKey, "a", req) }), true);
     } catch (err) {
-      var auto = c.placementChoice !== 'anchors';
-      var noAnchors = err instanceof CsApiError && (err.code === 'envelope_incomplete' || err.code === 'anchor_not_found');
+      var auto = c.placementChoice !== "anchors";
+      var noAnchors = err instanceof CsApiError && (err.code === "envelope_incomplete" || err.code === "anchor_not_found");
       if (!auto || !noAnchors) throw err;
-      placement = 'lastPage';
+      placement = "lastPage";
     }
   }
 
   // Última página o borrador: el borrador en una llamada; para la última página hace falta saber cuántas páginas tiene
   // el PDF (lo dice la respuesta), así que después van los campos y el envío.
   var draft = buildEnvelopeRequest_(shallowMerge_(base, { placement: placement }));
-  var created = calaRequest_('post', '/v1/envelopes', { json: draft, idempotencyKey: idemKey_(c.cardKey, 'd', draft) });
-  if (placement === 'draft') return result(created, false);
+  var created = calaRequest_("post", "/v1/envelopes", { json: draft, idempotencyKey: idemKey_(c.cardKey, "d", draft) });
+  if (placement === "draft") return result(created, false);
   var id = encodeURIComponent(created.envelope.id);
-  calaRequest_('put', '/v1/envelopes/' + id + '/fields', { json: { fields: lastPageFields_(created, signers) } });
-  var sent = calaRequest_('post', '/v1/envelopes/' + id + '/send', { idempotencyKey: idemKey_(c.cardKey, 's', { id: created.envelope.id }) });
+  calaRequest_("put", "/v1/envelopes/" + id + "/fields", { json: { fields: lastPageFields_(created, signers) } });
+  var sent = calaRequest_("post", "/v1/envelopes/" + id + "/send", { idempotencyKey: idemKey_(c.cardKey, "s", { id: created.envelope.id }) });
   return result(sent, true);
 }
 
@@ -89,7 +93,7 @@ function sendDocument_(c) {
 // se completó, se baja el PDF firmado y se guarda junto al original. Ver el README para la comparación con la
 // exportación automática a Google Drive de la organización (storage-export).
 
-var CS_PENDING_KEY = 'calasign.pendingSaves';
+var CS_PENDING_KEY = "calasign.pendingSaves";
 var CS_PENDING_MAX = 25;
 
 function pendingSaves_() {
@@ -112,7 +116,7 @@ function addPendingSave_(envelopeId, meta) {
     envelopeId: envelopeId,
     fileId: meta.id,
     name: meta.name,
-    pdf: meta.mimeType === 'application/pdf',
+    pdf: meta.mimeType === "application/pdf",
     parentId: (meta.parents && meta.parents[0]) || null,
     at: new Date().toISOString(),
   });
@@ -126,7 +130,7 @@ function addPendingSave_(envelopeId, meta) {
  * @return {{file: Object, fallback: boolean}}
  */
 function saveSignedToDrive_(p, bytes, lang) {
-  var name = signedFileName_(p.name, t_(lang, 'signedWord'));
+  var name = signedFileName_(p.name, t_(lang, "signedWord"));
   if (p.parentId) {
     try {
       return { file: driveUpload_(name, bytes, [p.parentId]), fallback: false };
@@ -143,7 +147,7 @@ function saveSignedToDrive_(p, bytes, lang) {
         // Sin reemplazar, la copia es el original SIN firmar con el nombre "(firmado)": se borra (y cada reintento de
         // un error pasajero dejaba otra).
         try {
-          driveFetch_('delete', CS_DRIVE_API + '/' + encodeURIComponent(copy.id) + '?supportsAllDrives=true');
+          driveFetch_("delete", CS_DRIVE_API + "/" + encodeURIComponent(copy.id) + "?supportsAllDrives=true");
         } catch (ignored) {
           /* se informa el error del reemplazo */
         }
@@ -164,8 +168,8 @@ function syncPendingSaves_(lang) {
   var list = pendingSaves_();
   if (!list.length) return [];
   var cache = CacheService.getUserCache();
-  if (cache.get('calasign.syncedAt')) return [];
-  cache.put('calasign.syncedAt', '1', 120);
+  if (cache.get("calasign.syncedAt")) return [];
+  cache.put("calasign.syncedAt", "1", 120);
   var saved = [];
   var unchecked = [];
   var keep = [];
@@ -178,15 +182,15 @@ function syncPendingSaves_(lang) {
     }
     checked++;
     try {
-      var detail = calaRequest_('get', '/v1/envelopes/' + encodeURIComponent(p.envelopeId));
+      var detail = calaRequest_("get", "/v1/envelopes/" + encodeURIComponent(p.envelopeId));
       var status = detail.envelope.status;
-      if (status === 'completed') {
-        var bytes = calaRequest_('get', '/v1/envelopes/' + encodeURIComponent(p.envelopeId) + '/signed.pdf', { raw: true }).getContent();
+      if (status === "completed") {
+        var bytes = calaRequest_("get", "/v1/envelopes/" + encodeURIComponent(p.envelopeId) + "/signed.pdf", { raw: true }).getContent();
         var r = saveSignedToDrive_(p, bytes, lang);
-        saved.push({ name: r.file.name, url: r.file.webViewLink || '', fallback: r.fallback });
+        saved.push({ name: r.file.name, url: r.file.webViewLink || "", fallback: r.fallback });
         return;
       }
-      if (status === 'declined' || status === 'voided' || status === 'expired') return; // ya no se va a firmar
+      if (status === "declined" || status === "voided" || status === "expired") return; // ya no se va a firmar
       keep.push(p);
     } catch (err) {
       // Sin sesión a mitad de la vuelta: antes se cortaba sin actualizar la lista y los que ya se habían guardado en

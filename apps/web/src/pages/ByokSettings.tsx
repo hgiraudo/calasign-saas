@@ -119,7 +119,9 @@ export function ByokSettingsPage() {
           <span className={`badge ${STATUS_BADGE[data.status]}`}>{dt(`byok.status.${data.status}` as DataKey)}</span>
           {data.keyArn && data.status !== "none" && <code className="small">{data.keyArn}</code>}
         </div>
-        {data.enabledAt && data.status !== "none" && <p className="muted small">{dt("byok.enabledAt", { at: formatDateTime(data.enabledAt, locale) })}</p>}
+        {data.enabledAt && data.status !== "none" && (
+          <p className="muted small">{dt("byok.enabledAt", { at: formatDateTime(data.enabledAt, locale) })}</p>
+        )}
         {data.checkedAt && <p className="muted small">{dt("byok.checkedAt", { at: formatDateTime(data.checkedAt, locale) })}</p>}
         {data.error && <p className="muted small">{dt("byok.error", { error: data.error })}</p>}
         {data.status !== "none" && (

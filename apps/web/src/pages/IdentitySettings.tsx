@@ -44,7 +44,12 @@ function CopyRow({ label, value }: { label: string; value: string }) {
     <div className="idn-copy">
       <span className="muted small">{label}</span>
       <code className="secret">{value}</code>
-      <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard?.writeText(value).catch(() => undefined /* sin permiso: se copia a mano */)} aria-label={`${t("common.copy")} ${label}`}>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        onClick={() => navigator.clipboard?.writeText(value).catch(() => undefined /* sin permiso: se copia a mano */)}
+        aria-label={`${t("common.copy")} ${label}`}
+      >
         ⧉
       </button>
     </div>
@@ -102,7 +107,9 @@ export function IdentitySettingsPage() {
             {data.providers.map((p) => (
               <li key={p.id}>
                 <strong>{p.name}</strong>
-                <span className={`badge ${p.configured ? "badge-completed" : ""}`}>{p.configured ? tx("idset.configured") : tx("idset.notConfigured")}</span>
+                <span className={`badge ${p.configured ? "badge-completed" : ""}`}>
+                  {p.configured ? tx("idset.configured") : tx("idset.notConfigured")}
+                </span>
               </li>
             ))}
           </ul>
@@ -156,7 +163,10 @@ export function IdentitySettingsPage() {
             <div className="idn-grid">
               <label className="field">
                 <span>{tx("idset.mockDecision")}</span>
-                <select value={data.mock.decision} onChange={(e) => setData({ ...data, mock: { ...data.mock, decision: e.target.value as (typeof MOCK_DECISIONS)[number] } })}>
+                <select
+                  value={data.mock.decision}
+                  onChange={(e) => setData({ ...data, mock: { ...data.mock, decision: e.target.value as (typeof MOCK_DECISIONS)[number] } })}
+                >
                   {MOCK_DECISIONS.map((d) => (
                     <option key={d} value={d}>
                       {tx(`idset.mockDecision.${d}` as IdnKey)}
@@ -166,14 +176,21 @@ export function IdentitySettingsPage() {
               </label>
               <label className="field">
                 <span>{tx("idset.mockName")}</span>
-                <input value={data.mock.extractedName ?? ""} onChange={(e) => setData({ ...data, mock: { ...data.mock, extractedName: e.target.value } })} />
+                <input
+                  value={data.mock.extractedName ?? ""}
+                  onChange={(e) => setData({ ...data, mock: { ...data.mock, extractedName: e.target.value } })}
+                />
                 <small className="muted">{tx("idset.mockNameHint")}</small>
               </label>
             </div>
           </div>
         )}
         <ErrorBox error={error} />
-        {saved && <p className="alert alert-success" role="status">{tx("sso.saved")}</p>}
+        {saved && (
+          <p className="alert alert-success" role="status">
+            {tx("sso.saved")}
+          </p>
+        )}
         <div className="row-end">
           <button className="btn btn-primary" disabled={busy}>
             {tx("common.save")}
@@ -239,12 +256,23 @@ export function SsoSettingsPage() {
       sessionTtlHours: ttlText === null ? data.sessionTtlHours : clampTtl(ttlText),
       oidc:
         data.protocol === "oidc" && oidc.issuer
-          ? { issuer: oidc.issuer, clientId: oidc.clientId, scopes: oidc.scopes, trustUnverifiedEmail: oidc.trustUnverifiedEmail, ...(secret ? { clientSecret: secret } : {}) }
+          ? {
+              issuer: oidc.issuer,
+              clientId: oidc.clientId,
+              scopes: oidc.scopes,
+              trustUnverifiedEmail: oidc.trustUnverifiedEmail,
+              ...(secret ? { clientSecret: secret } : {}),
+            }
           : null,
       // Sin certificado nuevo, el servidor conserva el actual.
       saml:
         data.protocol === "saml" && saml.entryPoint
-          ? { entryPoint: saml.entryPoint, idpIssuer: saml.idpIssuer, ...(cert.trim() ? { idpCert: cert } : {}), emailAttribute: saml.emailAttribute || null }
+          ? {
+              entryPoint: saml.entryPoint,
+              idpIssuer: saml.idpIssuer,
+              ...(cert.trim() ? { idpCert: cert } : {}),
+              emailAttribute: saml.emailAttribute || null,
+            }
           : null,
     };
     try {
@@ -307,9 +335,13 @@ export function SsoSettingsPage() {
                   onChange={(e) => {
                     const issuer = e.target.value;
                     const sameIdp = savedOidc !== null && issuer.trim() === savedOidc.issuer.trim();
-                    setData({ ...data, oidc: { ...oidc, issuer, ...(trustTouched ? {} : { trustUnverifiedEmail: sameIdp ? savedOidc!.trust : false }) } });
+                    setData({
+                      ...data,
+                      oidc: { ...oidc, issuer, ...(trustTouched ? {} : { trustUnverifiedEmail: sameIdp ? savedOidc!.trust : false }) },
+                    });
                   }}
-                  placeholder="https://login.microsoftonline.com/<tenant>/v2.0" />
+                  placeholder="https://login.microsoftonline.com/<tenant>/v2.0"
+                />
               </label>
               <label className="field">
                 <span>{tx("sso.clientId")}</span>
@@ -317,7 +349,13 @@ export function SsoSettingsPage() {
               </label>
               <label className="field">
                 <span>{tx("sso.clientSecret")}</span>
-                <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={oidc.hasClientSecret ? tx("sso.clientSecretKeep") : ""} />
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  placeholder={oidc.hasClientSecret ? tx("sso.clientSecretKeep") : ""}
+                />
               </label>
               <label className="field">
                 <span>{tx("sso.scopes")}</span>
@@ -379,7 +417,12 @@ export function SsoSettingsPage() {
             </label>
           )}
           <label className="check">
-            <input type="checkbox" checked={data.enforce} onChange={(e) => setData({ ...data, enforce: e.target.checked })} disabled={!data.enabled} />
+            <input
+              type="checkbox"
+              checked={data.enforce}
+              onChange={(e) => setData({ ...data, enforce: e.target.checked })}
+              disabled={!data.enabled}
+            />
             <span>{tx("sso.enforce")}</span>
           </label>
           <label className="field idn-narrow">
@@ -402,7 +445,11 @@ export function SsoSettingsPage() {
           </label>
         </fieldset>
         <ErrorBox error={error} />
-        {saved && <p className="alert alert-success" role="status">{tx("sso.saved")}</p>}
+        {saved && (
+          <p className="alert alert-success" role="status">
+            {tx("sso.saved")}
+          </p>
+        )}
         {!readOnly && (
           <div className="row-end">
             <button className="btn btn-primary" disabled={busy || (!inPlan && data.enabled)}>
@@ -471,7 +518,9 @@ export function ScimSettingsPage() {
           <select
             value={data.defaultRole}
             disabled={busy || !canEdit || !inPlan}
-            onChange={(e) => run(async () => setData(await api<ScimSettings>("/v1/settings/scim", { method: "PATCH", body: { defaultRole: e.target.value } })))}
+            onChange={(e) =>
+              run(async () => setData(await api<ScimSettings>("/v1/settings/scim", { method: "PATCH", body: { defaultRole: e.target.value } })))
+            }
           >
             <option value="member">{roleLabel("member")}</option>
             <option value="admin" disabled={!canAdmin}>
@@ -489,23 +538,29 @@ export function ScimSettingsPage() {
           </div>
         )}
         {canEdit && canAdmin && (
-        <form
-          className="row-wrap"
-          onSubmit={(e) => {
-            e.preventDefault();
-            run(async () => {
-              const r = await api<{ secret: string }>("/v1/settings/scim/tokens", { method: "POST", body: { name } });
-              setSecret(r.secret);
-              setName("");
-              await reload();
-            });
-          }}
-        >
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tx("scim.tokenName")} aria-label={tx("scim.tokenName")} required />
-          <button className="btn btn-primary" disabled={busy || !name.trim() || !inPlan}>
-            {tx("scim.create")}
-          </button>
-        </form>
+          <form
+            className="row-wrap"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(async () => {
+                const r = await api<{ secret: string }>("/v1/settings/scim/tokens", { method: "POST", body: { name } });
+                setSecret(r.secret);
+                setName("");
+                await reload();
+              });
+            }}
+          >
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={tx("scim.tokenName")}
+              aria-label={tx("scim.tokenName")}
+              required
+            />
+            <button className="btn btn-primary" disabled={busy || !name.trim() || !inPlan}>
+              {tx("scim.create")}
+            </button>
+          </form>
         )}
         <ErrorBox error={error} />
         {data.tokens.length === 0 ? (
@@ -523,10 +578,18 @@ export function ScimSettingsPage() {
                 {t.revokedAt ? (
                   <span className="badge">{tx("scim.revoked")}</span>
                 ) : !canEdit ? null : (
-                  <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => {
-                    await api(`/v1/settings/scim/tokens/${t.id}`, { method: "DELETE" });
-                    await reload();
-                  })}>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    disabled={busy}
+                    onClick={() =>
+                      confirmAction() &&
+                      run(async () => {
+                        await api(`/v1/settings/scim/tokens/${t.id}`, { method: "DELETE" });
+                        await reload();
+                      })
+                    }
+                  >
                     {tx("scim.revoke")}
                   </button>
                 )}

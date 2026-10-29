@@ -62,7 +62,14 @@ describe("custodia: contexto de cifrado", () => {
     try {
       const sealed = await custody.sealKey("CLAVE-BYOK", { tenantId: TENANT_A, certificateId: CERT_1 }, { tenantId: TENANT_A, keyArn: OK_ARN });
       expect(seen.at(-1)).toEqual({ purpose: "calasign-tenant-certificate", tenant: TENANT_A });
-      const row = { id: CERT_1, tenant_id: TENANT_A, key_ciphertext: sealed.ciphertext, key_wrapped: sealed.wrapped, key_wrap_method: sealed.method, key_wrap_key_arn: OK_ARN };
+      const row = {
+        id: CERT_1,
+        tenant_id: TENANT_A,
+        key_ciphertext: sealed.ciphertext,
+        key_wrapped: sealed.wrapped,
+        key_wrap_method: sealed.method,
+        key_wrap_key_arn: OK_ARN,
+      };
       expect(await custody.openKey(row)).toBe("CLAVE-BYOK");
       // Otro certificado: KMS abre la clave de datos, pero el AAD de AES-GCM no coincide.
       await expect(custody.openKey({ ...row, id: CERT_2 })).rejects.toThrow();
@@ -125,7 +132,9 @@ describe("custodia: contexto de cifrado", () => {
     const CERT_4 = "0192f0e0-0000-7000-8000-0000000000c4";
     const row = await legacyByok(CERT_3);
     const updates: unknown[][] = [];
-    const db = { query: async (sql: string, params: unknown[]) => (/UPDATE tenant_certificates SET key_ciphertext/.test(sql) ? (updates.push(params), []) : []) };
+    const db = {
+      query: async (sql: string, params: unknown[]) => (/UPDATE tenant_certificates SET key_ciphertext/.test(sql) ? (updates.push(params), []) : []),
+    };
     const decrypts: Record<string, string>[] = [];
     const real = kms.mockKms();
     kms.setKmsClientFactory(() => ({ ...real, decrypt: async (i: any) => (decrypts.push(i.EncryptionContext), real.decrypt(i)) }));
@@ -188,7 +197,9 @@ describe("custodia: contexto de cifrado", () => {
     const row: any = { id: CERT_1, tenant_id: TENANT_A, chain_pem: ca.certPem, ...legacySeal(ca.keyPem) };
     expect(await custody.openKey(row)).toBe(ca.keyPem);
     const updates: unknown[][] = [];
-    const db = { query: async (sql: string, params: unknown[]) => (/UPDATE tenant_certificates SET key_ciphertext/.test(sql) ? (updates.push(params), []) : []) };
+    const db = {
+      query: async (sql: string, params: unknown[]) => (/UPDATE tenant_certificates SET key_ciphertext/.test(sql) ? (updates.push(params), []) : []),
+    };
     const provider = await custody.tenantCertificateProvider(db as any, row);
     expect((await provider.signDigest(new Uint8Array(32))).length).toBeGreaterThan(0);
     expect(updates).toHaveLength(1);
@@ -197,7 +208,9 @@ describe("custodia: contexto de cifrado", () => {
     expect(prev).toBe(row.key_ciphertext);
     expect(ciphertext.startsWith("v2.")).toBe(true);
     expect(method).toBe("local");
-    expect(await custody.openKey({ id: CERT_1, tenant_id: TENANT_A, key_ciphertext: ciphertext, key_wrapped: wrapped, key_wrap_method: method })).toBe(ca.keyPem);
+    expect(
+      await custody.openKey({ id: CERT_1, tenant_id: TENANT_A, key_ciphertext: ciphertext, key_wrapped: wrapped, key_wrap_method: method }),
+    ).toBe(ca.keyPem);
     // Ya en v2: no se vuelve a cifrar.
     updates.length = 0;
     await custody.tenantCertificateProvider(db as any, { ...row, key_ciphertext: ciphertext, key_wrapped: wrapped });

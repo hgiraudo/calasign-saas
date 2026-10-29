@@ -62,7 +62,12 @@ export const XmlSignInput = z.object({
   certificateId: z.string().uuid(),
   /** Política propia (XAdES-EPES); DIAN trae la v2 por defecto. */
   policy: z
-    .object({ identifier: z.string().url(), hashBase64: z.string().min(20).max(200), description: z.string().max(300).optional(), hashAlgorithm: z.enum(["sha256", "sha512"]).optional() })
+    .object({
+      identifier: z.string().url(),
+      hashBase64: z.string().min(20).max(200),
+      description: z.string().max(300).optional(),
+      hashAlgorithm: z.enum(["sha256", "sha512"]).optional(),
+    })
     .optional()
     .nullable(),
   signerRole: z.string().max(100).optional().nullable(),

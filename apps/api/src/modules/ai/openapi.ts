@@ -19,7 +19,11 @@ const AiSettingsSchema = named(
     provider: z.enum(["anthropic", "mock", "none"]).describe("none: el servidor no tiene proveedor de IA (503 ai_unavailable)."),
     model: z.string(),
     monthlyTokenBudget: z.number().int().describe("Presupuesto mensual que fijó la organización."),
-    planTokenCap: z.number().int().nullable().describe("Tope de tokens de IA por mes del plan vigente (null = sin tope del plan; 0 = el plan no incluye IA)."),
+    planTokenCap: z
+      .number()
+      .int()
+      .nullable()
+      .describe("Tope de tokens de IA por mes del plan vigente (null = sin tope del plan; 0 = el plan no incluye IA)."),
     effectiveTokenBudget: z.number().int().describe("Lo que efectivamente se aplica: min(monthlyTokenBudget, planTokenCap)."),
     autoExtractMetadata: z.boolean(),
     renewalAlertDays: z.number().int(),
@@ -27,7 +31,10 @@ const AiSettingsSchema = named(
     noticeVersion: z.string().describe("Versión vigente del aviso de tratamiento de datos."),
     noticeAcceptedAt: z.string().datetime().nullable(),
     noticeAcceptedBy: z.string().nullable(),
-    noticeAcceptedVersion: z.string().nullable().describe("Versión aceptada; si no coincide con noticeVersion, la IA queda en pausa (403 ai_notice_required) hasta aceptarla."),
+    noticeAcceptedVersion: z
+      .string()
+      .nullable()
+      .describe("Versión aceptada; si no coincide con noticeVersion, la IA queda en pausa (403 ai_notice_required) hasta aceptarla."),
     usage: z.object({
       month: z.string().describe("YYYY-MM"),
       inputTokens: z.number().int(),
@@ -42,7 +49,15 @@ const TAG = "IA";
 const NOTE =
   "Requiere IA habilitada para la organización (403 ai_disabled), el aviso de tratamiento de datos vigente aceptado (403 ai_notice_required), un plan que incluya IA (402 plan_limit, limit ai_tokens_per_month), proveedor configurado en el servidor (503 ai_unavailable; no se resuelve reintentando) y presupuesto mensual disponible (429 ai_budget_exceeded; el efectivo es min(presupuesto de la organización, tope del plan)). Fallas del proveedor, reintentables: 503 ai_rate_limited (saturado: repetir en unos segundos), 502 ai_unavailable (no se pudo contactar) y 504 ai_timeout (no respondió a tiempo; el consumo estimado se descuenta igual). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
 const SIGNER_NOTE = `Requiere IA habilitada para la organización (403 ai_disabled), con el aviso vigente aceptado, y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
-const AI_AVAILABILITY = ["ai_disabled", "ai_notice_required", "ai_budget_exceeded", "ai_unavailable", "ai_unavailable_upstream", "ai_rate_limited", "ai_timeout"];
+const AI_AVAILABILITY = [
+  "ai_disabled",
+  "ai_notice_required",
+  "ai_budget_exceeded",
+  "ai_unavailable",
+  "ai_unavailable_upstream",
+  "ai_rate_limited",
+  "ai_timeout",
+];
 const AI_ERRORS = ["ai_input_too_large", "purged", ...AI_AVAILABILITY];
 const SIGNER_ERRORS = ["ai_input_too_large", "ai_signer_limit", "identity_required", ...AI_AVAILABILITY];
 
@@ -53,7 +68,8 @@ export const AI_OPS = [
     path: "/v1/settings/ai",
     tag: TAG,
     summary: "Habilitar IA, presupuesto, extracción automática, alertas de renovación y playbook",
-    description: "Habilitar exige acceptNotice: true si el aviso de tratamiento de datos vigente no está aceptado; si no, 403 ai_notice_required. Aceptar el aviso (o habilitar la IA cuando el vigente no está aceptado) requiere sesión web: con API key o token OAuth, 403 session_required. monthlyTokenBudget no puede superar el tope de tokens de IA del plan (402 plan_limit, limit ai_tokens_per_month); en un plan sin IA tampoco se puede habilitar.",
+    description:
+      "Habilitar exige acceptNotice: true si el aviso de tratamiento de datos vigente no está aceptado; si no, 403 ai_notice_required. Aceptar el aviso (o habilitar la IA cuando el vigente no está aceptado) requiere sesión web: con API key o token OAuth, 403 session_required. monthlyTokenBudget no puede superar el tope de tokens de IA del plan (402 plan_limit, limit ai_tokens_per_month); en un plan sin IA tampoco se puede habilitar.",
     body: UpdateAiSettingsInput,
     response: AiSettingsSchema,
     errors: ["ai_notice_required", "session_required"],
@@ -63,7 +79,8 @@ export const AI_OPS = [
     path: "/v1/envelopes/{id}/ai/preview",
     tag: TAG,
     summary: "Texto exacto que se enviaría al modelo (transparencia)",
-    description: "Query: feature (detect_fields | summary | ask | extract_metadata | playbook_review), documentId opcional. Si los originales del sobre se borraron por la política de retención, 410 purged.",
+    description:
+      "Query: feature (detect_fields | summary | ask | extract_metadata | playbook_review), documentId opcional. Si los originales del sobre se borraron por la política de retención, 410 purged.",
     errors: ["purged"],
   },
   {
@@ -71,7 +88,8 @@ export const AI_OPS = [
     path: "/v1/envelopes/{id}/ai/detect-fields",
     tag: TAG,
     summary: "Sugerir campos (firma, iniciales, fecha, nombre) con su rol",
-    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, si no queda presupuesto o el documento es demasiado largo para el modelo, devuelve solo esas sugerencias (usage y sent en null). Si los originales del sobre se borraron por la política de retención, 410 purged.",
+    description:
+      "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, si no queda presupuesto o el documento es demasiado largo para el modelo, devuelve solo esas sugerencias (usage y sent en null). Si los originales del sobre se borraron por la política de retención, 410 purged.",
     body: DetectFieldsInput,
     errors: ["purged", "ai_unavailable_upstream", "ai_rate_limited", "ai_timeout"],
   },
@@ -87,11 +105,57 @@ export const AI_OPS = [
     errors: ["version_changed"],
   },
   { method: "get", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Última revisión contra el playbook" },
-  { method: "post", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Revisar el documento contra el playbook (o reglas ad hoc)", description: NOTE, body: PlaybookReviewInput, errors: [...AI_ERRORS, "documents_changed"] },
-  { method: "get", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Datos del contrato y alerta de renovación programada", response: EnvelopeAiMetadataSchema },
-  { method: "post", path: "/v1/envelopes/{id}/ai/extract-metadata", tag: TAG, summary: "Extraer partes, fechas, montos, ley aplicable y preaviso", description: NOTE, response: EnvelopeAiMetadataSchema, errors: [...AI_ERRORS, "documents_changed", "metadata_changed"] },
-  { method: "put", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Corregir los datos del contrato (reprograma la alerta)", body: PutContractMetadataInput, response: EnvelopeAiMetadataSchema },
+  {
+    method: "post",
+    path: "/v1/envelopes/{id}/ai/review",
+    tag: TAG,
+    summary: "Revisar el documento contra el playbook (o reglas ad hoc)",
+    description: NOTE,
+    body: PlaybookReviewInput,
+    errors: [...AI_ERRORS, "documents_changed"],
+  },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}/ai/metadata",
+    tag: TAG,
+    summary: "Datos del contrato y alerta de renovación programada",
+    response: EnvelopeAiMetadataSchema,
+  },
+  {
+    method: "post",
+    path: "/v1/envelopes/{id}/ai/extract-metadata",
+    tag: TAG,
+    summary: "Extraer partes, fechas, montos, ley aplicable y preaviso",
+    description: NOTE,
+    response: EnvelopeAiMetadataSchema,
+    errors: [...AI_ERRORS, "documents_changed", "metadata_changed"],
+  },
+  {
+    method: "put",
+    path: "/v1/envelopes/{id}/ai/metadata",
+    tag: TAG,
+    summary: "Corregir los datos del contrato (reprograma la alerta)",
+    body: PutContractMetadataInput,
+    response: EnvelopeAiMetadataSchema,
+  },
   { method: "get", path: "/v1/signing/{token}/ai", tag: TAG, summary: "Firmante: disponibilidad del asistente, aviso y descargo", auth: "token" },
-  { method: "post", path: "/v1/signing/{token}/ai/summary", tag: TAG, summary: "Firmante: resumen en lenguaje simple con citas", description: SIGNER_NOTE, auth: "token", errors: SIGNER_ERRORS },
-  { method: "post", path: "/v1/signing/{token}/ai/ask", tag: TAG, summary: "Firmante: pregunta sobre el documento, respondida con citas y página", description: SIGNER_NOTE, body: AiAskInput, auth: "token", errors: SIGNER_ERRORS },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/ai/summary",
+    tag: TAG,
+    summary: "Firmante: resumen en lenguaje simple con citas",
+    description: SIGNER_NOTE,
+    auth: "token",
+    errors: SIGNER_ERRORS,
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/ai/ask",
+    tag: TAG,
+    summary: "Firmante: pregunta sobre el documento, respondida con citas y página",
+    description: SIGNER_NOTE,
+    body: AiAskInput,
+    auth: "token",
+    errors: SIGNER_ERRORS,
+  },
 ] as const;

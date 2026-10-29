@@ -58,7 +58,7 @@ const emptyResult = (status: IdvResult["status"], reference: string | null): Idv
 
 function header(h: Record<string, string | string[] | undefined>, name: string): string {
   const v = h[name.toLowerCase()];
-  return Array.isArray(v) ? v[0] ?? "" : v ?? "";
+  return Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
 }
 
 function safeEqualHex(a: string, b: string): boolean {
@@ -112,14 +112,16 @@ export function mockDecide(
   r.person = { firstName: first, lastName: last || null, fullName, birthDate: "1990-01-01" };
   r.document = {
     type: "national_id",
-    number: settings.extractedDocumentNumber?.trim() || declared.documentNumber || `MOCK${(have.get("document_front") ?? "").slice(0, 8).toUpperCase()}`,
+    number:
+      settings.extractedDocumentNumber?.trim() || declared.documentNumber || `MOCK${(have.get("document_front") ?? "").slice(0, 8).toUpperCase()}`,
     country: null,
     expiresOn: "2032-12-31",
   };
   if (have.get("document_front") === have.get("document_back")) {
     return { ...r, status: "declined", declineReason: "document_front_back_identical", riskFlags: ["duplicate_image"] };
   }
-  if (settings.decision === "reject_document") return { ...r, status: "declined", declineReason: "document_unreadable", riskFlags: ["document_quality"] };
+  if (settings.decision === "reject_document")
+    return { ...r, status: "declined", declineReason: "document_unreadable", riskFlags: ["document_quality"] };
 
   if (level !== "document") {
     r.faceMatchScore = settings.decision === "reject_face" ? 0.31 : 0.93;
@@ -172,7 +174,7 @@ export function mapVeriffDecision(v: any): IdvResult {
     liveness: typeof v?.liveness === "boolean" ? v.liveness : null,
     riskFlags: risk,
     reference: v?.id ?? null,
-    declineReason: status === "approved" ? null : v?.reason ?? v?.status ?? null,
+    declineReason: status === "approved" ? null : (v?.reason ?? v?.status ?? null),
   };
 }
 
@@ -267,7 +269,8 @@ export function mapTruoraProcess(p: any): IdvResult {
   const first = dd.name ?? null;
   const last = dd.last_name ?? null;
   const risk: string[] = [];
-  for (const v of validations) if (v?.validation_status && v.validation_status !== "success") risk.push(`${v.validation_type}:${v.validation_status}`);
+  for (const v of validations)
+    if (v?.validation_status && v.validation_status !== "success") risk.push(`${v.validation_type}:${v.validation_status}`);
   const liveness =
     typeof fr.passive_liveness_status === "string" ? fr.passive_liveness_status === "success" : typeof fr.liveness === "boolean" ? fr.liveness : null;
   // Decisión explícita de la validación facial (cuando no viene el puntaje de similitud).
@@ -275,14 +278,19 @@ export function mapTruoraProcess(p: any): IdvResult {
   const faceMatched = typeof faceStatus === "string" ? faceStatus === "success" : null;
   return {
     status,
-    document: { type: dd.document_type ?? null, number: dd.document_number ?? null, country: dd.country ?? null, expiresOn: dd.expiration_date ?? null },
+    document: {
+      type: dd.document_type ?? null,
+      number: dd.document_number ?? null,
+      country: dd.country ?? null,
+      expiresOn: dd.expiration_date ?? null,
+    },
     person: { firstName: first, lastName: last, fullName: [first, last].filter(Boolean).join(" ") || null, birthDate: dd.date_of_birth ?? null },
     faceMatchScore: typeof fr.confidence_score === "number" ? fr.confidence_score : null,
     faceMatched,
     liveness,
     riskFlags: risk,
     reference: p?.process_id ?? null,
-    declineReason: status === "approved" ? null : p?.declined_reason ?? p?.failure_status ?? null,
+    declineReason: status === "approved" ? null : (p?.declined_reason ?? p?.failure_status ?? null),
   };
 }
 
@@ -306,7 +314,11 @@ const truoraAdapter: IdvAdapter = {
   name: "Truora",
   mode: "redirect",
   configured: () =>
-    Boolean(truoraConfig().key && truoraConfig().webhookSecret && (truoraConfig().flowId || Object.keys(process.env).some((k) => k.startsWith("TRUORA_FLOW_ID_") && process.env[k]))),
+    Boolean(
+      truoraConfig().key &&
+        truoraConfig().webhookSecret &&
+        (truoraConfig().flowId || Object.keys(process.env).some((k) => k.startsWith("TRUORA_FLOW_ID_") && process.env[k])),
+    ),
   async createSession(input) {
     const c = truoraConfig();
     const flowId = truoraFlowId(input.level);

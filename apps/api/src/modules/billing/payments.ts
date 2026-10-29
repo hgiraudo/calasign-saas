@@ -40,8 +40,18 @@ import { escapeHtml, mockPage, mockPageCsp } from "./mock-page";
 
 // Código estable (lo traduce la interfaz) y texto documental en español, en el mismo orden.
 const PROVIDER_METHODS: Record<PaymentProvider, [PaymentMethodCode, string][]> = {
-  stripe: [["card", "Tarjeta"], ["pix", "Pix (cuentas de Stripe en Brasil)"], ["wallet", "Apple Pay / Google Pay"]],
-  mercadopago: [["card", "Tarjeta"], ["pix", "Pix (Brasil)"], ["pse", "PSE (Colombia)"], ["boleto", "Boleto (Brasil)"], ["cash", "Efectivo según país"]],
+  stripe: [
+    ["card", "Tarjeta"],
+    ["pix", "Pix (cuentas de Stripe en Brasil)"],
+    ["wallet", "Apple Pay / Google Pay"],
+  ],
+  mercadopago: [
+    ["card", "Tarjeta"],
+    ["pix", "Pix (Brasil)"],
+    ["pse", "PSE (Colombia)"],
+    ["boleto", "Boleto (Brasil)"],
+    ["cash", "Efectivo según país"],
+  ],
   mock: [["simulated", "Simulado (solo pruebas)"]],
 };
 
@@ -136,7 +146,12 @@ export const DISCARD_CHECKOUT_SET = `stale_checkout_ids = CASE WHEN checkout_id 
   checkout_id = NULL, checkout_url = NULL, checkout_ref = NULL, checkout_nonce_hash = NULL`;
 
 /** Reembolsa un segundo cobro (o uno de un checkout descartado) sobre un pago ya acreditado y lo deja en la evidencia (una vez). */
-export async function refundDuplicatePayment(db: Db, paymentId: string, providerPaymentId: string, provider: "mercadopago" | "stripe" = "mercadopago") {
+export async function refundDuplicatePayment(
+  db: Db,
+  paymentId: string,
+  providerPaymentId: string,
+  provider: "mercadopago" | "stripe" = "mercadopago",
+) {
   if (provider === "stripe") await stripeRefundPayment(providerPaymentId, `dup:${providerPaymentId}`);
   else await mpRefundPayment(providerPaymentId, `dup:${providerPaymentId}`);
   const p = await db.one<any>(`SELECT tenant_id, envelope_id, provider FROM envelope_payments WHERE id = $1`, [paymentId]);
@@ -182,7 +197,9 @@ export async function markPaymentPaid(
     // Ya reembolsado: otro evento del mismo pago (p. ej. async_payment_succeeded) no lo vuelve a "pagado".
     // Un cobro con OTRO id del proveedor es un segundo pago de la misma preferencia: lo reembolsa quien llama.
     if (p.status === "paid" || p.status === "refunded") {
-      return r.providerPaymentId && p.provider_payment_id && r.providerPaymentId !== p.provider_payment_id ? { duplicate: r.providerPaymentId } : undefined;
+      return r.providerPaymentId && p.provider_payment_id && r.providerPaymentId !== p.provider_payment_id
+        ? { duplicate: r.providerPaymentId }
+        : undefined;
     }
     // Un monto no numérico (NaN) haría falsa cualquier comparación: se trata como diferencia.
     // Checkout armado para otro pagador (el anterior, antes de una delegación, reasignación o corrección) y pagado
@@ -354,14 +371,19 @@ export async function refundPaymentsOnClosedEnvelopes(d: { db: Db; log: { error:
         });
       });
     } catch (err) {
-      await d.db.query(`UPDATE envelope_payments SET refund_error = $2, updated_at = now() WHERE id = $1`, [p.id, String(err).slice(0, 500)]).catch(() => {});
+      await d.db
+        .query(`UPDATE envelope_payments SET refund_error = $2, updated_at = now() WHERE id = $1`, [p.id, String(err).slice(0, 500)])
+        .catch(() => {});
       d.log.error({ err: String(err), paymentId: p.id }, "no se pudo reembolsar un pago de un sobre cerrado");
     }
   }
 }
 
 async function lockPaymentByProviderId(t: Db, provider: string, providerPaymentId: string) {
-  const p0 = await t.one<any>(`SELECT id, tenant_id, envelope_id FROM envelope_payments WHERE provider = $1 AND provider_payment_id = $2`, [provider, providerPaymentId]);
+  const p0 = await t.one<any>(`SELECT id, tenant_id, envelope_id FROM envelope_payments WHERE provider = $1 AND provider_payment_id = $2`, [
+    provider,
+    providerPaymentId,
+  ]);
   if (!p0) return null;
   await lockEnvelope(t, p0.tenant_id, p0.envelope_id);
   return t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1 FOR UPDATE`, [p0.id]);
@@ -386,14 +408,23 @@ export async function markPaymentRefundedByProvider(
     if (r.full) {
       // Ya "refunded" (el barrido lo marcó con su propio evento): nada.
       if (p.status !== "paid") return;
-      await t.query(`UPDATE envelope_payments SET status = 'refunded', refunded_at = COALESCE(refunded_at, now()), refund_error = NULL, updated_at = now() WHERE id = $1`, [p.id]);
+      await t.query(
+        `UPDATE envelope_payments SET status = 'refunded', refunded_at = COALESCE(refunded_at, now()), refund_error = NULL, updated_at = now() WHERE id = $1`,
+        [p.id],
+      );
       await appendEvent(t, {
         tenantId: p.tenant_id,
         envelopeId: p.envelope_id,
         type: "payment.refunded",
         actor,
         // El barrido de sobres cerrados puede no haber guardado todavía su reembolso: si estaba pendiente, es ese.
-        data: { paymentId: p.id, amount: Number(p.amount), currency: p.currency, reason: p.refund_required_at ? "envelope_closed" : "provider", providerPaymentId },
+        data: {
+          paymentId: p.id,
+          amount: Number(p.amount),
+          currency: p.currency,
+          reason: p.refund_required_at ? "envelope_closed" : "provider",
+          providerPaymentId,
+        },
       });
       return;
     }
@@ -417,11 +448,19 @@ export async function markPaymentRefundedByProvider(
  * Contracargo o disputa abierta en el proveedor (Stripe charge.dispute.created, Mercado Pago charged_back): se marca el
  * cobro (disputed_at) y queda en la evidencia. El estado del cobro y el del sobre no cambian. Idempotente por disputa.
  */
-export async function markPaymentDisputed(db: Db, provider: PaymentProvider, providerPaymentId: string, d: { disputeId: string; reason?: string | null; amount?: number | null }) {
+export async function markPaymentDisputed(
+  db: Db,
+  provider: PaymentProvider,
+  providerPaymentId: string,
+  d: { disputeId: string; reason?: string | null; amount?: number | null },
+) {
   await db.tx(async (t) => {
     const p = await lockPaymentByProviderId(t, provider, providerPaymentId);
     if (!p) return;
-    const seen = await t.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'payment.disputed' AND data->>'disputeId' = $2`, [p.envelope_id, d.disputeId]);
+    const seen = await t.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'payment.disputed' AND data->>'disputeId' = $2`, [
+      p.envelope_id,
+      d.disputeId,
+    ]);
     if (seen) return;
     await t.query(`UPDATE envelope_payments SET disputed_at = COALESCE(disputed_at, now()), updated_at = now() WHERE id = $1`, [p.id]);
     await appendEvent(t, {
@@ -429,7 +468,14 @@ export async function markPaymentDisputed(db: Db, provider: PaymentProvider, pro
       envelopeId: p.envelope_id,
       type: "payment.disputed",
       actor: { ...SYSTEM, label: `Pago (${p.provider})` },
-      data: { paymentId: p.id, providerPaymentId, disputeId: d.disputeId, reason: d.reason?.slice(0, 200) ?? null, amount: d.amount ?? Number(p.amount), currency: p.currency },
+      data: {
+        paymentId: p.id,
+        providerPaymentId,
+        disputeId: d.disputeId,
+        reason: d.reason?.slice(0, 200) ?? null,
+        amount: d.amount ?? Number(p.amount),
+        currency: p.currency,
+      },
     });
   });
 }
@@ -459,7 +505,11 @@ export async function markPaymentFailed(
     // toca el cobro del pagador actual (lo devolvía a "pending" con su sesión todavía en proceso y le sumaba
     // payment.failed a su evidencia).
     if ((payerRecipientId && payerRecipientId !== p.recipient_id) || isDiscarded(p, o.checkoutRef)) return;
-    if (o.ref && (await t.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'payment.failed' AND data->>'ref' = $2`, [p.envelope_id, o.ref]))) return;
+    if (
+      o.ref &&
+      (await t.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'payment.failed' AND data->>'ref' = $2`, [p.envelope_id, o.ref]))
+    )
+      return;
     // Vuelve a "pending": el firmante puede intentar de nuevo.
     await t.query(`UPDATE envelope_payments SET status = 'pending', updated_at = now() WHERE id = $1`, [p.id]);
     await appendEvent(t, {
@@ -507,7 +557,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     // Sobre anulado, vencido (aunque el barrido no lo haya marcado), rechazado o ya cerrado: no se exige el pago (no se
     // puede pagar) y el handler responde el estado real (410/409), con el que la página muestra el cierre.
     if (e.status !== "sent" || pastExpiry(e)) return;
-    const p = await s.db.one<any>(`SELECT * FROM envelope_payments WHERE recipient_id = $1 AND timing = 'before_sign' AND status NOT IN ('paid','refunded')`, [recipient.id]);
+    const p = await s.db.one<any>(
+      `SELECT * FROM envelope_payments WHERE recipient_id = $1 AND timing = 'before_sign' AND status NOT IN ('paid','refunded')`,
+      [recipient.id],
+    );
     if (p) {
       throw new AppError(402, "payment_required", "Para firmar primero hay que completar el pago", {
         amount: Number(p.amount),
@@ -532,7 +585,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
   // Configurar o quitar el cobro cambia el borrador: updatedAt nuevo (el editor y el envío con X-Expected-Updated-At lo
   // ven) y, con el encabezado, 409 version_changed si otra pestaña u otra persona lo cambió desde que se cargó.
   const touchEnvelope = (db: Db, id: string) =>
-    db.query(`UPDATE envelopes SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [id]);
+    db.query(
+      `UPDATE envelopes SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`,
+      [id],
+    );
 
   app.get<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req) => paymentState(s.db, req.auth!.tenantId, req.params.id));
 
@@ -560,7 +616,13 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
         envelopeId: e.id,
         type: "payment.configured",
         actor: a.actor,
-        data: { amount: input.amount, currency: input.currency, provider: input.provider, timing: input.timing, payerRecipientId: input.payerRecipientId },
+        data: {
+          amount: input.amount,
+          currency: input.currency,
+          provider: input.provider,
+          timing: input.timing,
+          payerRecipientId: input.payerRecipientId,
+        },
       });
       await touchEnvelope(t, e.id);
       return paymentState(t, a.tenantId, e.id);
@@ -599,14 +661,20 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     const info = signerInfo(p, r, e);
     if (!info.required) throw notFound("Cobro");
     if (settled(p)) throw conflict("already_paid", "El pago ya está confirmado");
-    if (!info.canPay) throw conflict("payment_not_available", p.timing === "after_sign" ? "El pago se habilita después de firmar" : "El sobre no admite pagos ahora");
+    if (!info.canPay)
+      throw conflict("payment_not_available", p.timing === "after_sign" ? "El pago se habilita después de firmar" : "El sobre no admite pagos ahora");
 
     // Vuelta neutra (signer-return.ts): el proveedor vuelve a /v1/payments/return/:id y de ahí al token con el que se
     // está pagando ahora en este navegador (cookie) o, sin cookie (iframe de terceros), al último con que se inició o
     // retomó el checkout (guardado acá también al reutilizarlo: antes la vuelta iba al token del primer inicio).
     // Un token de sesión vigente guardado (iframe embebido) no se pisa con el permanente (returnTokenEncToStore).
     setSignerReturnCookie(reply, "payments", p.id, token);
-    const returnEnc = await returnTokenEncToStore(s.db, { token, sessionToken, storedTokenEnc: p.recipient_id === r.id ? p.checkout_return_token_enc : null, recipientId: r.id });
+    const returnEnc = await returnTokenEncToStore(s.db, {
+      token,
+      sessionToken,
+      storedTokenEnc: p.recipient_id === r.id ? p.checkout_return_token_enc : null,
+      recipientId: r.id,
+    });
     const rememberReturn = () =>
       s.db.query(`UPDATE envelope_payments SET checkout_return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [p.id, returnEnc, r.id]);
 
@@ -701,11 +769,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       // nuestro, que nadie recibió, queda para cerrarlo en el proveedor. Antes se pisaba checkout_id y el otro quedaba
       // cobrable sin registro (dos preferencias de Mercado Pago pagables).
       if (row.checkout_id && row.checkout_url && row.checkout_id !== p.checkout_id && row.checkout_id !== checkoutId && !closed && !settled(row)) {
-        await t.query(`UPDATE envelope_payments SET stale_checkout_ids = array_append(stale_checkout_ids, $2), checkout_return_token_enc = $3, updated_at = now() WHERE id = $1`, [
-          p.id,
-          checkoutId,
-          returnEnc,
-        ]);
+        await t.query(
+          `UPDATE envelope_payments SET stale_checkout_ids = array_append(stale_checkout_ids, $2), checkout_return_token_enc = $3, updated_at = now() WHERE id = $1`,
+          [p.id, checkoutId, returnEnc],
+        );
         return { url: row.checkout_url as string };
       }
       // El checkout que se reemplaza (una sesión de Stripe vencida, por ejemplo) también se manda a cerrar, por las dudas.
@@ -727,7 +794,13 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
         tenantId: e.tenant_id,
         envelopeId: e.id,
         type: "payment.checkout_created",
-        actor: { type: "recipient", id: r.id, label: r.name, ip: req.ip, userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null },
+        actor: {
+          type: "recipient",
+          id: r.id,
+          label: r.name,
+          ip: req.ip,
+          userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null,
+        },
         data: { paymentId: p.id, provider: p.provider, checkoutId },
       });
       return { url };
@@ -776,45 +849,45 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
   }
 
   await app.register(async (o) => {
-  // La página simulada envía un formulario HTML (application/x-www-form-urlencoded).
-  o.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
-    done(null, Object.fromEntries(new URLSearchParams(String(body))));
-  });
-
-  o.get<M>("/v1/payments/mock/checkout/:id", async (req, reply: FastifyReply) => {
-    const p = await loadMock(req.params.id, req.query.n);
-    const action = `/v1/payments/mock/checkout/${encodeURIComponent(p.id)}/complete?n=${encodeURIComponent(req.query.n!)}`;
-    // Referrer-Policy same-origin: con no-referrer el navegador manda "Origin: null" y el control de origen rechaza el POST.
-    reply
-      .type("text/html; charset=utf-8")
-      .header("content-security-policy", mockPageCsp(new URL(await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id)).origin))
-      .header("referrer-policy", "same-origin");
-    return mockPage({
-      title: "Pago simulado",
-      lead: `${escapeHtml(p.subject)}`,
-      amount: formatAmount(Number(p.amount), p.currency),
-      description: p.description,
-      action,
-      paid: p.status === "paid",
+    // La página simulada envía un formulario HTML (application/x-www-form-urlencoded).
+    o.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
+      done(null, Object.fromEntries(new URLSearchParams(String(body))));
     });
-  });
 
-  o.post<M & { Body: { outcome?: string } }>("/v1/payments/mock/checkout/:id/complete", async (req, reply) => {
-    const p = await loadMock(req.params.id, req.query.n);
-    // Como los proveedores reales después de cerrarse el checkout: un sobre anulado, rechazado o vencido no se paga.
-    if (CLOSED_STATUSES.includes(p.envelope_status)) throw conflict("envelope_closed", "El sobre ya no admite pagos");
-    const outcome = (req.body as any)?.outcome ?? "paid";
-    if (outcome === "paid") {
-      await markPaymentPaid(s.db, p.id, { providerPaymentId: `mock_pay_${p.id.slice(-8)}`, receipt: { provider: "mock", simulated: true } });
-    } else {
-      await markPaymentFailed(s.db, p.id, "rechazado en el pago simulado");
-    }
-    // Como Stripe y Mercado Pago: a la vuelta neutra (signer-return.ts), que lleva al token con el que se está pagando.
-    const r = await s.db.one<any>(`SELECT id, access_token_hash FROM recipients WHERE id = $1`, [p.recipient_id]);
-    const base = await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id);
-    const back = r ? signerReturnUrl(base, "payments", p.id, r, { payment: outcome === "paid" ? "success" : "cancel" }) : base;
-    if ((req.headers.accept ?? "").includes("application/json")) return { ok: true, outcome, redirect: back };
-    return reply.redirect(back, 303);
-  });
+    o.get<M>("/v1/payments/mock/checkout/:id", async (req, reply: FastifyReply) => {
+      const p = await loadMock(req.params.id, req.query.n);
+      const action = `/v1/payments/mock/checkout/${encodeURIComponent(p.id)}/complete?n=${encodeURIComponent(req.query.n!)}`;
+      // Referrer-Policy same-origin: con no-referrer el navegador manda "Origin: null" y el control de origen rechaza el POST.
+      reply
+        .type("text/html; charset=utf-8")
+        .header("content-security-policy", mockPageCsp(new URL(await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id)).origin))
+        .header("referrer-policy", "same-origin");
+      return mockPage({
+        title: "Pago simulado",
+        lead: `${escapeHtml(p.subject)}`,
+        amount: formatAmount(Number(p.amount), p.currency),
+        description: p.description,
+        action,
+        paid: p.status === "paid",
+      });
+    });
+
+    o.post<M & { Body: { outcome?: string } }>("/v1/payments/mock/checkout/:id/complete", async (req, reply) => {
+      const p = await loadMock(req.params.id, req.query.n);
+      // Como los proveedores reales después de cerrarse el checkout: un sobre anulado, rechazado o vencido no se paga.
+      if (CLOSED_STATUSES.includes(p.envelope_status)) throw conflict("envelope_closed", "El sobre ya no admite pagos");
+      const outcome = (req.body as any)?.outcome ?? "paid";
+      if (outcome === "paid") {
+        await markPaymentPaid(s.db, p.id, { providerPaymentId: `mock_pay_${p.id.slice(-8)}`, receipt: { provider: "mock", simulated: true } });
+      } else {
+        await markPaymentFailed(s.db, p.id, "rechazado en el pago simulado");
+      }
+      // Como Stripe y Mercado Pago: a la vuelta neutra (signer-return.ts), que lleva al token con el que se está pagando.
+      const r = await s.db.one<any>(`SELECT id, access_token_hash FROM recipients WHERE id = $1`, [p.recipient_id]);
+      const base = await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id);
+      const back = r ? signerReturnUrl(base, "payments", p.id, r, { payment: outcome === "paid" ? "success" : "cancel" }) : base;
+      if ((req.headers.accept ?? "").includes("application/json")) return { ok: true, outcome, redirect: back };
+      return reply.redirect(back, 303);
+    });
   });
 }

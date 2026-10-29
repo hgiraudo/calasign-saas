@@ -43,7 +43,9 @@ export function TemplatesPage() {
     const mine = seq.current;
     setLoadingMore(true);
     try {
-      const r = await api<{ items: TemplateSummary[]; nextCursor?: string | null }>(`/v1/templates?limit=${PAGE}&cursor=${encodeURIComponent(nextCursor)}`);
+      const r = await api<{ items: TemplateSummary[]; nextCursor?: string | null }>(
+        `/v1/templates?limit=${PAGE}&cursor=${encodeURIComponent(nextCursor)}`,
+      );
       if (mine !== seq.current) return;
       // Sin repetir: una plantilla editada mientras tanto puede volver a aparecer en otra página.
       setItems((prev) => {

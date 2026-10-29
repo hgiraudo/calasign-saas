@@ -26,7 +26,15 @@ const origRead = host.readFile;
 host.readFile = (f) => (resolve(f) === probe ? probeText : origRead(f));
 const origExists = host.fileExists;
 host.fileExists = (f) => resolve(f) === probe || origExists(f);
-const opts = { strict: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, types: ["node"], noEmit: true, skipLibCheck: true };
+const opts = {
+  strict: true,
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  types: ["node"],
+  noEmit: true,
+  skipLibCheck: true,
+};
 const program = ts.createProgram([probe], opts, host);
 const checker = program.getTypeChecker();
 const sf = program.getSourceFile(probe);
@@ -58,11 +66,30 @@ function print(type, depth = 0, top = false) {
     }
   }
   const f = type.flags;
-  if (f & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.String | ts.TypeFlags.Number | ts.TypeFlags.Boolean | ts.TypeFlags.BigInt | ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Never | ts.TypeFlags.Literal | ts.TypeFlags.ESSymbol | ts.TypeFlags.NonPrimitive))
+  if (
+    f &
+    (ts.TypeFlags.Any |
+      ts.TypeFlags.Unknown |
+      ts.TypeFlags.String |
+      ts.TypeFlags.Number |
+      ts.TypeFlags.Boolean |
+      ts.TypeFlags.BigInt |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Undefined |
+      ts.TypeFlags.Void |
+      ts.TypeFlags.Never |
+      ts.TypeFlags.Literal |
+      ts.TypeFlags.ESSymbol |
+      ts.TypeFlags.NonPrimitive)
+  )
     return checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
   if (type.isUnion()) return printUnion(type.types, depth);
   if (type.isIntersection()) return type.types.map((t) => `(${print(t, depth + 1)})`).join(" & ");
-  if (checker.isTupleType(type)) return `[${checker.getTypeArguments(type).map((t) => print(t, depth + 1)).join(", ")}]`;
+  if (checker.isTupleType(type))
+    return `[${checker
+      .getTypeArguments(type)
+      .map((t) => print(t, depth + 1))
+      .join(", ")}]`;
   if (checker.isArrayType(type)) {
     const ro = type.symbol?.name === "ReadonlyArray" ? "readonly " : "";
     return `${ro}(${print(checker.getTypeArguments(type)[0], depth + 1)})[]`;
@@ -70,7 +97,13 @@ function print(type, depth = 0, top = false) {
   if (f & ts.TypeFlags.Object) {
     const decl = type.symbol?.declarations?.[0];
     // Tipos de la biblioteca estándar (Date, Uint8Array, Record ya expandido…): tal cual.
-    if (decl && !isShared(decl) && !/node_modules[\\/](zod|\.pnpm[\\/]zod)/.test(decl.getSourceFile().fileName) && type.symbol.name !== "__type" && type.symbol.name !== "__object")
+    if (
+      decl &&
+      !isShared(decl) &&
+      !/node_modules[\\/](zod|\.pnpm[\\/]zod)/.test(decl.getSourceFile().fileName) &&
+      type.symbol.name !== "__type" &&
+      type.symbol.name !== "__object"
+    )
       return checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
     const sigs = type.getCallSignatures();
     if (sigs.length) return checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);

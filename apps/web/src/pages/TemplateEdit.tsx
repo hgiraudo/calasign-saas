@@ -99,19 +99,22 @@ export function TemplateEditPage() {
     }
   }, []);
 
-  const apply = useCallback((d: TemplateDetail) => {
-    track(d);
-    setInfo({
-      name: d.template.name,
-      description: d.template.description ?? "",
-      subject: d.template.subject ?? "",
-      message: d.template.message ?? "",
-      locale: d.template.locale,
-    });
-    setRoles(d.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder, cert: certToDraft(r) })));
-    setFields(toDraftFields(d));
-    setDirty({ info: false, roles: false, fields: false });
-  }, [track]);
+  const apply = useCallback(
+    (d: TemplateDetail) => {
+      track(d);
+      setInfo({
+        name: d.template.name,
+        description: d.template.description ?? "",
+        subject: d.template.subject ?? "",
+        message: d.template.message ?? "",
+        locale: d.template.locale,
+      });
+      setRoles(d.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder, cert: certToDraft(r) })));
+      setFields(toDraftFields(d));
+      setDirty({ info: false, roles: false, fields: false });
+    },
+    [track],
+  );
 
   /** Recarga la plantilla tras un 409 version_changed (descarta lo no guardado, con confirmación). */
   const reload = async () => {
@@ -166,7 +169,9 @@ export function TemplateEditPage() {
       if (step === "roles" && dirty.roles) {
         const d = await api<TemplateDetail>(`/v1/templates/${id}/roles`, {
           method: "PUT",
-          body: { roles: roles.map(({ cert, isNew: _isNew, ...r }) => ({ ...r, name: r.name.trim(), ...draftToCert(cert ?? EMPTY_CERT_DRAFT, r.role) })) },
+          body: {
+            roles: roles.map(({ cert, isNew: _isNew, ...r }) => ({ ...r, name: r.name.trim(), ...draftToCert(cert ?? EMPTY_CERT_DRAFT, r.role) })),
+          },
           headers: expected(),
         });
         track(d);
@@ -229,7 +234,14 @@ export function TemplateEditPage() {
     if (await saveCurrent()) nav("/app/templates");
   };
 
-  if (!detail) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
+  if (!detail)
+    return error ? (
+      <div className="page">
+        <ErrorBox error={error} />
+      </div>
+    ) : (
+      <Spinner />
+    );
   const stepIdx = STEPS.indexOf(step);
   // Quien la ve por ser de la organización o por un grupo (sin templates:manage ni haberla creado) solo la consulta:
   // editor en solo lectura en vez de un 403 al guardar.
@@ -500,32 +512,32 @@ function TemplateDocuments({
   return (
     <div className="stack">
       {!readOnly && (
-      <div className="dropzone">
-        <p>{t("edit.dropHint")}</p>
-        {/* aria-disabled (no disabled) mientras sube: un botón deshabilitado pierde el foco y el lector de pantalla deja
+        <div className="dropzone">
+          <p>{t("edit.dropHint")}</p>
+          {/* aria-disabled (no disabled) mientras sube: un botón deshabilitado pierde el foco y el lector de pantalla deja
             de anunciar el progreso "Subiendo…" que muestra; el clic se ignora. */}
-        <button
-          type="button"
-          className="btn btn-primary"
-          aria-disabled={busy}
-          onClick={() => {
-            if (!busy) inputRef.current?.click();
-          }}
-        >
-          {uploading ? `${t("edit.uploading")} ${uploading}` : t("edit.upload")}
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="application/pdf,.pdf"
-          multiple
-          className="sr-only"
-          tabIndex={-1}
-          aria-hidden="true"
-          disabled={busy}
-          onChange={(e) => e.target.files && upload(e.target.files)}
-        />
-      </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            aria-disabled={busy}
+            onClick={() => {
+              if (!busy) inputRef.current?.click();
+            }}
+          >
+            {uploading ? `${t("edit.uploading")} ${uploading}` : t("edit.upload")}
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            multiple
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            disabled={busy}
+            onChange={(e) => e.target.files && upload(e.target.files)}
+          />
+        </div>
       )}
       {hadSignatures.length > 0 && (
         <div className="alert alert-warn" role="status">
@@ -620,8 +632,14 @@ function RolesStep({
                   <option value="approver">{t("edit.role.approver")}</option>
                 </select>
               </label>
-              {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument={false} template onChange={(v) => set(i, { cert: v })} />}
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => (roles[i]?.isNew || confirmAction()) && onChange(roles.filter((_, j) => j !== i))}>
+              {r.role === "signer" && (
+                <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument={false} template onChange={(v) => set(i, { cert: v })} />
+              )}
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => (roles[i]?.isNew || confirmAction()) && onChange(roles.filter((_, j) => j !== i))}
+              >
                 {t("common.delete")}
               </button>
             </div>
@@ -629,24 +647,24 @@ function RolesStep({
         );
       })}
       {!readOnly && (
-      <button
-        type="button"
-        className="btn"
-        onClick={() =>
-          onChange([
-            ...roles,
-            {
-              id: uuid(),
-              name: "",
-              role: "signer",
-              routingOrder: roles.reduce((m, r) => Math.max(m, r.routingOrder), 0) + 1,
-              isNew: true,
-            },
-          ])
-        }
-      >
-        + {t("tpl.addRole")}
-      </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() =>
+            onChange([
+              ...roles,
+              {
+                id: uuid(),
+                name: "",
+                role: "signer",
+                routingOrder: roles.reduce((m, r) => Math.max(m, r.routingOrder), 0) + 1,
+                isNew: true,
+              },
+            ])
+          }
+        >
+          + {t("tpl.addRole")}
+        </button>
       )}
     </fieldset>
   );

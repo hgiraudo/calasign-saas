@@ -10,7 +10,10 @@ export const meta = {
 const SOURCES = ["appsscript.json", ".claspignore", "README.md"];
 
 export async function build(ctx) {
-  const src = ctx.walk("src").filter((f) => f.endsWith(".js")).map((f) => `src/${f}`);
+  const src = ctx
+    .walk("src")
+    .filter((f) => f.endsWith(".js"))
+    .map((f) => `src/${f}`);
   const entries = [...SOURCES, ...src].map((name) => ({ name, data: ctx.load(name) }));
   const manifest = JSON.parse(entries[0].data.toString("utf8"));
   if (!manifest.addOns?.common || !Array.isArray(manifest.oauthScopes)) throw new Error("google-workspace: appsscript.json incompleto");
@@ -21,6 +24,8 @@ export async function build(ctx) {
       // Logo de las tarjetas (addOns.common.logoUrl y el encabezado de cada tarjeta).
       { name: "icon-128.png", data: ctx.asset("icon-128.png") },
     ],
-    artifacts: [{ name: "calasign-google-workspace-addon.zip", entries, description: "Add-on de Google Workspace: proyecto de Apps Script para clasp (zip)" }],
+    artifacts: [
+      { name: "calasign-google-workspace-addon.zip", entries, description: "Add-on de Google Workspace: proyecto de Apps Script para clasp (zip)" },
+    ],
   };
 }

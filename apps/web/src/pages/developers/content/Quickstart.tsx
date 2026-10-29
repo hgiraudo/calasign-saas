@@ -301,8 +301,12 @@ with open("contrato-firmado.pdf", "wb") as out:
             send: true,
           },
           extra: [
-            sdkPy(`cs.envelopes.from_template({"templateId": template_id, "subject": "NDA – ACME", "send": True,\n    "recipients": [{"role": "Cliente", "name": "Ana Pérez", "email": "ana@example.com"}]})`),
-            sdkNode(`await cs.envelopes.fromTemplate({ templateId, subject: "NDA – ACME", send: true,\n  recipients: [{ role: "Cliente", name: "Ana Pérez", email: "ana@example.com" }] });`),
+            sdkPy(
+              `cs.envelopes.from_template({"templateId": template_id, "subject": "NDA – ACME", "send": True,\n    "recipients": [{"role": "Cliente", "name": "Ana Pérez", "email": "ana@example.com"}]})`,
+            ),
+            sdkNode(
+              `await cs.envelopes.fromTemplate({ templateId, subject: "NDA – ACME", send: true,\n  recipients: [{ role: "Cliente", name: "Ana Pérez", email: "ana@example.com" }] });`,
+            ),
           ],
         })}
       />
@@ -346,9 +350,7 @@ with open("contrato-firmado.pdf", "wb") as out:
 
       <H2 id="full-script">{t("qs.full.h")}</H2>
       <Md text={t("qs.full.p")} />
-      <CodeTabs
-        tabs={[{ id: "curl", label: "curl + jq", lang: "bash", code: fullCurl }, sdkPy(fullSdkPy), sdkNode(fullSdkNode)]}
-      />
+      <CodeTabs tabs={[{ id: "curl", label: "curl + jq", lang: "bash", code: fullCurl }, sdkPy(fullSdkPy), sdkNode(fullSdkNode)]} />
       <Md text={t("qs.full.next")} />
 
       <H2 id="step-by-step">{t("qs.steps.h")}</H2>
@@ -363,7 +365,9 @@ with open("contrato-firmado.pdf", "wb") as out:
           idempotencyKey: "pedido-1234",
           body: { subject: "Contrato de servicios", message: "Hola Ana, te comparto el contrato para firmar.", metadata: { externalId: "PED-1234" } },
           extra: [
-            sdkPy(`detail = cs.envelopes.create({"subject": "Contrato de servicios", "metadata": {"externalId": "PED-1234"}})\nenvelope_id = detail["envelope"]["id"]`),
+            sdkPy(
+              `detail = cs.envelopes.create({"subject": "Contrato de servicios", "metadata": {"externalId": "PED-1234"}})\nenvelope_id = detail["envelope"]["id"]`,
+            ),
             sdkNode(`const { envelope } = await cs.envelopes.create({ subject: "Contrato de servicios", metadata: { externalId: "PED-1234" } });`),
           ],
         })}
@@ -388,8 +392,14 @@ with open("contrato-firmado.pdf", "wb") as out:
         tabs={apiTabs({
           method: "PUT",
           path: "/v1/envelopes/{envelopeId}/recipients",
-          body: { recipients: [{ name: "Ana Pérez", email: "ana@example.com", phone: "+5491122334455", channels: ["email", "whatsapp"], routingOrder: 1 }] },
-          extra: [sdkPy(`detail = cs.envelopes.set_recipients(envelope_id, [\n    {"name": "Ana Pérez", "email": "ana@example.com", "channels": ["email"]},\n])\nrecipient_id = detail["recipients"][0]["id"]`)],
+          body: {
+            recipients: [{ name: "Ana Pérez", email: "ana@example.com", phone: "+5491122334455", channels: ["email", "whatsapp"], routingOrder: 1 }],
+          },
+          extra: [
+            sdkPy(
+              `detail = cs.envelopes.set_recipients(envelope_id, [\n    {"name": "Ana Pérez", "email": "ana@example.com", "channels": ["email"]},\n])\nrecipient_id = detail["recipients"][0]["id"]`,
+            ),
+          ],
         })}
       />
 

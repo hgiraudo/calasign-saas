@@ -44,7 +44,9 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         const underCap = (r: any) => !(capped && Number(r.auto_reminders_sent ?? 0) >= config.reminders.automaticMaxWithoutExpiry);
         // Candidatos con el momento desde el que se cuentan los N días (su invitación, o el pedido de firma con certificado).
         const candidates: { r: any; since: number }[] = certStage
-          ? await pendingCertificateSigner(t, e.id).then((c) => (c && receivesSignerNotices(c) && underCap(c) ? [{ r: c, since: new Date(c.requested_at).getTime() }] : []))
+          ? await pendingCertificateSigner(t, e.id).then((c) =>
+              c && receivesSignerNotices(c) && underCap(c) ? [{ r: c, since: new Date(c.requested_at).getTime() }] : [],
+            )
           : (await currentSignerGroup(t, e.id)).recipients
               .filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r) && r.sent_at && underCap(r))
               .map((r) => ({ r, since: new Date(r.sent_at).getTime() }));
@@ -53,8 +55,18 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         for (const r of pending) {
           // Firma con certificado: el mismo pedido (certificate_request, con el link para el Firmador) como recordatorio.
           const queued = certStage
-            ? await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-cert-reminder:${r.id}:${day}` })
-            : await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-reminder:${r.id}:${day}` });
+            ? await enqueue(
+                t,
+                "notify",
+                { kind: "certificate_request", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id },
+                { dedupeKey: `auto-cert-reminder:${r.id}:${day}` },
+              )
+            : await enqueue(
+                t,
+                "notify",
+                { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id },
+                { dedupeKey: `auto-reminder:${r.id}:${day}` },
+              );
           // Solo cuenta para el tope (sobre sin vencimiento). Se pone en 0 al corregir el contacto (link nuevo) o con un
           // recordatorio manual (el remitente sigue esperando la firma). Solo si encoló: con la clave del día ya usada
           // no sale ningún recordatorio y no debe consumir el tope.
@@ -115,7 +127,9 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         const pending =
           cur.status === "awaiting_certificates"
             ? await pendingCertificateSigner(t, e.id).then((c) => (c && receivesSignerNotices(c) ? [c] : []))
-            : (await currentSignerGroup(t, e.id)).recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r));
+            : (await currentSignerGroup(t, e.id)).recipients.filter(
+                (r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r),
+              );
         // Solo a quien todavía no lo recibió para este vencimiento (la clave incluye el vencimiento: si se extiende, el
         // aviso del nuevo sale). Los jobs no se borran, así que la clave sirve de registro.
         let fresh = 0;
@@ -125,13 +139,26 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
           const dedupeKey = `expiry-warning:${r.id}:${new Date(cur.expires_at).toISOString()}:${r.sent_at ? new Date(r.sent_at).getTime() : 0}${cur.status === "awaiting_certificates" ? ":cert" : ""}`;
           // También el formato anterior de la clave (sin sent_at): si no, los avisos ya enviados salían otra vez.
           const legacyKey = cur.status === "awaiting_certificates" ? dedupeKey : `expiry-warning:${r.id}:${new Date(cur.expires_at).toISOString()}`;
-          if (await t.one(`SELECT 1 FROM jobs WHERE dedupe_key = $1 OR (dedupe_key = $2 AND created_at >= $3::timestamptz)`, [dedupeKey, legacyKey, r.sent_at ?? new Date(0)])) continue;
+          if (
+            await t.one(`SELECT 1 FROM jobs WHERE dedupe_key = $1 OR (dedupe_key = $2 AND created_at >= $3::timestamptz)`, [
+              dedupeKey,
+              legacyKey,
+              r.sent_at ?? new Date(0),
+            ])
+          )
+            continue;
           await enqueue(t, "notify", { kind: "expiry_warning", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey });
           fresh++;
         }
         await t.query(`UPDATE envelopes SET expiry_warning_sent_at = $2 WHERE id = $1`, [e.id, now.toISOString()]);
         if (fresh) {
-          await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expiry_warning", actor: SYSTEM, data: { recipients: fresh } });
+          await appendEvent(t, {
+            tenantId: e.tenant_id,
+            envelopeId: e.id,
+            type: "envelope.expiry_warning",
+            actor: SYSTEM,
+            data: { recipients: fresh },
+          });
           warned++;
         }
       });

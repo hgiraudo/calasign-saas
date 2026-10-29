@@ -162,7 +162,11 @@ export async function buildChain(leaf: pkijs.Certificate, pool: pkijs.Certificat
   let cur = leaf;
   for (let i = 0; i < 10 && !isSelfSigned(cur); i++) {
     let next: pkijs.Certificate | undefined;
-    for (const cand of pool) if (canIssueCertificates(cand) && (await issuedBy(cur, cand))) { next = cand; break; }
+    for (const cand of pool)
+      if (canIssueCertificates(cand) && (await issuedBy(cur, cand))) {
+        next = cand;
+        break;
+      }
     if (!next) break;
     chain.push(next);
     cur = next;
@@ -203,7 +207,14 @@ export async function fetchCrl(cert: pkijs.Certificate, fetcher: Fetcher = fetch
       let der = new Uint8Array(await res.arrayBuffer());
       const text = Buffer.from(der.subarray(0, 32)).toString("latin1");
       if (text.startsWith("-----BEGIN")) {
-        der = new Uint8Array(Buffer.from(Buffer.from(der).toString("latin1").replace(/-----[^-]+-----|\s+/g, ""), "base64"));
+        der = new Uint8Array(
+          Buffer.from(
+            Buffer.from(der)
+              .toString("latin1")
+              .replace(/-----[^-]+-----|\s+/g, ""),
+            "base64",
+          ),
+        );
       }
       pkijs.CertificateRevocationList.fromBER(toAB(der));
       return der;
@@ -258,14 +269,17 @@ function parseOcspCached(der: Uint8Array): pkijs.BasicOCSPResponse | null {
   return basic;
 }
 
-export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate, at?: Date): Promise<RevocationResult | null> {
+export async function statusFromOcsp(
+  ocspDer: Uint8Array,
+  cert: pkijs.Certificate,
+  issuer: pkijs.Certificate,
+  at?: Date,
+): Promise<RevocationResult | null> {
   try {
     const basic = parseOcspCached(ocspDer);
     if (!basic) return null;
     const serial = serialHex(cert);
-    const single = basic.tbsResponseData.responses.find(
-      (r) => Buffer.from(r.certID.serialNumber.valueBlock.valueHexView).toString("hex") === serial,
-    );
+    const single = basic.tbsResponseData.responses.find((r) => Buffer.from(r.certID.serialNumber.valueBlock.valueHexView).toString("hex") === serial);
     if (!single) return null;
     // Firma de la respuesta: por la CA emisora o por un respondedor delegado incluido en la respuesta. El resultado se
     // guarda por (respuesta, huella del emisor, serial): el validador público la consultaba para cada certificado de cada
@@ -382,7 +396,12 @@ function parseCrlCached(der: Uint8Array): pkijs.CertificateRevocationList | null
   return crl;
 }
 
-export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate, at?: Date): Promise<RevocationResult | null> {
+export async function statusFromCrl(
+  crlDer: Uint8Array,
+  cert: pkijs.Certificate,
+  issuer: pkijs.Certificate,
+  at?: Date,
+): Promise<RevocationResult | null> {
   try {
     const crl = parseCrlCached(crlDer);
     if (!crl) return null;
@@ -449,7 +468,9 @@ export function signerCertOf(sd: pkijs.SignedData): pkijs.Certificate | null {
   const keyId: ArrayBuffer | undefined = sid?.idBlock?.isConstructed ? sid.valueBlock.value[0]?.valueBlock?.valueHex : sid?.valueBlock?.valueHex;
   if (!keyId) return null;
   const want = Buffer.from(keyId);
-  return certs.find((c) => Buffer.from(hash("sha1", new Uint8Array(c.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHexView))).equals(want)) ?? null;
+  return (
+    certs.find((c) => Buffer.from(hash("sha1", new Uint8Array(c.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHexView))).equals(want)) ?? null
+  );
 }
 
 export { asn1js, pkijs };

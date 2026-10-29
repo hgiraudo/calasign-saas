@@ -58,7 +58,15 @@ async function loadDealFields(c: CrmConn): Promise<RdField[]> {
 /** Campo por su slug o por su nombre visible. */
 function findField(fields: RdField[], ref: string): RdField | undefined {
   const low = ref.trim().toLowerCase();
-  return fields.find((f) => f.slug === ref) ?? fields.find((f) => String(f.name ?? "").trim().toLowerCase() === low);
+  return (
+    fields.find((f) => f.slug === ref) ??
+    fields.find(
+      (f) =>
+        String(f.name ?? "")
+          .trim()
+          .toLowerCase() === low,
+    )
+  );
 }
 
 const str = (v: unknown) => (v === undefined || v === null || v === "" ? null : String(v));
@@ -114,7 +122,11 @@ export async function rdstationWriteStatus(c: CrmConn, t: CrmObjectType, id: str
   const did = dealId(id);
   const fields = await loadDealFields(c);
   const f = findField(fields, property);
-  if (!f) throw new MappingError("crm_status_field", `RD Station CRM no tiene un campo personalizado "${property}" en las negociações (usá el slug o el nombre)`);
+  if (!f)
+    throw new MappingError(
+      "crm_status_field",
+      `RD Station CRM no tiene un campo personalizado "${property}" en las negociações (usá el slug o el nombre)`,
+    );
   let v: string = value;
   if (Array.isArray(f.options) && f.options.length && (f.type === "option" || f.type === "multiple_choice")) {
     const opt = f.options.find((o) => String(o).trim().toLowerCase() === value.trim().toLowerCase());
@@ -125,8 +137,7 @@ export async function rdstationWriteStatus(c: CrmConn, t: CrmObjectType, id: str
 }
 
 /** Texto de la anotação con el hash y el link al sobre. */
-export const rdstationNote = (a: AttachInput) =>
-  `CalaSign: «${a.subject}» firmado.\nSobre ${a.envelopeId}\nSHA-256 del PDF: ${a.sha256}\n${a.url}`;
+export const rdstationNote = (a: AttachInput) => `CalaSign: «${a.subject}» firmado.\nSobre ${a.envelopeId}\nSHA-256 del PDF: ${a.sha256}\n${a.url}`;
 
 /** Sube el PDF sellado a la negociação (Anexos) y deja una anotação con el hash y el link. */
 export async function rdstationAttach(c: CrmConn, t: CrmObjectType, id: string, a: AttachInput): Promise<string> {

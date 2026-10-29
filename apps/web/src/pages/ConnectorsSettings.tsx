@@ -78,7 +78,8 @@ export function ConnectorsSettingsPage() {
   useEffect(() => {
     load().catch((e) => setError(errorText(e)));
     // Conectado por OAuth sin poder determinar la cuenta (Factorial sin compañía): el mismo aviso que al probarla.
-    if (params.get("connected")) setNote(params.get("warning") === "account_unknown" ? `${t("connected")} ${t("testAccountUnknown")}` : t("connected"));
+    if (params.get("connected"))
+      setNote(params.get("warning") === "account_unknown" ? `${t("connected")} ${t("testAccountUnknown")}` : t("connected"));
     if (params.get("error")) setError(t("error", { code: params.get("error") ?? "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -95,7 +96,10 @@ export function ConnectorsSettingsPage() {
     setConnecting(p);
     try {
       await act(async () => {
-        await api("/v1/connectors/connections", { method: "POST", body: { provider: p, name: names[p] || t(`p.${p}`), credentials: creds[p] ?? {} } });
+        await api("/v1/connectors/connections", {
+          method: "POST",
+          body: { provider: p, name: names[p] || t(`p.${p}`), credentials: creds[p] ?? {} },
+        });
         setCreds((c) => ({ ...c, [p]: {} }));
       }, t("connected"));
     } finally {
@@ -104,7 +108,10 @@ export function ConnectorsSettingsPage() {
   };
   const startOAuth = (p: ConnectorProvider) =>
     act(async () => {
-      const r = await api<{ authorizeUrl: string }>(`/v1/connectors/oauth/${p}/start`, { method: "POST", body: { name: names[p] || t(`p.${p}`), ...(p === "ironclad" ? { region } : {}) } });
+      const r = await api<{ authorizeUrl: string }>(`/v1/connectors/oauth/${p}/start`, {
+        method: "POST",
+        body: { name: names[p] || t(`p.${p}`), ...(p === "ironclad" ? { region } : {}) },
+      });
       window.location.href = r.authorizeUrl;
     });
 
@@ -143,7 +150,11 @@ export function ConnectorsSettingsPage() {
                     <strong>{t(`p.${pv.provider}`)}</strong>
                     <label className="field">
                       <span>{t("name")}</span>
-                      <input value={names[pv.provider] ?? ""} placeholder={t(`p.${pv.provider}`)} onChange={(e) => setNames((c) => ({ ...c, [pv.provider]: e.target.value }))} />
+                      <input
+                        value={names[pv.provider] ?? ""}
+                        placeholder={t(`p.${pv.provider}`)}
+                        onChange={(e) => setNames((c) => ({ ...c, [pv.provider]: e.target.value }))}
+                      />
                     </label>
                     {pv.oauthSupported &&
                       (pv.oauthConfigured ? (
@@ -226,38 +237,57 @@ export function ConnectorsSettingsPage() {
                 <summary className="small">{t("webhook")}</summary>
                 <div className="row-wrap">
                   <code className="small break">{c.webhookUrl}</code>
-                  <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(c.webhookUrl).then(() => setNote(t("copied")))}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => navigator.clipboard?.writeText(c.webhookUrl).then(() => setNote(t("copied")))}
+                  >
                     {t("copy")}
                   </button>
                   {canEdit && (
-                    <button type="button" className="btn btn-sm" onClick={() => confirmAction() && act(() => api(`/v1/connectors/connections/${c.id}/rotate-webhook`, { method: "POST" }))}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => confirmAction() && act(() => api(`/v1/connectors/connections/${c.id}/rotate-webhook`, { method: "POST" }))}
+                    >
                       {t("rotate")}
                     </button>
                   )}
                 </div>
               </details>
               {canEdit && (
-              <div className="row-wrap">
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() =>
-                    act(async () => {
-                      const r = await api<{ ok: boolean; error: string | null; warning?: string | null }>(`/v1/connectors/connections/${c.id}/test`, { method: "POST" });
-                      if (!r.ok) throw new Error(r.error ?? "error");
-                      setNote(r.warning === "account_unknown" ? t("testAccountUnknown") : t("testOk"));
-                    })
-                  }
-                >
-                  {t("test")}
-                </button>
-                <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/connectors/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
-                  {c.active ? t("deactivate") : t("activate")}
-                </button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/connectors/connections/${c.id}`, { method: "DELETE" }))}>
-                  {t("delete")}
-                </button>
-              </div>
+                <div className="row-wrap">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() =>
+                      act(async () => {
+                        const r = await api<{ ok: boolean; error: string | null; warning?: string | null }>(
+                          `/v1/connectors/connections/${c.id}/test`,
+                          { method: "POST" },
+                        );
+                        if (!r.ok) throw new Error(r.error ?? "error");
+                        setNote(r.warning === "account_unknown" ? t("testAccountUnknown") : t("testOk"));
+                      })
+                    }
+                  >
+                    {t("test")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => act(() => api(`/v1/connectors/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}
+                  >
+                    {c.active ? t("deactivate") : t("activate")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => confirmAction() && act(() => api(`/v1/connectors/connections/${c.id}`, { method: "DELETE" }))}
+                  >
+                    {t("delete")}
+                  </button>
+                </div>
               )}
             </div>
           ))
@@ -308,7 +338,11 @@ export function ConnectorsSettingsPage() {
                     <button type="button" className="btn btn-sm" onClick={() => setEditing(f)}>
                       {t("edit")}
                     </button>
-                    <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/connectors/flows/${f.id}`, { method: "DELETE" }))}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={() => confirmAction() && act(() => api(`/v1/connectors/flows/${f.id}`, { method: "DELETE" }))}
+                    >
                       {t("delete")}
                     </button>
                   </>
@@ -339,10 +373,18 @@ export function ConnectorsSettingsPage() {
                       <div className="small muted">
                         {r.connectionName ?? ""} {r.objectId ? `· ${r.objectType} ${r.objectId}` : ""}
                       </div>
-                      {r.error && <div className="small" style={{ color: "var(--danger, #b42318)" }}>{r.error}</div>}
+                      {r.error && (
+                        <div className="small" style={{ color: "var(--danger, #b42318)" }}>
+                          {r.error}
+                        </div>
+                      )}
                     </td>
                     <td>
-                      <span className={`badge ${r.status === "succeeded" ? "badge-completed" : r.status === "failed" ? "badge-declined" : "badge-sent"}`}>{t(`run.status.${r.status}`)}</span>
+                      <span
+                        className={`badge ${r.status === "succeeded" ? "badge-completed" : r.status === "failed" ? "badge-declined" : "badge-sent"}`}
+                      >
+                        {t(`run.status.${r.status}`)}
+                      </span>
                       <div className="small muted">
                         {r.attempts} {t("attempts")}
                       </div>
@@ -354,7 +396,11 @@ export function ConnectorsSettingsPage() {
                         </Link>
                       )}
                       {canEdit && r.status === "failed" && (r.kind !== "send" || Boolean(r.detail?.webhook)) && (
-                        <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/connectors/runs/${r.id}/retry`, { method: "POST" }))}>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => act(() => api(`/v1/connectors/runs/${r.id}/retry`, { method: "POST" }))}
+                        >
                           {t("retry")}
                         </button>
                       )}
@@ -400,7 +446,9 @@ function SendFromRecord({ flows, onDone }: { flows: ConnectorFlow[]; onDone: () 
     const mine = ++searchSeq.current;
     setError(null);
     try {
-      const r = await api<{ items: ConnectorRecordSummary[] }>(`/v1/connectors/connections/${flow.connectionId}/records?objectType=${flow.objectType}&q=${encodeURIComponent(q)}`);
+      const r = await api<{ items: ConnectorRecordSummary[] }>(
+        `/v1/connectors/connections/${flow.connectionId}/records?objectType=${flow.objectType}&q=${encodeURIComponent(q)}`,
+      );
       if (mine === searchSeq.current) setResults(r.items);
     } catch (err) {
       if (mine === searchSeq.current) setError(errorText(err));
@@ -475,7 +523,13 @@ function SendFromRecord({ flows, onDone }: { flows: ConnectorFlow[]; onDone: () 
             if (recordId.trim()) void send(recordId.trim());
           }}
         >
-          <input className="grow" value={recordId} placeholder={t("recordId")} onChange={(e) => setRecordId(e.target.value)} aria-label={t("recordId")} />
+          <input
+            className="grow"
+            value={recordId}
+            placeholder={t("recordId")}
+            onChange={(e) => setRecordId(e.target.value)}
+            aria-label={t("recordId")}
+          />
           <button className="btn" disabled={busy || !recordId.trim()}>
             {t("sendBtn")}
           </button>
@@ -548,7 +602,11 @@ function FlowEditor({
         setTpl(d);
         if (rolesFrom.current === templateId) return;
         rolesFrom.current = templateId;
-        setRoles(flow && templateId === flow.templateId ? flow.roles : d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow));
+        setRoles(
+          flow && templateId === flow.templateId
+            ? flow.roles
+            : d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow),
+        );
       })
       .catch((e) => {
         if (stale) return;
@@ -681,26 +739,63 @@ function FlowEditor({
                 ))}
               </select>
               {r.source === "contact" && (
-                <OrderInput min={1} max={50} style={{ width: 80 }} aria-label={t("fl.index")} value={(r.index ?? 0) + 1} onChange={(n) => setRole(i, { index: n - 1 })} />
+                <OrderInput
+                  min={1}
+                  max={50}
+                  style={{ width: 80 }}
+                  aria-label={t("fl.index")}
+                  value={(r.index ?? 0) + 1}
+                  onChange={(n) => setRole(i, { index: n - 1 })}
+                />
               )}
               {r.source === "contact_role" && (
                 <>
-                  <input aria-label={t("fl.contactRole")} placeholder={t("fl.contactRole")} value={r.contactRole ?? ""} disabled={Boolean(r.primary)} onChange={(e) => setRole(i, { contactRole: e.target.value })} />
+                  <input
+                    aria-label={t("fl.contactRole")}
+                    placeholder={t("fl.contactRole")}
+                    value={r.contactRole ?? ""}
+                    disabled={Boolean(r.primary)}
+                    onChange={(e) => setRole(i, { contactRole: e.target.value })}
+                  />
                   <label className="row-wrap small">
-                    <input type="checkbox" checked={Boolean(r.primary)} onChange={(e) => setRole(i, { primary: e.target.checked })} /> {t("fl.primary")}
+                    <input type="checkbox" checked={Boolean(r.primary)} onChange={(e) => setRole(i, { primary: e.target.checked })} />{" "}
+                    {t("fl.primary")}
                   </label>
                 </>
               )}
               {r.source === "property" && (
                 <>
-                  <input required placeholder={t("fl.nameProp")} aria-label={t("fl.nameProp")} value={r.nameProperty} onChange={(e) => setRole(i, { nameProperty: e.target.value })} />
-                  <input placeholder={t("fl.emailProp")} aria-label={t("fl.emailProp")} value={r.emailProperty ?? ""} onChange={(e) => setRole(i, { emailProperty: e.target.value })} />
+                  <input
+                    required
+                    placeholder={t("fl.nameProp")}
+                    aria-label={t("fl.nameProp")}
+                    value={r.nameProperty}
+                    onChange={(e) => setRole(i, { nameProperty: e.target.value })}
+                  />
+                  <input
+                    placeholder={t("fl.emailProp")}
+                    aria-label={t("fl.emailProp")}
+                    value={r.emailProperty ?? ""}
+                    onChange={(e) => setRole(i, { emailProperty: e.target.value })}
+                  />
                 </>
               )}
               {r.source === "fixed" && (
                 <>
-                  <input required placeholder={t("fl.fixedName")} aria-label={t("fl.fixedName")} value={r.name} onChange={(e) => setRole(i, { name: e.target.value })} />
-                  <input type="email" placeholder={t("fl.fixedEmail")} aria-label={t("fl.fixedEmail")} value={r.email ?? ""} onChange={(e) => setRole(i, { email: e.target.value })} />
+                  <input
+                    required
+                    placeholder={t("fl.fixedName")}
+                    aria-label={t("fl.fixedName")}
+                    value={r.name}
+                    onChange={(e) => setRole(i, { name: e.target.value })}
+                  />
+                  <input
+                    type="email"
+                    placeholder={t("fl.fixedEmail")}
+                    aria-label={t("fl.fixedEmail")}
+                    value={r.email ?? ""}
+                    onChange={(e) => setRole(i, { email: e.target.value })}
+                  />
                 </>
               )}
             </div>
@@ -712,10 +807,26 @@ function FlowEditor({
         <legend>{t("fl.prefill")}</legend>
         {prefill.map((p, i) => (
           <div key={i} className="row-wrap">
-            <input list="conn-fields" placeholder={t("fl.field")} aria-label={t("fl.field")} value={p.field} onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, field: e.target.value } : x)))} />
+            <input
+              list="conn-fields"
+              placeholder={t("fl.field")}
+              aria-label={t("fl.field")}
+              value={p.field}
+              onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, field: e.target.value } : x)))}
+            />
             <span>←</span>
-            <input placeholder={t("fl.property")} aria-label={t("fl.property")} value={p.property} onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, property: e.target.value } : x)))} />
-            <button type="button" className="btn btn-sm" aria-label={tc("common.delete")} onClick={() => setPrefill((ps) => ps.filter((_, j) => j !== i))}>
+            <input
+              placeholder={t("fl.property")}
+              aria-label={t("fl.property")}
+              value={p.property}
+              onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, property: e.target.value } : x)))}
+            />
+            <button
+              type="button"
+              className="btn btn-sm"
+              aria-label={tc("common.delete")}
+              onClick={() => setPrefill((ps) => ps.filter((_, j) => j !== i))}
+            >
               ×
             </button>
           </div>

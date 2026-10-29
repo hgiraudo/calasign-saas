@@ -29,11 +29,14 @@ export async function isSuppressed(db: Db, address: string, tenantId: string | n
 /** Un código de verificación validado prueba que la dirección recibe correo: se borra su rebote (global). */
 export async function clearBounceSuppression(db: Db, address: string): Promise<boolean> {
   if (!address) return false;
-  const r = await db.query(`DELETE FROM email_suppressions WHERE address = $1 AND tenant_id IS NULL AND reason = 'bounce' RETURNING id`, [normAddress(address)]);
+  const r = await db.query(`DELETE FROM email_suppressions WHERE address = $1 AND tenant_id IS NULL AND reason = 'bounce' RETURNING id`, [
+    normAddress(address),
+  ]);
   return r.length > 0;
 }
 
-const TRANSIENT_NET = /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNECTION|EPIPE|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNABORTED|EDNS|UND_ERR_[A-Z_]+)$/;
+const TRANSIENT_NET =
+  /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNECTION|EPIPE|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNABORTED|EDNS|UND_ERR_[A-Z_]+)$/;
 /** Errores de WhatsApp Cloud que llegan como 4xx pero son del momento (límites de envío, servicio no disponible). */
 const WA_TRANSIENT_CODE = /"code":(1|2|4|80007|130429|131000|131048|131056)\b/;
 
@@ -96,19 +99,27 @@ export interface TrackedSend {
  * Texto del aviso (email_domains.ses_identity_error_at; la API lo devuelve en sesIdentityError y el administrador lo ve
  * en Ajustes → Marca → Dominios de correo). Columna propia: last_error es de la verificación por DNS.
  */
-export const SES_IDENTITY_ERROR = "SES rechazó el remitente: el dominio no está verificado como identidad en Amazon SES. Los correos salen desde la dirección de la plataforma hasta que se verifique.";
+export const SES_IDENTITY_ERROR =
+  "SES rechazó el remitente: el dominio no está verificado como identidad en Amazon SES. Los correos salen desde la dirección de la plataforma hasta que se verifique.";
 
 /**
  * SES rechazó el dominio propio (554 identidad sin verificar) y el correo salió desde la plataforma (channels.sendEmail):
  * se deja anotado en el dominio para que el administrador lo vea, y en el log. No hace fallar el envío.
  */
 export async function noteSesIdentityRejection(db: Db, tenantId: string | null | undefined, domain: string, log?: TrackedSend["log"]) {
-  (log?.warn ?? log?.error)?.call(log, { tenantId, domain }, "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma");
+  (log?.warn ?? log?.error)?.call(
+    log,
+    { tenantId, domain },
+    "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma",
+  );
   if (!tenantId) return;
   sesErrorClean.delete(`${tenantId}:${domain.toLowerCase()}`);
   // Si el aviso ya está anotado la fila no coincide y no se escribe nada.
   await db
-    .query(`UPDATE email_domains SET ses_identity_error_at = now() WHERE tenant_id = $1 AND domain = $2 AND ses_identity_error_at IS NULL`, [tenantId, domain])
+    .query(`UPDATE email_domains SET ses_identity_error_at = now() WHERE tenant_id = $1 AND domain = $2 AND ses_identity_error_at IS NULL`, [
+      tenantId,
+      domain,
+    ])
     .catch((e) => log?.error({ err: scrubPii(String(e)), domain }, "no se pudo anotar el rechazo de SES en el dominio"));
 }
 
@@ -133,13 +144,18 @@ export async function noteDkimSendResult(db: Db, tenantId: string | null | undef
   if (!res.dkimDomain || !tenantId) return;
   const key = `${tenantId}:${res.dkimDomain.toLowerCase()}`;
   if ((sesErrorClean.get(key) ?? 0) > Date.now()) return;
-  await db.query(`UPDATE email_domains SET ses_identity_error_at = NULL WHERE tenant_id = $1 AND domain = $2 AND ses_identity_error_at IS NOT NULL`, [tenantId, res.dkimDomain]).then(
-    () => {
-      if (sesErrorClean.size > 10_000) sesErrorClean.clear();
-      sesErrorClean.set(key, Date.now() + SES_CLEAN_TTL_MS);
-    },
-    (e) => log?.error({ err: scrubPii(String(e)), domain: res.dkimDomain }, "no se pudo borrar el rechazo de SES del dominio"),
-  );
+  await db
+    .query(`UPDATE email_domains SET ses_identity_error_at = NULL WHERE tenant_id = $1 AND domain = $2 AND ses_identity_error_at IS NOT NULL`, [
+      tenantId,
+      res.dkimDomain,
+    ])
+    .then(
+      () => {
+        if (sesErrorClean.size > 10_000) sesErrorClean.clear();
+        sesErrorClean.set(key, Date.now() + SES_CLEAN_TTL_MS);
+      },
+      (e) => log?.error({ err: scrubPii(String(e)), domain: res.dkimDomain }, "no se pudo borrar el rechazo de SES del dominio"),
+    );
 }
 
 /**
@@ -158,7 +174,8 @@ export async function sendTracked(db: Db, t: TrackedSend, m: OutboundMessage & {
     if (done) return { status: "already" };
   }
   const id = uuidv7();
-  const logFail = (e: unknown) => t.log?.error({ err: scrubPii(String(e)), template: t.template, channel: m.channel }, "no se pudo registrar el aviso");
+  const logFail = (e: unknown) =>
+    t.log?.error({ err: scrubPii(String(e)), template: t.template, channel: m.channel }, "no se pudo registrar el aviso");
   const insert = (status: string, extra: { error?: string | null } = {}) =>
     db
       .query(

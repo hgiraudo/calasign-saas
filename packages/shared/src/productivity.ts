@@ -2,7 +2,18 @@
 import { z } from "zod";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 import { CertificateRequirementsInput, SIGNATURE_TYPES, type CertificateRequirements, type SignatureType } from "./certsign";
-import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale, type RecipientRole, UserMetadata } from "./api";
+import {
+  CHANNELS,
+  FIELD_TYPES,
+  ID_DOCUMENT_TYPES,
+  LOCALES,
+  RECIPIENT_ROLES,
+  type Document,
+  type FieldType,
+  type Locale,
+  type RecipientRole,
+  UserMetadata,
+} from "./api";
 
 /** Tipos que el firmante completa escribiendo y que el remitente puede prellenar. */
 export const PREFILLABLE_FIELD_TYPES: readonly FieldType[] = ["text", "number", "dropdown", "company", "title"];

@@ -368,7 +368,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     assertClaimableDomain(domain);
     // Solo un dominio verificado por otra organización lo bloquea: uno pendiente no prueba nada (cualquiera puede
     // registrar un dominio ajeno) y gana quien publique su TXT.
-    const taken = await s.db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [domain, a.tenantId]);
+    const taken = await s.db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [
+      domain,
+      a.tenantId,
+    ]);
     if (taken) throw conflict("domain_taken", "Ese dominio ya está registrado por otra organización");
     const existing = await s.db.one<any>(`SELECT * FROM custom_domains WHERE tenant_id = $1`, [a.tenantId]);
     if (existing?.domain === domain) return { domain: toApi(existing) };
@@ -395,7 +398,8 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     try {
       const values = await resolveTxt(txtName(r.domain));
       ok = values.includes(txtValue(r.verification_token));
-      if (!ok) error = values.length ? `El TXT existe pero no coincide (${values.length} valor/es)` : `No se encontró el registro TXT ${txtName(r.domain)}`;
+      if (!ok)
+        error = values.length ? `El TXT existe pero no coincide (${values.length} valor/es)` : `No se encontró el registro TXT ${txtName(r.domain)}`;
     } catch (e) {
       error = `No se pudo consultar el DNS: ${String((e as Error).message ?? e)}`;
     }
@@ -417,7 +421,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
         await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [webDomainLockKey(r.domain)]);
         let okT = ok;
         if (okT && r.status !== "verified") {
-          const other = await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [r.domain, a.tenantId]);
+          const other = await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [
+            r.domain,
+            a.tenantId,
+          ]);
           if (other) {
             okT = false;
             error = "Ese dominio ya lo verificó otra organización";
@@ -443,7 +450,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
       // Carrera con otra organización que verificó el mismo dominio a la vez (índice único de verificados).
       if ((e as { code?: string }).code !== "23505") throw e;
       ok = false;
-      await s.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
+      await s.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [
+        r.id,
+        "Ese dominio ya lo verificó otra organización",
+      ]);
     }
     invalidate();
     if (ok) await auditFromRequest(s.db, req, a, "domain.verified", { targetType: "domain", targetId: r.domain });
@@ -461,7 +471,11 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   // Marca de la organización según el Host (la web la usa en el login y en el encabezado).
   app.get("/v1/public/host-branding", async (req, reply) => {
     const tenantId = await tenantForHost(s.db, req.headers.host);
-    if (!tenantId) return reply.header("vary", "Host").code(404).send({ error: { code: "not_found", message: "Sin dominio propio" } });
+    if (!tenantId)
+      return reply
+        .header("vary", "Host")
+        .code(404)
+        .send({ error: { code: "not_found", message: "Sin dominio propio" } });
     const [t, b] = await Promise.all([s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [tenantId]), getTenantBranding(s.db, tenantId)]);
     const out: HostBranding = {
       organizationName: t?.name ?? "",
@@ -489,17 +503,20 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   // aplicaba solo a los dominios verificados, y uno que dejaba de estarlo (borrado o desverificado) pero seguía
   // apuntando a la plataforma, con su certificado todavía vigente, servía el login real y se quedaba con la cookie.
   app.addHook("onRequest", async (req, reply) => {
-    const host = String(req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
-    const platform =
-      isPlatformHost(host) ||
-      (config.environment === "local" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]"));
+    const host = String(req.headers.host ?? "")
+      .toLowerCase()
+      .replace(/:\d+$/, "")
+      .replace(/\.$/, "");
+    const platform = isPlatformHost(host) || (config.environment === "local" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]"));
     if (platform) return;
     const path = requestPath(req);
     if (req.method === "GET" && (path === "/" || ACCOUNT_PAGES.some((p) => under(path, p)))) {
       return reply.redirect(`${config.appUrl}${req.url}`, 302);
     }
     if (ACCOUNT_APIS.some((p) => under(path, p))) {
-      return reply.code(401).send({ error: { code: "use_platform_host", message: `En un dominio propio no se inicia sesión: entrá por ${config.appUrl}` } });
+      return reply
+        .code(401)
+        .send({ error: { code: "use_platform_host", message: `En un dominio propio no se inicia sesión: entrá por ${config.appUrl}` } });
     }
     // @fastify/cookie ya parseó las cookies (su hook corre antes): se quita la de sesión de las dos partes.
     const names = sessionCookieNames();

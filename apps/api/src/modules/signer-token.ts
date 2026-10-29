@@ -52,7 +52,9 @@ export async function resolveSessionToken(db: Db, hash: string): Promise<{ recip
   if (!st.integrator_allowed) {
     // Revocado en el acto (y para siempre: aunque la verificación se anulara después, el token ya no vuelve).
     // Sin carrera con la verificación hecha desde la sesión: session_token_hash se graba al iniciarla, antes del resultado.
-    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() WHERE token_hash = $1 AND (revoked_at IS NULL OR revoked_at > now())`, [hash]);
+    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() WHERE token_hash = $1 AND (revoked_at IS NULL OR revoked_at > now())`, [
+      hash,
+    ]);
     return null;
   }
   if (st.stale) {
@@ -79,7 +81,17 @@ export async function issueSignerSessionToken(
     `INSERT INTO signer_session_tokens (token_hash, recipient_id, envelope_id, tenant_id, embed_session_id, access_token_hash, last_used_at, expires_at, max_expires_at, revoked_at)
      VALUES ($1,$2,$3,$4,$5,$6, now(), now() + make_interval(hours => $7), now() + make_interval(hours => $8),
              CASE WHEN $9::int IS NULL THEN NULL ELSE now() + make_interval(mins => $9::int) END)`,
-    [sha256Hex(token), o.recipientId, o.envelopeId, o.tenantId, o.embedSessionId, o.accessTokenHash, SIGNER_SESSION_TOKEN_HOURS, SIGNER_SESSION_TOKEN_MAX_HOURS, o.closedGraceMinutes ?? null],
+    [
+      sha256Hex(token),
+      o.recipientId,
+      o.envelopeId,
+      o.tenantId,
+      o.embedSessionId,
+      o.accessTokenHash,
+      SIGNER_SESSION_TOKEN_HOURS,
+      SIGNER_SESSION_TOKEN_MAX_HOURS,
+      o.closedGraceMinutes ?? null,
+    ],
   );
   return token;
 }
@@ -96,4 +108,3 @@ export async function signerTokenHash(db: Db, token: string): Promise<string | n
   if (r) return hash;
   return (await resolveSessionToken(db, hash))?.access_token_hash ?? null;
 }
-

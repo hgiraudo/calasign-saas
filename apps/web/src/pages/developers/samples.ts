@@ -93,12 +93,18 @@ export function nodeFor(c: ApiCall): string {
   if (fsImports.length) pre.push(`import { ${fsImports.join(", ")} } from "node:fs/promises";`, "");
   if (c.multipart) {
     pre.push("const form = new FormData();");
-    pre.push(`form.append("${c.multipart.field}", new Blob([await readFile("${c.multipart.file}")], { type: "application/pdf" }), "${c.multipart.file}");`, "");
+    pre.push(
+      `form.append("${c.multipart.field}", new Blob([await readFile("${c.multipart.file}")], { type: "application/pdf" }), "${c.multipart.file}");`,
+      "",
+    );
     opts.push("body: form");
   }
   const call = `const res = await fetch(${url}${opts.length ? `, {\n  ${opts.join(",\n  ")},\n}` : ""});`;
   const tail = c.saveAs
-    ? [`if (!res.ok) throw new Error(\`\${res.status}: \${await res.text()}\`);`, `await writeFile("${c.saveAs}", Buffer.from(await res.arrayBuffer()));`]
+    ? [
+        `if (!res.ok) throw new Error(\`\${res.status}: \${await res.text()}\`);`,
+        `await writeFile("${c.saveAs}", Buffer.from(await res.arrayBuffer()));`,
+      ]
     : c.noContent
       ? [`if (!res.ok) throw new Error(\`\${res.status}: \${await res.text()}\`);`]
       : [`const data = await res.json();`, `if (!res.ok) throw new Error(\`\${data.error?.code}: \${data.error?.message}\`);`];
@@ -118,7 +124,13 @@ export function pythonFor(c: ApiCall): string {
   if (c.body !== undefined) args.push(`json=${pyLiteral(c.body)}`);
   if (c.form) args.push(`data=${pyLiteral(c.form)}`);
   if (c.multipart) args.push(`files={"${c.multipart.field}": open("${c.multipart.file}", "rb")}`);
-  const lines = ["import os", "import requests", "", `r = requests.${c.method.toLowerCase()}(\n    ${args.join(",\n    ")},\n)`, "r.raise_for_status()"];
+  const lines = [
+    "import os",
+    "import requests",
+    "",
+    `r = requests.${c.method.toLowerCase()}(\n    ${args.join(",\n    ")},\n)`,
+    "r.raise_for_status()",
+  ];
   if (c.saveAs) lines.push(`open("${c.saveAs}", "wb").write(r.content)`);
   else lines.push("data = r.json() if r.content else None");
   return lines.join("\n");

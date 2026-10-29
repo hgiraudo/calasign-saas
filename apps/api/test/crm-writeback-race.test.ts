@@ -12,7 +12,7 @@ delete process.env.DATABASE_URL;
 const SENT = "S-ENVIADO";
 const DONE = "S-FIRMADO";
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
 let db: Db;
 let tenant: string;
 let envelope: string;
@@ -20,11 +20,42 @@ const real = globalThis.fetch;
 
 const PROVIDERS = [
   { provider: "hubspot", auth: "token", creds: { token: "hs-token" }, config: {}, objectType: "deal" },
-  { provider: "salesforce", auth: "oauth", creds: { access_token: "sf", expires_at: null }, config: { instanceUrl: "https://acme.my.salesforce.com" }, objectType: "opportunity" },
-  { provider: "zoho", auth: "oauth", creds: { access_token: "zo", expires_at: Date.now() + 3_600_000 }, config: { apiDomain: "https://www.zohoapis.com", product: "crm" }, objectType: "deal" },
-  { provider: "pipedrive", auth: "oauth", creds: { access_token: "pd", expires_at: Date.now() + 3_600_000 }, config: { apiDomain: "https://acme.pipedrive.com" }, objectType: "deal" },
-  { provider: "rdstation", auth: "oauth", creds: { access_token: "rd", expires_at: Date.now() + 3_600_000 }, config: {}, objectType: "deal", objectId: "65f0a1b2c3d4e5f6a7b8c9d0" },
-  { provider: "kommo", auth: "oauth", creds: { access_token: "km", expires_at: Date.now() + 3_600_000 }, config: { baseDomain: "https://acme.kommo.com" }, objectType: "deal" },
+  {
+    provider: "salesforce",
+    auth: "oauth",
+    creds: { access_token: "sf", expires_at: null },
+    config: { instanceUrl: "https://acme.my.salesforce.com" },
+    objectType: "opportunity",
+  },
+  {
+    provider: "zoho",
+    auth: "oauth",
+    creds: { access_token: "zo", expires_at: Date.now() + 3_600_000 },
+    config: { apiDomain: "https://www.zohoapis.com", product: "crm" },
+    objectType: "deal",
+  },
+  {
+    provider: "pipedrive",
+    auth: "oauth",
+    creds: { access_token: "pd", expires_at: Date.now() + 3_600_000 },
+    config: { apiDomain: "https://acme.pipedrive.com" },
+    objectType: "deal",
+  },
+  {
+    provider: "rdstation",
+    auth: "oauth",
+    creds: { access_token: "rd", expires_at: Date.now() + 3_600_000 },
+    config: {},
+    objectType: "deal",
+    objectId: "65f0a1b2c3d4e5f6a7b8c9d0",
+  },
+  {
+    provider: "kommo",
+    auth: "oauth",
+    creds: { access_token: "km", expires_at: Date.now() + 3_600_000 },
+    config: { baseDomain: "https://acme.kommo.com" },
+    objectType: "deal",
+  },
 ] as const;
 const objectIdOf = (p: (typeof PROVIDERS)[number]) => ("objectId" in p ? p.objectId : "42");
 
@@ -38,7 +69,8 @@ function fakeCrm() {
     const url = String(input);
     if (url.includes("/dealFields")) return json({ success: true, data: [{ key: "calasign_status", name: "Estado", field_type: "varchar" }] });
     if (url.includes("/crm/v2/custom_fields")) return json({ data: [{ id: "f1", slug: "calasign_status", name: "Estado", type: "text" }] });
-    if (url.includes("/api/v4/leads/custom_fields")) return json({ _embedded: { custom_fields: [{ id: 1, name: "Estado", code: "calasign_status", type: "text" }] } });
+    if (url.includes("/api/v4/leads/custom_fields"))
+      return json({ _embedded: { custom_fields: [{ id: 1, name: "Estado", code: "calasign_status", type: "text" }] } });
     const body = typeof init?.body === "string" ? init.body : "";
     const method = init?.method ?? "GET";
     if (method === "PUT" || method === "PATCH") {
@@ -77,10 +109,15 @@ async function setup(p: (typeof PROVIDERS)[number]) {
   const conn = uuidv7();
   const mapping = uuidv7();
   const link = uuidv7();
-  await db.query(
-    `INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [conn, tenant, p.provider, p.provider, p.auth, encrypt(JSON.stringify(p.creds)), JSON.stringify(p.config)],
-  );
+  await db.query(`INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
+    conn,
+    tenant,
+    p.provider,
+    p.provider,
+    p.auth,
+    encrypt(JSON.stringify(p.creds)),
+    JSON.stringify(p.config),
+  ]);
   await db.query(`INSERT INTO crm_mappings (id, tenant_id, connection_id, name, object_type, write_back) VALUES ($1,$2,$3,'m',$4,$5)`, [
     mapping,
     tenant,
@@ -88,15 +125,10 @@ async function setup(p: (typeof PROVIDERS)[number]) {
     p.objectType,
     JSON.stringify({ statusProperty: "calasign_status", statusValues: { sent: SENT, completed: DONE }, attachPdf: false }),
   ]);
-  await db.query(`INSERT INTO crm_links (id, tenant_id, connection_id, mapping_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
-    link,
-    tenant,
-    conn,
-    mapping,
-    envelope,
-    p.objectType,
-    objectIdOf(p),
-  ]);
+  await db.query(
+    `INSERT INTO crm_links (id, tenant_id, connection_id, mapping_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [link, tenant, conn, mapping, envelope, p.objectType, objectIdOf(p)],
+  );
   const run = async (event: string) => {
     const id = uuidv7();
     await db.query(
@@ -144,7 +176,8 @@ describe("write-back de CRM con trabajos en paralelo", () => {
 describe("write-back de CRM que falla de forma definitiva", () => {
   const hubspot = PROVIDERS[0];
   const failing = (status: number) => {
-    globalThis.fetch = (async () => new Response(JSON.stringify({ message: "boom" }), { status, headers: { "content-type": "application/json" } })) as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ message: "boom" }), { status, headers: { "content-type": "application/json" } })) as typeof fetch;
   };
   const lastStatus = async (link: string) => (await db.one<any>(`SELECT last_status FROM crm_links WHERE id = $1`, [link]))!.last_status;
   const detail = async (run: string) => (await db.one<any>(`SELECT detail FROM crm_runs WHERE id = $1`, [run]))!.detail;

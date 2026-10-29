@@ -62,7 +62,9 @@ function cleanSigner(s, i) {
  */
 async function quickSend(request, input) {
   if (!input || !input.fileBytes || !input.fileBytes.length) throw new Error("Falta el documento PDF");
-  const signers = (input.signers || []).filter((s) => s && (s.name || s.email || s.phone)).map((s, i) => cleanSigner({ ...s, sequential: input.sequential }, i));
+  const signers = (input.signers || [])
+    .filter((s) => s && (s.name || s.email || s.phone))
+    .map((s, i) => cleanSigner({ ...s, sequential: input.sequential }, i));
   if (!signers.some((s) => s.role === "signer")) throw new Error("Indicá al menos un firmante");
   const placement = input.placement === "anchors" ? "anchors" : "auto";
 

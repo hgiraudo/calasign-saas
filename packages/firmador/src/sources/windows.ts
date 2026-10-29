@@ -49,21 +49,41 @@ export function windowsSignScript(thumbprint: string, digestBase64: string): str
 
 function runPowershell(script: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("powershell.exe", powershellArgs(script), { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 }, (err, stdout, stderr) => {
-      if (err) reject(new Error(String(stderr || err.message).trim().split("\n")[0]));
-      else resolve(stdout.trim());
-    });
+    execFile(
+      "powershell.exe",
+      powershellArgs(script),
+      { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 },
+      (err, stdout, stderr) => {
+        if (err)
+          reject(
+            new Error(
+              String(stderr || err.message)
+                .trim()
+                .split("\n")[0],
+            ),
+          );
+        else resolve(stdout.trim());
+      },
+    );
   });
 }
 
 export class WindowsStoreSource implements CertSource {
   readonly kind = "windows" as const;
   constructor(private readonly run: (script: string) => Promise<string> = runPowershell) {
-    if (process.platform !== "win32" && run === runPowershell) throw new Error("El almacén de certificados de Windows solo está disponible en Windows");
+    if (process.platform !== "win32" && run === runPowershell)
+      throw new Error("El almacén de certificados de Windows solo está disponible en Windows");
   }
   async list(): Promise<CertEntry[]> {
     const raw = await this.run(windowsListScript());
-    const items = (raw ? JSON.parse(raw) : []) as { thumbprint: string; subject: string; issuer: string; notAfter: string; friendly: string; chain: string[] }[];
+    const items = (raw ? JSON.parse(raw) : []) as {
+      thumbprint: string;
+      subject: string;
+      issuer: string;
+      notAfter: string;
+      friendly: string;
+      chain: string[];
+    }[];
     return items.map((i) => ({
       id: i.thumbprint,
       label: i.friendly || /CN=([^,]+)/.exec(i.subject)?.[1] || i.thumbprint,

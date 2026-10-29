@@ -37,7 +37,9 @@ function tinyPdf(pages = 1) {
     const content = `BT /F1 18 Tf 72 760 Td (Contrato low-code pagina ${p + 1}) Tj ET`;
     const pageId = 3 + p * 2;
     kids.push(`${pageId} 0 R`);
-    pageObjs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${pageId + 1} 0 R /Resources << /Font << /F1 ${3 + pages * 2} 0 R >> >> >>`);
+    pageObjs.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${pageId + 1} 0 R /Resources << /Font << /F1 ${3 + pages * 2} 0 R >> >> >>`,
+    );
     pageObjs.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
   }
   objs.push(`<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pages} >>`, ...pageObjs, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
@@ -75,7 +77,10 @@ await new Promise((r) => receiver.listen(RPORT, "127.0.0.1", r));
 
 const TMP = mkdtempSync(join(tmpdir(), "calasign-lowcode-e2e-"));
 const OUT = join(TMP, "out");
-execFileSync(process.execPath, [join(ROOT, "integrations/build.mjs")], { env: { ...process.env, CALASIGN_BASE_URL: BASE, CALASIGN_INTEGRATIONS_OUT: OUT }, stdio: "pipe" });
+execFileSync(process.execPath, [join(ROOT, "integrations/build.mjs")], {
+  env: { ...process.env, CALASIGN_BASE_URL: BASE, CALASIGN_INTEGRATIONS_OUT: OUT },
+  stdio: "pipe",
+});
 
 function unzip(buf, dir) {
   let o = 0;
@@ -97,7 +102,18 @@ function unzip(buf, dir) {
 const dataDir = join(TMP, "data");
 const api_ = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "scripts/e2e-api-entry.mts")], {
   cwd: join(ROOT, "apps/api"),
-  env: { ...process.env, NODE_ENV: "development", APP_ENV: "local", PORT: String(PORT), HOST: "127.0.0.1", APP_URL: BASE, DATA_DIR: dataDir, DATABASE_URL: "", LOG_LEVEL: "warn", TSA_URL: "" },
+  env: {
+    ...process.env,
+    NODE_ENV: "development",
+    APP_ENV: "local",
+    PORT: String(PORT),
+    HOST: "127.0.0.1",
+    APP_URL: BASE,
+    DATA_DIR: dataDir,
+    DATABASE_URL: "",
+    LOG_LEVEL: "warn",
+    TSA_URL: "",
+  },
   stdio: ["ignore", "inherit", "inherit"],
 });
 const cleanup = () => {
@@ -108,7 +124,12 @@ const cleanup = () => {
   if (process.env.E2E_KEEP_DATA !== "1") rmSync(TMP, { recursive: true, force: true });
 };
 process.on("exit", cleanup);
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 for (let i = 0; i < 180; i++) {
   try {
     if ((await fetch(`${BASE}/healthz`)).ok) break;
@@ -146,7 +167,12 @@ async function waitFor(fn, what, ms = 45_000) {
 }
 
 const stamp = Date.now();
-await api("POST", "/v1/auth/signup", { name: "Admin Low-code", email: `lowcode+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Low-code ${stamp}` });
+await api("POST", "/v1/auth/signup", {
+  name: "Admin Low-code",
+  email: `lowcode+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Low-code ${stamp}`,
+});
 const { secret: KEY } = await api("POST", "/v1/api-keys", { name: `conectores ${stamp}`, role: "admin" });
 step("organización y API key");
 
@@ -157,7 +183,12 @@ fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.
 const tdoc = await api("POST", `/v1/templates/${template.id}/documents`, fd);
 const rC = crypto.randomUUID();
 const rG = crypto.randomUUID();
-await api("PUT", `/v1/templates/${template.id}/roles`, { roles: [{ id: rC, name: "Cliente", role: "signer", routingOrder: 1 }, { id: rG, name: "Gerente", role: "signer", routingOrder: 1 }] });
+await api("PUT", `/v1/templates/${template.id}/roles`, {
+  roles: [
+    { id: rC, name: "Cliente", role: "signer", routingOrder: 1 },
+    { id: rG, name: "Gerente", role: "signer", routingOrder: 1 },
+  ],
+});
 await api("PUT", `/v1/templates/${template.id}/fields`, {
   fields: [
     { documentId: tdoc.id, roleId: rC, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 },
@@ -171,12 +202,26 @@ await api("PUT", `/v1/templates/${template.id}/fields`, {
 
 const schema = await api("GET", `/v1/templates/${template.id}/input-schema`, null, { bearer: KEY });
 assert(schema.roles.length === 2 && schema.fields.length === 2, "input-schema: 2 roles y 2 campos prellenables");
-assert(schema.rolesSchema.properties[rC].properties.email && schema.prefillSchema.properties[schema.fields.find((f) => f.label === "Monto").id].type === "number", "input-schema: JSON Schema");
+assert(
+  schema.rolesSchema.properties[rC].properties.email &&
+    schema.prefillSchema.properties[schema.fields.find((f) => f.label === "Monto").id].type === "number",
+  "input-schema: JSON Schema",
+);
 step("GET /v1/templates/{id}/input-schema");
 
-const bad = await api("POST", `/v1/envelopes/from-template/${template.id}`, { roles: { Socio: { name: "x", email: "x@x.com" } } }, { bearer: KEY, raw: true });
+const bad = await api(
+  "POST",
+  `/v1/envelopes/from-template/${template.id}`,
+  { roles: { Socio: { name: "x", email: "x@x.com" } } },
+  { bearer: KEY, raw: true },
+);
 assert(bad.status === 400 && (await bad.json()).error.code === "unknown_role", "rol desconocido → 400 unknown_role");
-const missing = await api("POST", `/v1/envelopes/from-template/${template.id}`, { roles: { Cliente: { name: "x", email: "x@x.com" } } }, { bearer: KEY, raw: true });
+const missing = await api(
+  "POST",
+  `/v1/envelopes/from-template/${template.id}`,
+  { roles: { Cliente: { name: "x", email: "x@x.com" } } },
+  { bearer: KEY, raw: true },
+);
 assert(missing.status === 422, "falta un rol → 422 roles_missing");
 step("POST /v1/envelopes/from-template/{id}: errores");
 
@@ -241,7 +286,7 @@ function realZ(bundle) {
 const bundle = { authData: { apiKey: KEY }, inputData: {} };
 const z = realZ(bundle);
 
-await app.authentication.test.url && (await z.request({ url: app.authentication.test.url }));
+(await app.authentication.test.url) && (await z.request({ url: app.authentication.test.url }));
 const sub = await app.triggers.envelope_completed.operation.performSubscribe(z, { ...bundle, targetUrl: `${RECV}/zapier` });
 assert(sub.webhook.id && sub.secret, "Zapier: suscripción REST hook");
 step("Zapier: test de autenticación y suscripción REST hook");
@@ -265,7 +310,10 @@ const sent = await app.creates.send_from_template.operation.perform(z, {
 });
 assert(sent.status === "sent" && sent.metadata.externalId === "CRM-42", "Zapier: sobre enviado desde plantilla con metadata");
 const detail = await api("GET", `/v1/envelopes/${sent.id}`, null, { bearer: KEY });
-assert(detail.fields.some((f) => f.label === "Monto" && f.value === "1500"), "prellenado aplicado");
+assert(
+  detail.fields.some((f) => f.label === "Monto" && f.value === "1500"),
+  "prellenado aplicado",
+);
 step("Zapier: enviar desde plantilla (campos dinámicos por rol + prellenado)");
 
 // Firmar todo desde el buzón de desarrollo.
@@ -289,22 +337,39 @@ const [, t, v1] = /t=(\d+),v1=([0-9a-f]+)/.exec(sig);
 assert(createHmac("sha256", sub.secret).update(`${t}.${hit.raw}`).digest("hex") === v1, "firma HMAC de la entrega");
 const ev = JSON.parse(hit.raw.toString());
 const rows = app.triggers.envelope_completed.operation.perform(z, { ...bundle, cleanedRequest: ev });
-assert(rows[0].envelope_id === sent.id && rows[0].metadata.externalId === "CRM-42" && rows[0].signed_pdf?.hydrate?.envelopeId === sent.id, "Zapier: evento aplanado con el PDF como archivo");
+assert(
+  rows[0].envelope_id === sent.id && rows[0].metadata.externalId === "CRM-42" && rows[0].signed_pdf?.hydrate?.envelopeId === sent.id,
+  "Zapier: evento aplanado con el PDF como archivo",
+);
 await app.hydrators.signedPdf(z, { ...bundle, inputData: rows[0].signed_pdf.hydrate });
 assert(stashed[0]?.subarray(0, 5).toString() === "%PDF-", "Zapier: PDF firmado descargado");
 step("Zapier: evento envelope.completed entregado, firmado, aplanado y PDF firmado descargado");
 
 const list = await app.triggers.envelope_completed.operation.performList(z, bundle);
-assert(list.some((r) => r.envelope_id === sent.id), "Zapier performList: sobre real en los datos de prueba");
+assert(
+  list.some((r) => r.envelope_id === sent.id),
+  "Zapier performList: sobre real en los datos de prueba",
+);
 step("Zapier: datos de prueba (GET /v1/webhooks/samples con sobres reales)");
 
 const doc = await app.creates.send_document.operation.perform(z, {
   ...bundle,
-  inputData: { file: `${RECV}/doc.pdf`, file_name: "acuerdo.pdf", subject: `PDF Zapier ${stamp}`, signers: [{ name: "Ana PDF", email: `ana+${stamp}@example.com` }, { name: "Beto PDF", email: `beto+${stamp}@example.com` }] },
+  inputData: {
+    file: `${RECV}/doc.pdf`,
+    file_name: "acuerdo.pdf",
+    subject: `PDF Zapier ${stamp}`,
+    signers: [
+      { name: "Ana PDF", email: `ana+${stamp}@example.com` },
+      { name: "Beto PDF", email: `beto+${stamp}@example.com` },
+    ],
+  },
 });
 const docDetail = await api("GET", `/v1/envelopes/${doc.id}`, null, { bearer: KEY });
 assert(doc.status === "sent" && docDetail.documents[0].pageCount === 2, "Zapier: PDF enviado");
-assert(docDetail.fields.filter((f) => f.type === "signature").every((f) => f.page === 1), "firmas en la última página");
+assert(
+  docDetail.fields.filter((f) => f.type === "signature").every((f) => f.page === 1),
+  "firmas en la última página",
+);
 step("Zapier: enviar un PDF (crear, subir, destinatarios, firmas en la última página, enviar)");
 
 await app.triggers.envelope_completed.operation.performUnsubscribe(z, { ...bundle, subscribeData: sub });
@@ -320,7 +385,10 @@ for (const [name, data] of tgz) {
   writeFileSync(join(NDIR, name), data);
 }
 mkdirSync(join(NDIR, "package/node_modules/n8n-workflow"), { recursive: true });
-writeFileSync(join(NDIR, "package/node_modules/n8n-workflow/index.js"), "module.exports = { NodeConnectionTypes: { Main: 'main' }, NodeOperationError: class extends Error {} };\n");
+writeFileSync(
+  join(NDIR, "package/node_modules/n8n-workflow/index.js"),
+  "module.exports = { NodeConnectionTypes: { Main: 'main' }, NodeOperationError: class extends Error {} };\n",
+);
 const { CalaSignTrigger } = createRequire(join(NDIR, "package/package.json"))("./dist/nodes/CalaSignTrigger/CalaSignTrigger.node.js");
 const staticData = {};
 const n8nThis = {
@@ -331,7 +399,11 @@ const n8nThis = {
   getWorkflow: () => ({ id: "w1", name: "e2e" }),
   helpers: {
     httpRequestWithAuthentication: async (_cred, o) => {
-      const r = await fetch(o.url, { method: o.method, headers: { ...o.headers, authorization: `Bearer ${KEY}`, ...(o.body ? { "content-type": "application/json" } : {}) }, body: o.body ? JSON.stringify(o.body) : undefined });
+      const r = await fetch(o.url, {
+        method: o.method,
+        headers: { ...o.headers, authorization: `Bearer ${KEY}`, ...(o.body ? { "content-type": "application/json" } : {}) },
+        body: o.body ? JSON.stringify(o.body) : undefined,
+      });
       if (!r.ok) throw new Error(`n8n ${o.method} ${o.url} → ${r.status}`);
       const text = await r.text();
       return text ? JSON.parse(text) : "";
@@ -343,7 +415,10 @@ assert((await trig.webhookMethods.default.checkExists.call(n8nThis)) === false, 
 await trig.webhookMethods.default.create.call(n8nThis);
 assert(staticData.webhookId && (await trig.webhookMethods.default.checkExists.call(n8nThis)) === true, "n8n: webhook creado y verificado");
 const hooks = (await api("GET", "/v1/webhooks", null, { bearer: KEY })).items;
-assert(hooks.length === 1 && hooks[0].events[0] === "recipient.signed" && hooks[0].url === `${RECV}/n8n`, "n8n: suscripción con los eventos elegidos");
+assert(
+  hooks.length === 1 && hooks[0].events[0] === "recipient.signed" && hooks[0].url === `${RECV}/n8n`,
+  "n8n: suscripción con los eventos elegidos",
+);
 await trig.webhookMethods.default.delete.call(n8nThis);
 assert((await api("GET", "/v1/webhooks", null, { bearer: KEY })).items.length === 0, "n8n: webhook borrado");
 step("n8n: el trigger crea, verifica y borra su webhook");

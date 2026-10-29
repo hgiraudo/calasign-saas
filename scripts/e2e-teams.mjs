@@ -41,7 +41,8 @@ class Client {
 // ───────── TOTP (RFC 6238) para la prueba ─────────
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 function b32dec(s) {
-  let bits = 0, val = 0;
+  let bits = 0,
+    val = 0;
   const out = [];
   for (const c of s.replace(/=+$/, "")) {
     val = (val << 5) | B32.indexOf(c);
@@ -126,14 +127,20 @@ step("Bob aceptó con cuenta nueva (contraseña débil → 400; reutilizar el li
 
 // Carol ya tiene cuenta (con su propia organización) y acepta con su contraseña.
 const carol = new Client("carol");
-await carol.api("POST", "/v1/auth/signup", { name: "Carol Revisora", email: carolEmail, password: "clave-revisora-123", organization: `Carol SRL ${stamp}` });
+await carol.api("POST", "/v1/auth/signup", {
+  name: "Carol Revisora",
+  email: carolEmail,
+  password: "clave-revisora-123",
+  organization: `Carol SRL ${stamp}`,
+});
 const orgY = (await carol.api("GET", "/v1/me")).tenant.id;
 const carolToken = invCarol.acceptUrl.split("/invite/")[1];
 const carolAnon = new Client("carol-anon");
 await carolAnon.api("POST", `/v1/invite/${carolToken}/accept`, { password: "incorrecta" }, 401);
 await carol.api("POST", `/v1/invite/${carolToken}/accept`, {});
 let acc = await carol.api("GET", "/v1/me/access");
-if (acc.tenants.length !== 2 || !acc.tenants.find((t) => t.id === orgX && t.current)) throw new Error("carol debería estar en 2 organizaciones, con X activa");
+if (acc.tenants.length !== 2 || !acc.tenants.find((t) => t.id === orgX && t.current))
+  throw new Error("carol debería estar en 2 organizaciones, con X activa");
 if (acc.roleName !== "Revisor" || !acc.permissions.includes("audit:view")) throw new Error("rol personalizado de carol");
 await carol.api("POST", "/v1/auth/switch-tenant", { tenantId: orgY });
 if ((await carol.api("GET", "/v1/me")).tenant.id !== orgY) throw new Error("cambio de organización");
@@ -244,8 +251,10 @@ const adminKey = await owner.api("POST", "/v1/api-keys", { name: `integración a
 // Bajarla a "Integrador" (un rol que Bob sí puede otorgar) también exige tener los permisos que la key tiene hoy.
 await bob.api("PATCH", `/v1/api-keys/${adminKey.apiKey.id}/role`, { role: "custom", roleId: integrador.id }, 403);
 await bob.api("DELETE", `/v1/api-keys/${adminKey.apiKey.id}`, undefined, 403);
-if ((await owner.api("GET", "/v1/api-keys/roles")).items.find((k) => k.id === adminKey.apiKey.id)?.role !== "admin") throw new Error("la key admin tiene que seguir admin");
-if ((await owner.api("GET", "/v1/api-keys")).items.find((k) => k.id === adminKey.apiKey.id)?.revokedAt) throw new Error("la key admin no tiene que quedar revocada");
+if ((await owner.api("GET", "/v1/api-keys/roles")).items.find((k) => k.id === adminKey.apiKey.id)?.role !== "admin")
+  throw new Error("la key admin tiene que seguir admin");
+if ((await owner.api("GET", "/v1/api-keys")).items.find((k) => k.id === adminKey.apiKey.id)?.revokedAt)
+  throw new Error("la key admin no tiene que quedar revocada");
 await owner.api("DELETE", `/v1/api-keys/${adminKey.apiKey.id}`, undefined, 204);
 await owner.api("PATCH", `/v1/members/${ownerMe.user.id}`, { role: "member" }, 409);
 await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "member" });
@@ -319,7 +328,12 @@ step("2FA: login pide segundo factor; código incorrecto → 401; código de rec
 // contraseña de Bob lo invita a su propia organización y acepta por él; Bob no tiene que quedar como miembro.
 {
   const mallory = new Client("mallory");
-  await mallory.api("POST", "/v1/auth/signup", { name: "Mallory", email: `mallory+${stamp}@example.com`, password: "clave-atacante-123", organization: `Mallory SA ${stamp}` });
+  await mallory.api("POST", "/v1/auth/signup", {
+    name: "Mallory",
+    email: `mallory+${stamp}@example.com`,
+    password: "clave-atacante-123",
+    organization: `Mallory SA ${stamp}`,
+  });
   const invM = await mallory.api("POST", "/v1/invitations", { email: bobEmail, role: "member" });
   const tokM = invM.acceptUrl.split("/invite/")[1];
   const thief = new Client("thief");
@@ -342,7 +356,8 @@ await owner.api("POST", "/v1/me/2fa/enable", { code: totp(oSetup.secret, nowStep
 await owner.api("PATCH", "/v1/settings/security", { require2fa: true });
 const blocked = await carol.raw("GET", "/v1/envelopes");
 const blockedBody = await blocked.json();
-if (blocked.status !== 403 || blockedBody.error.code !== "two_factor_setup_required") throw new Error("carol debería estar bloqueada hasta activar 2FA");
+if (blocked.status !== 403 || blockedBody.error.code !== "two_factor_setup_required")
+  throw new Error("carol debería estar bloqueada hasta activar 2FA");
 acc = await carol.api("GET", "/v1/me/access");
 if (!acc.twoFactor.setupRequired) throw new Error("setupRequired");
 const cSetup = await carol.api("POST", "/v1/me/2fa/setup", { password: "clave-revisora-123" });
@@ -356,27 +371,36 @@ step("exigir 2FA: no se puede activar sin tenerlo uno mismo (409); sin 2FA se bl
 // por IP de la ruta corta antes.)
 if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   const chs = [];
-  for (let i = 0; i < 3; i++) chs.push((await new Client(`carol-ch${i}`).api("POST", "/v1/auth/login", { email: carolEmail, password: "clave-revisora-123" })).challengeToken);
+  for (let i = 0; i < 3; i++)
+    chs.push((await new Client(`carol-ch${i}`).api("POST", "/v1/auth/login", { email: carolEmail, password: "clave-revisora-123" })).challengeToken);
   const guesser = new Client("carol-guess");
   // 401 hasta llegar al límite; Carol ya tenía fallos (la contraseña incorrecta al aceptar la invitación también
   // cuenta), así que el bloqueo (429) puede llegar antes del décimo código.
-  for (const c of chs.slice(0, 2)) for (let i = 0; i < 5; i++) await guesser.api("POST", "/v1/auth/2fa/verify", { challengeToken: c, code: "000000" }, [401, 429]);
+  for (const c of chs.slice(0, 2))
+    for (let i = 0; i < 5; i++) await guesser.api("POST", "/v1/auth/2fa/verify", { challengeToken: c, code: "000000" }, [401, 429]);
   const res = await guesser.raw("POST", "/v1/auth/2fa/verify", { challengeToken: chs[2], code: totp(cSetup.secret, nowStep()) });
   const body = await res.json();
-  if (res.status !== 429 || body.error?.code !== "too_many_attempts" || guesser.cookie) throw new Error(`2FA con la cuenta bloqueada: ${res.status} ${JSON.stringify(body)}`);
+  if (res.status !== 429 || body.error?.code !== "too_many_attempts" || guesser.cookie)
+    throw new Error(`2FA con la cuenta bloqueada: ${res.status} ${JSON.stringify(body)}`);
   step("2FA: tras 10 códigos incorrectos la cuenta se bloquea también en los desafíos ya abiertos (429)");
 
   // Aceptar una invitación con una cuenta existente es un ingreso con contraseña: cuenta para el mismo bloqueo.
   // (Si no, alguien que invita el correo de otra persona a su organización prueba contraseñas sin límite por cuenta.)
   const doraEmail = `dora+${stamp}@example.com`;
-  await new Client("dora").api("POST", "/v1/auth/signup", { name: "Dora", email: doraEmail, password: "clave-de-dora-123", organization: `Dora SA ${stamp}` });
+  await new Client("dora").api("POST", "/v1/auth/signup", {
+    name: "Dora",
+    email: doraEmail,
+    password: "clave-de-dora-123",
+    organization: `Dora SA ${stamp}`,
+  });
   const invDora = await owner.api("POST", "/v1/invitations", { email: doraEmail, role: "member" });
   const doraToken = invDora.acceptUrl.split("/invite/")[1];
   const doraGuess = new Client("dora-guess");
   for (let i = 0; i < 10; i++) await doraGuess.api("POST", `/v1/invite/${doraToken}/accept`, { password: `incorrecta-${i}` }, 401);
   const dr = await doraGuess.raw("POST", `/v1/invite/${doraToken}/accept`, { password: "clave-de-dora-123" });
   const drBody = await dr.json();
-  if (dr.status !== 429 || drBody.error?.code !== "too_many_attempts" || doraGuess.cookie) throw new Error(`invitación con la cuenta bloqueada: ${dr.status} ${JSON.stringify(drBody)}`);
+  if (dr.status !== 429 || drBody.error?.code !== "too_many_attempts" || doraGuess.cookie)
+    throw new Error(`invitación con la cuenta bloqueada: ${dr.status} ${JSON.stringify(drBody)}`);
   await new Client("dora-login").api("POST", "/v1/auth/login", { email: doraEmail, password: "clave-de-dora-123" }, 429);
   step("invitación: las contraseñas incorrectas al aceptar cuentan para el bloqueo de la cuenta (429, también en el login)");
 
@@ -384,7 +408,10 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   // bloqueo no puede depender de "su primera organización".
   const evaEmail = `eva+${stamp}@example.com`;
   const invEva = await owner.api("POST", "/v1/invitations", { email: evaEmail, role: "member" });
-  const evaMe = await new Client("eva").api("POST", `/v1/invite/${invEva.acceptUrl.split("/invite/")[1]}/accept`, { name: "Eva", password: "clave-de-eva-1234" });
+  const evaMe = await new Client("eva").api("POST", `/v1/invite/${invEva.acceptUrl.split("/invite/")[1]}/accept`, {
+    name: "Eva",
+    password: "clave-de-eva-1234",
+  });
   await owner.api("DELETE", `/v1/members/${evaMe.user.id}`, undefined, 204);
   const invEva2 = await owner.api("POST", "/v1/invitations", { email: evaEmail, role: "member" });
   const evaToken = invEva2.acceptUrl.split("/invite/")[1];
@@ -392,7 +419,8 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   for (let i = 0; i < 10; i++) await evaGuess.api("POST", `/v1/invite/${evaToken}/accept`, { password: `incorrecta-${i}` }, 401);
   const er = await evaGuess.raw("POST", `/v1/invite/${evaToken}/accept`, { password: "clave-de-eva-1234" });
   const erBody = await er.json();
-  if (er.status !== 429 || erBody.error?.code !== "too_many_attempts" || evaGuess.cookie) throw new Error(`invitación de una cuenta sin organizaciones: ${er.status} ${JSON.stringify(erBody)}`);
+  if (er.status !== 429 || erBody.error?.code !== "too_many_attempts" || evaGuess.cookie)
+    throw new Error(`invitación de una cuenta sin organizaciones: ${er.status} ${JSON.stringify(erBody)}`);
   step("invitación: el bloqueo vale también para una cuenta sin organizaciones (429)");
 
   // Restablecer la contraseña la desbloquea, también sin organizaciones (antes el restablecimiento no dejaba registro
@@ -409,7 +437,8 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   await evaPw.api("POST", "/v1/auth/password/reset", { token: evaReset, password: "clave-nueva-de-eva-1234" }, 200);
   const evaBack = new Client("eva-back");
   const evaJoined = await evaBack.api("POST", `/v1/invite/${evaToken}/accept`, { password: "clave-nueva-de-eva-1234" });
-  if (!evaJoined?.tenant?.id || !evaBack.cookie) throw new Error(`después de restablecer la contraseña, Eva sigue bloqueada: ${JSON.stringify(evaJoined)}`);
+  if (!evaJoined?.tenant?.id || !evaBack.cookie)
+    throw new Error(`después de restablecer la contraseña, Eva sigue bloqueada: ${JSON.stringify(evaJoined)}`);
   step("restablecer la contraseña desbloquea también una cuenta sin organizaciones");
 }
 
@@ -422,8 +451,19 @@ await failed.api("POST", "/v1/auth/login", { email: ownerEmail, password: "incor
 const { items: audit } = await owner.api("GET", "/v1/audit-log?limit=200");
 const actions = new Set(audit.map((x) => x.action));
 const expected = [
-  "role.created", "member.invited", "member.joined", "member.role_changed", "group.created", "envelope.shared", "template.shared",
-  "api_key.created", "settings.changed", "auth.login_failed", "user.2fa_enabled", "auth.tenant_switched", "template.created",
+  "role.created",
+  "member.invited",
+  "member.joined",
+  "member.role_changed",
+  "group.created",
+  "envelope.shared",
+  "template.shared",
+  "api_key.created",
+  "settings.changed",
+  "auth.login_failed",
+  "user.2fa_enabled",
+  "auth.tenant_switched",
+  "template.created",
 ];
 const missing = expected.filter((a) => !actions.has(a));
 if (missing.length) throw new Error(`faltan acciones en la auditoría: ${missing.join(", ")}`);
@@ -431,7 +471,8 @@ const loginAudit = await owner.api("GET", "/v1/audit-log?action=auth.*");
 if (!loginAudit.items.every((x) => x.action.startsWith("auth."))) throw new Error("filtro de auditoría");
 const csv = await owner.raw("GET", "/v1/audit-log.csv?action=member.*");
 const csvText = await csv.text();
-if (csv.status !== 200 || !csv.headers.get("content-type")?.includes("text/csv") || !csvText.includes("member.invited")) throw new Error("CSV de auditoría");
+if (csv.status !== 200 || !csv.headers.get("content-type")?.includes("text/csv") || !csvText.includes("member.invited"))
+  throw new Error("CSV de auditoría");
 await bob3.api("GET", "/v1/audit-log.csv", undefined, 403);
 step(`auditoría: ${audit.length} entradas (${expected.length} tipos verificados), filtro por prefijo y export CSV`);
 
@@ -475,7 +516,10 @@ step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el últi
   await p2.api("POST", `/v1/invite/${invP2.acceptUrl.split("/invite/")[1]}/accept`, { name: "Pablo Dos", password: "clave-dueño-2-123" });
   const p2Me = await p2.api("GET", "/v1/me");
   for (const [label, fn] of [
-    ["degradarse mutuamente", (a, b, bId, aId) => [a.raw("PATCH", `/v1/members/${bId}`, { role: "member" }), b.raw("PATCH", `/v1/members/${aId}`, { role: "member" })]],
+    [
+      "degradarse mutuamente",
+      (a, b, bId, aId) => [a.raw("PATCH", `/v1/members/${bId}`, { role: "member" }), b.raw("PATCH", `/v1/members/${aId}`, { role: "member" })],
+    ],
   ]) {
     const results = await Promise.all(fn(p1, p2, p2Me.user.id, p1Me.user.id));
     const statuses = results.map((r) => r.status);
@@ -495,8 +539,10 @@ step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el últi
   const del = await Promise.all([p1.raw("DELETE", `/v1/members/${p2Me.user.id}`), p2.raw("DELETE", `/v1/members/${p1Me.user.id}`)]);
   const survivor = del[0].status < 300 ? p1 : p2;
   const { items: after } = await survivor.api("GET", "/v1/members");
-  if (!after.some((m) => m.role === "owner")) throw new Error(`eliminación cruzada: la organización quedó sin propietario (${del.map((r) => r.status).join("/")})`);
-  if (del.filter((r) => r.status < 300).length !== 1) throw new Error(`eliminación cruzada: tenía que ganar exactamente uno (${del.map((r) => r.status).join("/")})`);
+  if (!after.some((m) => m.role === "owner"))
+    throw new Error(`eliminación cruzada: la organización quedó sin propietario (${del.map((r) => r.status).join("/")})`);
+  if (del.filter((r) => r.status < 300).length !== 1)
+    throw new Error(`eliminación cruzada: tenía que ganar exactamente uno (${del.map((r) => r.status).join("/")})`);
   step("dos propietarios que se degradan o se eliminan a la vez: siempre queda un propietario (el otro pedido falla)");
 }
 
@@ -525,7 +571,8 @@ step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el últi
   const fd = new FormData();
   fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "c.pdf");
   const doc = await owner.api("POST", `/v1/envelopes/${env.id}/documents`, fd);
-  const S = randomUUID(), A = randomUUID();
+  const S = randomUUID(),
+    A = randomUUID();
   await owner.api("PUT", `/v1/envelopes/${env.id}/recipients`, {
     recipients: [
       { id: S, name: "Firma Original", email: `orig+${stamp}@example.com`, role: "signer", routingOrder: 1 },
@@ -536,7 +583,11 @@ step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el últi
     fields: [{ documentId: doc.id, recipientId: S, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
   });
   await owner.api("POST", `/v1/envelopes/${env.id}/send`);
-  await owner.api("POST", `/v1/envelopes/${env.id}/recipients/${S}/reassign`, { name: "Firma Nueva", email: `nueva+${stamp}@example.com`, reason: "prueba" });
+  await owner.api("POST", `/v1/envelopes/${env.id}/recipients/${S}/reassign`, {
+    name: "Firma Nueva",
+    email: `nueva+${stamp}@example.com`,
+    reason: "prueba",
+  });
   const fromEnv = await owner.api("POST", `/v1/templates/from-envelope/${env.id}`, { name: `Desde sobre ${stamp}` });
   const roles = fromEnv.roles;
   const signers = roles.filter((r) => r.role === "signer");

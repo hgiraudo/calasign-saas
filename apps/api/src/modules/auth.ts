@@ -67,7 +67,8 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       if (existing) {
         // Con la cuenta bloqueada: una invitación aceptada a la vez la habría sumado a otra organización.
         await t.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [userId]);
-        if (await t.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [userId])) throw conflict("email_taken", "Ya existe una cuenta con ese correo");
+        if (await t.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [userId]))
+          throw conflict("email_taken", "Ya existe una cuenta con ese correo");
       }
       let slug = slugify(input.organization);
       if (await t.one(`SELECT 1 FROM tenants WHERE slug = $1`, [slug])) slug = `${slug}-${tenantId.slice(-6)}`;
@@ -114,7 +115,11 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
    * verificar la real (no too_many_attempts, que la delataba). El signup no empuja al bloqueo a las cuentas con
    * organizaciones (eso queda para /v1/auth/login).
    */
-  async function existingAccountWithoutOrganization(u: { id: string; password_hash: unknown; totp_enabled_at: unknown }, password: string, ip: string | null): Promise<string> {
+  async function existingAccountWithoutOrganization(
+    u: { id: string; password_hash: unknown; totp_enabled_at: unknown },
+    password: string,
+    ip: string | null,
+  ): Promise<string> {
     const taken = () => conflict("email_taken", "Ya existe una cuenta con ese correo");
     const hasOrganization = !!(await s.db.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [u.id]));
     const hasPassword = typeof u.password_hash === "string" && u.password_hash.startsWith("scrypt$");
@@ -131,7 +136,11 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (!ok) throw taken();
     await clearLoginAttempts(s.db, u.id, ip);
     if (u.totp_enabled_at) {
-      throw new AppError(409, "account_without_organization_2fa", "Tu cuenta tiene verificación en dos pasos y no pertenece a ninguna organización: pedí que te inviten a una.");
+      throw new AppError(
+        409,
+        "account_without_organization_2fa",
+        "Tu cuenta tiene verificación en dos pasos y no pertenece a ninguna organización: pedí que te inviten a una.",
+      );
     }
     return u.id;
   }
@@ -173,7 +182,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if ("passwordResetRequired" in pick || "ssoRequired" in pick) await clearLoginAttempts(s.db, u.id, ip);
     if ("passwordResetRequired" in pick) {
       // Sus organizaciones la sumaron por SCIM o SSO (sin SSO habilitado ahora): la contraseña se habilita al restablecerla.
-      throw new AppError(403, "password_reset_required", "Para ingresar con contraseña, restablecela desde \"Olvidé mi contraseña\"");
+      throw new AppError(403, "password_reset_required", 'Para ingresar con contraseña, restablecela desde "Olvidé mi contraseña"');
     }
     if ("ssoRequired" in pick) {
       throw new AppError(403, "sso_required", "Tu organización exige ingresar con inicio de sesión único (SSO)", {
@@ -220,13 +229,14 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
           // Un pedido nuevo reemplaza a los anteriores desde la misma red: invalida esos links sin usar. Los pedidos desde
           // otras redes vencen solos (30 minutos): si no, un tercero que pide links para el correo de otra persona
           // invalidaba el que ella acababa de recibir.
-          await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL AND ip_key IS NOT DISTINCT FROM $2`, [u.id, ipKey]);
-          await t.query(`INSERT INTO password_resets (token_hash, user_id, ip, ip_key, expires_at) VALUES ($1,$2,$3,$4, now() + interval '30 minutes')`, [
-            sha256Hex(token),
+          await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL AND ip_key IS NOT DISTINCT FROM $2`, [
             u.id,
-            ip,
             ipKey,
           ]);
+          await t.query(
+            `INSERT INTO password_resets (token_hash, user_id, ip, ip_key, expires_at) VALUES ($1,$2,$3,$4, now() + interval '30 minutes')`,
+            [sha256Hex(token), u.id, ip, ipKey],
+          );
           await enqueue(t, "notify", { kind: "password_reset", userId: u.id, tokenEnc: encrypt(token) });
         });
       }
@@ -305,7 +315,12 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         userAgent,
         data: {
           revokeCreatedCredentials: input.revokeCreatedCredentials,
-          activeCreatedCredentials: { apiKeys: c?.apiKeys ?? 0, scimTokens: c?.scimTokens ?? 0, serviceApps: c?.serviceApps ?? 0, invitations: c?.invitations ?? 0 },
+          activeCreatedCredentials: {
+            apiKeys: c?.apiKeys ?? 0,
+            scimTokens: c?.scimTokens ?? 0,
+            serviceApps: c?.serviceApps ?? 0,
+            invitations: c?.invitations ?? 0,
+          },
           ...(c?.revoked ? { revokedCredentials: c.revoked } : {}),
         },
       }).catch(() => {});
@@ -315,7 +330,14 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       ok: true,
       createdCredentials: credentials
         .filter((c) => c.apiKeys || c.scimTokens || c.serviceApps || c.invitations)
-        .map((c) => ({ tenantId: c.tenantId, tenantName: c.tenantName, apiKeys: c.apiKeys, scimTokens: c.scimTokens, serviceApps: c.serviceApps, invitations: c.invitations })),
+        .map((c) => ({
+          tenantId: c.tenantId,
+          tenantName: c.tenantName,
+          apiKeys: c.apiKeys,
+          scimTokens: c.scimTokens,
+          serviceApps: c.serviceApps,
+          invitations: c.invitations,
+        })),
       revokedCredentials: input.revokeCreatedCredentials
         ? {
             apiKeys: credentials.reduce((n, c) => n + (c.revoked?.apiKeys.length ?? 0), 0),
@@ -357,7 +379,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get("/v1/api-keys", { preHandler: auth }, async (req) => {
-    const rows = await s.db.query(`SELECT * FROM api_keys WHERE tenant_id = $1 AND oauth_client_id IS NULL ORDER BY created_at DESC`, [req.auth!.tenantId]);
+    const rows = await s.db.query(`SELECT * FROM api_keys WHERE tenant_id = $1 AND oauth_client_id IS NULL ORDER BY created_at DESC`, [
+      req.auth!.tenantId,
+    ]);
     return { items: rows.map(toApiKey) };
   });
 
@@ -382,10 +406,10 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<{ Params: { id: string } }>("/v1/api-keys/:id", { preHandler: auth }, async (req, reply) => {
     await assertCanManageApiKey(s.db, req.auth!, req.params.id);
-    const r = await s.db.query(`UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING key_hash`, [
-      req.params.id,
-      req.auth!.tenantId,
-    ]);
+    const r = await s.db.query(
+      `UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING key_hash`,
+      [req.params.id, req.auth!.tenantId],
+    );
     if (r.length === 0) throw notFound("API key");
     // El límite de pedidos de esta réplica deja de contarla por credencial (las demás, al primer pedido rechazado).
     forgetCredentialHash((r[0] as { key_hash: string }).key_hash);

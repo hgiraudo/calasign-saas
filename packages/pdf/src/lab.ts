@@ -50,7 +50,10 @@ function icpBrasilSan(cpf: string): x509.Extension {
     idBlock: { tagClass: 3, tagNumber: 0 },
     value: [
       new asn1js.ObjectIdentifier({ value: "2.16.76.1.3.1" }),
-      new asn1js.Constructed({ idBlock: { tagClass: 3, tagNumber: 0 }, value: [new asn1js.OctetString({ valueHex: toAB(new Uint8Array(Buffer.from(text, "latin1"))) })] }),
+      new asn1js.Constructed({
+        idBlock: { tagClass: 3, tagNumber: 0 },
+        value: [new asn1js.OctetString({ valueHex: toAB(new Uint8Array(Buffer.from(text, "latin1"))) })],
+      }),
     ],
   });
   const der = new asn1js.Sequence({ value: [otherName] }).toBER(false);
@@ -119,7 +122,10 @@ export async function createLabPki(baseUrl: string): Promise<LabPki> {
   const leaf = async (cn: string, eku: string[], opts: LabIssueOptions = {}) => {
     const lk =
       opts.key === "ec-p256" || opts.key === "ec-p384"
-        ? ((await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: opts.key === "ec-p256" ? "P-256" : "P-384" }, true, ["sign", "verify"])) as CryptoKeyPair)
+        ? ((await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: opts.key === "ec-p256" ? "P-256" : "P-384" }, true, [
+            "sign",
+            "verify",
+          ])) as CryptoKeyPair)
         : await keys();
     const cert = await x509.X509CertificateGenerator.create({
       serialNumber: serial(),
@@ -189,7 +195,10 @@ async function ocspResponse(pki: LabPki, body: Uint8Array): Promise<Uint8Array> 
     single.certID = r.reqCert;
     const s = Buffer.from(r.reqCert.serialNumber.valueBlock.valueHexView).toString("hex");
     single.certStatus = pki.revoked.has(s)
-      ? new asn1js.Constructed({ idBlock: { tagClass: 3, tagNumber: 1 }, value: [new asn1js.GeneralizedTime({ valueDate: new Date(Date.now() - 30_000) })] })
+      ? new asn1js.Constructed({
+          idBlock: { tagClass: 3, tagNumber: 1 },
+          value: [new asn1js.GeneralizedTime({ valueDate: new Date(Date.now() - 30_000) })],
+        })
       : new asn1js.Primitive({ idBlock: { tagClass: 3, tagNumber: 0 }, lenBlockLength: 1 } as any);
     single.thisUpdate = new Date(Date.now() - 60_000);
     single.nextUpdate = new Date(Date.now() + 86400_000);
@@ -244,7 +253,10 @@ async function tsaResponse(pki: LabPki, body: Uint8Array): Promise<Uint8Array> {
           attributes: [
             new pkijs.Attribute({ type: OIDS.contentType, values: [new asn1js.ObjectIdentifier({ value: OIDS.tstInfo })] }),
             new pkijs.Attribute({ type: OIDS.messageDigest, values: [new asn1js.OctetString({ valueHex: toAB(hash("sha256", tstDer)) })] }),
-            new pkijs.Attribute({ type: OIDS.signingCertificateV2, values: [new asn1js.Sequence({ value: [new asn1js.Sequence({ value: [essCertIdV2] })] })] }),
+            new pkijs.Attribute({
+              type: OIDS.signingCertificateV2,
+              values: [new asn1js.Sequence({ value: [new asn1js.Sequence({ value: [essCertIdV2] })] })],
+            }),
           ],
         }),
       }),
@@ -308,10 +320,14 @@ export async function startLabServer(pkiOrGetter: LabPki | (() => LabPki), port 
 /** Levanta el servidor y crea la PKI con su URL real (puerto 0 = cualquiera libre). */
 export async function startLab(port = 0, host = "127.0.0.1"): Promise<{ pki: LabPki; server: LabServer }> {
   let pki: LabPki | null = null;
-  const server = await startLabServer(() => {
-    if (!pki) throw new Error("PKI no lista");
-    return pki;
-  }, port, host);
+  const server = await startLabServer(
+    () => {
+      if (!pki) throw new Error("PKI no lista");
+      return pki;
+    },
+    port,
+    host,
+  );
   pki = await createLabPki(server.url);
   return { pki, server };
 }

@@ -9,7 +9,12 @@ const script = fileURLToPath(new URL("../../../scripts/check-error-codes.mjs", i
 describe("textos de los códigos de error de la API", () => {
   it("todos los códigos tienen traducción (o están en la lista de internos)", async () => {
     const mod = await import(pathToFileURL(script).href);
-    const r = mod.check() as { apiCodes: number; dynamic: string[]; missing: { code: string; file: string }[]; incomplete: { code: string; dict: string; lacking: string[] }[] };
+    const r = mod.check() as {
+      apiCodes: number;
+      dynamic: string[];
+      missing: { code: string; file: string }[];
+      incomplete: { code: string; dict: string; lacking: string[] }[];
+    };
     // La extracción encontró códigos (si el patrón dejara de coincidir, el test pasaría sin revisar nada).
     expect(r.apiCodes).toBeGreaterThan(200);
     expect(r.missing.map((m) => `${m.code} (${m.file})`)).toEqual([]);

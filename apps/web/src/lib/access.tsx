@@ -89,7 +89,10 @@ export function AccessProvider({ children }: { children: ReactNode }) {
  * Como la API (assertCanManage / assertCanGrant): un propietario sí; si no, solo si tiene todos esos permisos. Sin datos
  * todavía, no se oculta (la API decide).
  */
-export function canManagePerms(access: { role?: string | null; permissions: readonly string[] } | null | undefined, perms: readonly string[] | null | undefined) {
+export function canManagePerms(
+  access: { role?: string | null; permissions: readonly string[] } | null | undefined,
+  perms: readonly string[] | null | undefined,
+) {
   if (!access || !perms) return true;
   return access.role === "owner" || perms.every((p) => access.permissions.includes(p));
 }

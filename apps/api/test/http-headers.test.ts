@@ -13,8 +13,8 @@ process.env.TURNSTILE_SITE_KEY = "site-key-test";
 process.env.TURNSTILE_SECRET_KEY = "secret-key-test";
 process.env.SESSION_COOKIE_PARENT_DOMAINS = "app.calasign.test,calasign.test";
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let session = "";
@@ -96,7 +96,12 @@ describe("cookie de sesión __Host-cs_session", () => {
     expect(res.statusCode).toBe(200);
   });
   it("el logout cierra la sesión y borra las dos cookies (con Secure)", async () => {
-    const login = await app.inject({ method: "POST", url: "/v1/auth/login", headers: ORIGIN, payload: { email: "duena@headers.test", password: "una-clave-larga-123" } });
+    const login = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      headers: ORIGIN,
+      payload: { email: "duena@headers.test", password: "una-clave-larga-123" },
+    });
     expect(login.statusCode).toBe(200);
     const tok = login.cookies.find((x) => x.name === "__Host-cs_session")!.value;
     const out = await app.inject({ method: "POST", url: "/v1/auth/logout", headers: ORIGIN, cookies: { cs_session: tok } });

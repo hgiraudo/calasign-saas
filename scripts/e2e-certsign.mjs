@@ -20,16 +20,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const procs = [];
 let work = null;
 const cleanup = () => {
-  procs.forEach((p) => { try { p.kill("SIGTERM"); } catch {} });
+  procs.forEach((p) => {
+    try {
+      p.kill("SIGTERM");
+    } catch {}
+  });
   // PKI de laboratorio, base PGlite y archivos de la corrida: sin borrarlos /tmp se llena con cada ejecución
   // (E2E_KEEP_DATA=1 los conserva para depurar).
-  if (work && process.env.E2E_KEEP_DATA !== "1") { try { rmSync(work, { recursive: true, force: true }); } catch {} }
+  if (work && process.env.E2E_KEEP_DATA !== "1") {
+    try {
+      rmSync(work, { recursive: true, force: true });
+    } catch {}
+  }
 };
 process.on("exit", cleanup);
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
-process.on("uncaughtException", (e) => { console.error(e); cleanup(); process.exit(1); });
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
+process.on("uncaughtException", (e) => {
+  console.error(e);
+  cleanup();
+  process.exit(1);
+});
 
 function assert(cond, msg) {
   if (!cond) throw new Error(`FALLÓ: ${msg}`);
@@ -147,18 +164,27 @@ async function waitStatus(envId, status) {
 
 /** Firma con el Firmador real (CLI) usando un .p12. */
 function firmador(code, p12, extra = []) {
-  const out = execFileSync(TSX, [join(ROOT, "packages/firmador/src/cli.ts"), "sign", "--api", BASE, "--code", code, "--p12", p12, "--password-env", "P12_PW", ...extra], {
-    cwd: ROOT,
-    env: { ...process.env, P12_PW: "clave-del-titular" },
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const out = execFileSync(
+    TSX,
+    [join(ROOT, "packages/firmador/src/cli.ts"), "sign", "--api", BASE, "--code", code, "--p12", p12, "--password-env", "P12_PW", ...extra],
+    {
+      cwd: ROOT,
+      env: { ...process.env, P12_PW: "clave-del-titular" },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   return JSON.parse(out.trim().split("\n").pop());
 }
 
 // ───────── Sobre ─────────
 const stamp = Date.now();
-await api("POST", "/v1/auth/signup", { name: "Ana Remitente", email: `ana+cs${stamp}@example.com`, password: "una-clave-segura-123", organization: `Certificados ${stamp}` });
+await api("POST", "/v1/auth/signup", {
+  name: "Ana Remitente",
+  email: `ana+cs${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Certificados ${stamp}`,
+});
 const { envelope } = await api("POST", "/v1/envelopes", { subject: `Contrato con certificado ${stamp}` });
 const fd = new FormData();
 fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.pdf");
@@ -171,14 +197,37 @@ const nameA = `Juan Perez ${stamp}`;
 const nameB = `Bea Electronica ${stamp}`;
 const nameC = `Maria Silva ${stamp}`;
 // El rol cc no puede firmar con certificado.
-await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
-  recipients: [{ name: "Copia", email: `cc${stamp}@example.com`, role: "cc", signatureType: "certificate" }],
-}, { expect: 400 });
+await api(
+  "PUT",
+  `/v1/envelopes/${envelope.id}/recipients`,
+  {
+    recipients: [{ name: "Copia", email: `cc${stamp}@example.com`, role: "cc", signatureType: "certificate" }],
+  },
+  { expect: 400 },
+);
 await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
   recipients: [
-    { id: A, name: nameA, email: `a${stamp}@example.com`, routingOrder: 1, idDocumentType: "dni", idDocumentNumber: "12345678", signatureType: "certificate", certificateRequirements: { matchIdDocument: true, allowedIssuers: ["CalaSign Lab"], requireQualified: true } },
+    {
+      id: A,
+      name: nameA,
+      email: `a${stamp}@example.com`,
+      routingOrder: 1,
+      idDocumentType: "dni",
+      idDocumentNumber: "12345678",
+      signatureType: "certificate",
+      certificateRequirements: { matchIdDocument: true, allowedIssuers: ["CalaSign Lab"], requireQualified: true },
+    },
     { id: B, name: nameB, email: `b${stamp}@example.com`, routingOrder: 2 },
-    { id: C, name: nameC, email: `c${stamp}@example.com`, routingOrder: 3, idDocumentType: "cpf", idDocumentNumber: "123.456.789-09", signatureType: "certificate", certificateRequirements: { matchIdDocument: true, allowedIssuers: [], requireQualified: false } },
+    {
+      id: C,
+      name: nameC,
+      email: `c${stamp}@example.com`,
+      routingOrder: 3,
+      idDocumentType: "cpf",
+      idDocumentNumber: "123.456.789-09",
+      signatureType: "certificate",
+      certificateRequirements: { matchIdDocument: true, allowedIssuers: [], requireQualified: false },
+    },
   ],
 });
 // A tiene firma visual; C firma solo con certificado (sin campo de firma: está permitido).
@@ -191,12 +240,19 @@ await api("PUT", `/v1/envelopes/${envelope.id}/fields`, {
 });
 const detail0 = await api("GET", `/v1/envelopes/${envelope.id}`);
 const ra = detail0.recipients.find((r) => r.id === A);
-assert(ra.signatureType === "certificate" && ra.certificateRequirements.matchIdDocument === true && ra.certificateRequirements.requireQualified, "requisitos del certificado guardados");
+assert(
+  ra.signatureType === "certificate" && ra.certificateRequirements.matchIdDocument === true && ra.certificateRequirements.requireQualified,
+  "requisitos del certificado guardados",
+);
 await api("POST", `/v1/envelopes/${envelope.id}/send`);
 step("sobre con 2 firmantes con certificado + 1 electrónico enviado (C sin campo de firma visual)");
 
 // ───────── Etapa electrónica ─────────
-for (const [name, sigField] of [[nameA, true], [nameB, true], [nameC, false]]) {
+for (const [name, sigField] of [
+  [nameA, true],
+  [nameB, true],
+  [nameC, false],
+]) {
   const t = await linkFor(name);
   const s = await api("GET", `/v1/signing/${t}`);
   await api("POST", `/v1/signing/${t}/consent`);
@@ -225,9 +281,18 @@ step("el remitente puede recordarle al firmante al que le toca firmar con certif
 const pairA = await api("POST", `/v1/signing/${tA}/certsign/pairing`, {});
 assert(/^[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(pairA.code) && pairA.deepLink.startsWith("calasign-firmador://sign?api="), "código y deep link");
 const info = await api("GET", `/v1/certsign/sessions/${pairA.code}`);
-assert(info.signerName === nameA && info.requirements.requireQualified && /^[0-9a-f]{64}$/.test(info.documentSha256), "el Firmador ve el documento y los requisitos");
+assert(
+  info.signerName === nameA && info.requirements.requireQualified && /^[0-9a-f]{64}$/.test(info.documentSha256),
+  "el Firmador ve el documento y los requisitos",
+);
 const docRes = await api("GET", `/v1/certsign/sessions/${pairA.code}/document`, null, { raw: true });
-assert(docRes.ok && Buffer.from(await docRes.arrayBuffer()).subarray(0, 5).toString() === "%PDF-", "el Firmador puede descargar el PDF");
+assert(
+  docRes.ok &&
+    Buffer.from(await docRes.arrayBuffer())
+      .subarray(0, 5)
+      .toString() === "%PDF-",
+  "el Firmador puede descargar el PDF",
+);
 // El PDF preparado (para el vínculo documento–firma del Firmador) solo existe después de enviar el certificado.
 await api("GET", `/v1/certsign/sessions/${pairA.code}/prepared`, null, { expect: 409 });
 
@@ -268,13 +333,28 @@ step("C firmó con el Firmador (.p12 ECDSA P-256, CPF de ICP-Brasil)");
 const final = await waitStatus(envelope.id, "completed");
 const pdf = Buffer.from(await (await api("GET", `/v1/envelopes/${envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
 writeFileSync(join(work, "final.pdf"), pdf);
-const v = await (await fetch(`${BASE}/v1/validate`, { method: "POST", body: (() => { const f = new FormData(); f.append("file", new Blob([pdf], { type: "application/pdf" }), "final.pdf"); return f; })() })).json();
+const v = await (
+  await fetch(`${BASE}/v1/validate`, {
+    method: "POST",
+    body: (() => {
+      const f = new FormData();
+      f.append("file", new Blob([pdf], { type: "application/pdf" }), "final.pdf");
+      return f;
+    })(),
+  })
+).json();
 const sigs = (v.signatures ?? v.report?.signatures ?? []).filter((s) => s.kind === "signature");
 const cns = sigs.map((s) => s.signer?.commonName);
 assert(sigs.length >= 3, `3 firmas CAdES (2 titulares + sello): ${JSON.stringify(cns)}`);
 assert(cns.includes("JUAN PEREZ") && cns.includes("MARIA DA SILVA:12345678909"), "los certificados de los dos titulares están en el reporte");
-assert(sigs.every((s) => s.integrity.valid), "todas las firmas íntegras");
-assert(sigs.filter((s) => s.signer?.commonName !== "JUAN PEREZ" && s.signer?.commonName !== "MARIA DA SILVA:12345678909").length >= 1, "más el sello de plataforma");
+assert(
+  sigs.every((s) => s.integrity.valid),
+  "todas las firmas íntegras",
+);
+assert(
+  sigs.filter((s) => s.signer?.commonName !== "JUAN PEREZ" && s.signer?.commonName !== "MARIA DA SILVA:12345678909").length >= 1,
+  "más el sello de plataforma",
+);
 assert(sigs.find((s) => s.signer?.commonName === "JUAN PEREZ").timestamp?.valid, "firma del titular con sello de tiempo");
 step(`PDF final: ${sigs.length} firmas íntegras (${cns.join(" | ")})`);
 
@@ -296,22 +376,36 @@ assert(types.includes("envelope.awaiting_certificates"), "evento awaiting_certif
 assert(types.filter((t) => t === "recipient.certificate_signed").length === 2, "2 eventos certificate_signed");
 assert(types.includes("recipient.certificate_rejected"), "evento del certificado rechazado");
 const csA = events.find((e) => e.type === "recipient.certificate_signed" && e.data.recipientId === A);
-assert(csA.data.identityMatch === "serialNumber" && csA.data.trusted === true && csA.data.timestamped, "evidencia: identidad por serialNumber, confiable, con sello de tiempo");
-assert(csA.data.revocation === "good" && csA.data.revocationSource === "ocsp", `evidencia: revocación consultada por OCSP (${csA.data.revocation}/${csA.data.revocationSource})`);
+assert(
+  csA.data.identityMatch === "serialNumber" && csA.data.trusted === true && csA.data.timestamped,
+  "evidencia: identidad por serialNumber, confiable, con sello de tiempo",
+);
+assert(
+  csA.data.revocation === "good" && csA.data.revocationSource === "ocsp",
+  `evidencia: revocación consultada por OCSP (${csA.data.revocation}/${csA.data.revocationSource})`,
+);
 assert(
   events.some((e) => e.type === "recipient.certificate_rejected" && e.data.revocation === "revoked" && e.data.errors.some((x) => /revocado/.test(x))),
   "evidencia: rechazo por revocación",
 );
 const csC = events.find((e) => e.type === "recipient.certificate_signed" && e.data.recipientId === C);
 assert(csC.data.identityMatch === "icp-brasil-cpf" && csC.data.signatureAlgorithm === "ECDSA", "evidencia: CPF de ICP-Brasil, ECDSA");
-assert(events.find((e) => e.type === "envelope.completed").data.signedSha256 === final.envelope.signedSha256, "envelope.completed coincide con el PDF");
+assert(
+  events.find((e) => e.type === "envelope.completed").data.signedSha256 === final.envelope.signedSha256,
+  "envelope.completed coincide con el PDF",
+);
 step("evidencia: awaiting_certificates, certificate_rejected y 2 certificate_signed con titular/emisor/serie");
 
 const progress = await api("GET", `/v1/envelopes/${envelope.id}/certificate-signatures`);
 assert(progress.signers.length === 2 && progress.signers.every((x) => x.status === "signed" && x.serialNumber), "progreso del remitente");
 assert(final.recipients.find((r) => r.id === C).certificateSignature?.status === "signed", "detalle: estado de la firma con certificado");
 const sessDone = await api("GET", `/v1/signing/${tA}`);
-assert(sessDone.certificateSigning?.status === "signed" && sessDone.certificateSigning.certificate?.commonName === "JUAN PEREZ" && sessDone.signedAvailable, "el firmante ve su certificado y puede descargar");
+assert(
+  sessDone.certificateSigning?.status === "signed" &&
+    sessDone.certificateSigning.certificate?.commonName === "JUAN PEREZ" &&
+    sessDone.signedAvailable,
+  "el firmante ve su certificado y puede descargar",
+);
 step("progreso del remitente y sesión del firmante actualizados");
 
 // ───────── PKCS#11 (SoftHSM), si está disponible ─────────
@@ -330,8 +424,12 @@ if (!softhsm) console.warn("⚠ softhsm2-util no está instalado: se omite la pr
   const d2 = await api("POST", `/v1/envelopes/${e2.id}/documents`, fd2);
   const V = crypto.randomUUID();
   const nameV = `Victor Anulado ${stamp}`;
-  await api("PUT", `/v1/envelopes/${e2.id}/recipients`, { recipients: [{ id: V, name: nameV, email: `v${stamp}@example.com`, signatureType: "certificate" }] });
-  await api("PUT", `/v1/envelopes/${e2.id}/fields`, { fields: [{ documentId: d2.id, recipientId: V, type: "name", page: 0, x: 0.1, y: 0.85, width: 0.3, height: 0.03 }] });
+  await api("PUT", `/v1/envelopes/${e2.id}/recipients`, {
+    recipients: [{ id: V, name: nameV, email: `v${stamp}@example.com`, signatureType: "certificate" }],
+  });
+  await api("PUT", `/v1/envelopes/${e2.id}/fields`, {
+    fields: [{ documentId: d2.id, recipientId: V, type: "name", page: 0, x: 0.1, y: 0.85, width: 0.3, height: 0.03 }],
+  });
   await api("POST", `/v1/envelopes/${e2.id}/send`);
   const tV = await linkFor(nameV);
   await api("POST", `/v1/signing/${tV}/consent`);

@@ -109,7 +109,10 @@ ok("alta de cuenta, orígenes embebidos y API key");
 // ───────── 1. Compatibilidad: el borrador vacío de siempre ─────────
 {
   const r = await call("POST", "/v1/envelopes", { subject: `Vacío ${stamp}` });
-  assert(r.status === 201 && r.data.envelope.status === "draft" && r.data.documents.length === 0 && !("signingUrls" in r.data), `borrador vacío: ${JSON.stringify(r.data).slice(0, 200)}`);
+  assert(
+    r.status === 201 && r.data.envelope.status === "draft" && r.data.documents.length === 0 && !("signingUrls" in r.data),
+    `borrador vacío: ${JSON.stringify(r.data).slice(0, 200)}`,
+  );
   ok("POST /v1/envelopes sin agregados: borrador vacío (formato de siempre)");
 }
 
@@ -127,7 +130,12 @@ const body1 = {
   ],
   fields: [
     { recipient: "cliente", type: "signature", anchor: { text: "[[firma]]", offsetY: -40, width: 150, height: 40 } },
-    { recipient: `cliente+${stamp}@example.com`, type: "date_signed", document: "contrato", anchor: { text: "[[firma]]", offsetX: 160, width: 90, height: 14 } },
+    {
+      recipient: `cliente+${stamp}@example.com`,
+      type: "date_signed",
+      document: "contrato",
+      anchor: { text: "[[firma]]", offsetX: 160, width: 90, height: 14 },
+    },
     { recipient: 1, type: "signature", anchor: { text: "[[firma2]]", offsetY: -40, width: 150, height: 40 } },
     { recipient: 1, type: "text", label: "Comentario", required: false, page: 0, x: 0.1, y: 0.05, width: 0.3, height: 0.03 },
   ],
@@ -143,12 +151,21 @@ assert(d1.documents.length === 1 && d1.documents[0].name === "contrato.pdf", "un
 assert(d1.recipients.length === 3 && d1.recipients.every((r) => r.id), "tres destinatarios con id");
 const cliente = d1.recipients.find((r) => r.name === `Cliente ${stamp}`);
 const embebido = d1.recipients.find((r) => r.name === `Embebido ${stamp}`);
-assert(cliente.status === "sent" && embebido.status === "sent" && embebido.embedded, `destinatarios activos: ${JSON.stringify(d1.recipients.map((r) => [r.name, r.status]))}`);
+assert(
+  cliente.status === "sent" && embebido.status === "sent" && embebido.embedded,
+  `destinatarios activos: ${JSON.stringify(d1.recipients.map((r) => [r.name, r.status]))}`,
+);
 assert(d1.fields.length === 4 && d1.fields.every((f) => f.id && f.documentId === d1.documents[0].id), "cuatro campos con id en el documento");
-assert(d1.fields.filter((f) => f.recipientId === cliente.id).length === 2 && d1.fields.filter((f) => f.recipientId === embebido.id).length === 2, "campos asignados por ref, email y posición");
+assert(
+  d1.fields.filter((f) => f.recipientId === cliente.id).length === 2 && d1.fields.filter((f) => f.recipientId === embebido.id).length === 2,
+  "campos asignados por ref, email y posición",
+);
 const sigCliente = d1.fields.find((f) => f.recipientId === cliente.id && f.type === "signature");
 assert(sigCliente.y > 0.5 && sigCliente.y < 0.75, `el ancla ubicó la firma cerca del texto (y=${sigCliente.y})`);
-assert(Array.isArray(d1.signingUrls) && d1.signingUrls.length === 1 && d1.signingUrls[0].recipientId === embebido.id, `URL de firma del embebido: ${JSON.stringify(d1.signingUrls)}`);
+assert(
+  Array.isArray(d1.signingUrls) && d1.signingUrls.length === 1 && d1.signingUrls[0].recipientId === embebido.id,
+  `URL de firma del embebido: ${JSON.stringify(d1.signingUrls)}`,
+);
 assert(/\/embed\/[A-Za-z0-9_-]+$/.test(d1.signingUrls[0].url) && d1.signingUrls[0].expiresAt, "URL embebida de un solo uso");
 ok("JSON + base64: documento, 3 destinatarios, 4 campos (anclas y coordenadas) y envío en UNA llamada");
 
@@ -163,7 +180,10 @@ ok("JSON + base64: documento, 3 destinatarios, 4 campos (anclas y coordenadas) y
 // Idempotencia: mismo cuerpo y clave → la misma respuesta, sin otro sobre; otro cuerpo → 409.
 {
   const again = await call("POST", "/v1/envelopes", body1, { headers: { "Idempotency-Key": idem1 } });
-  assert(again.status === 201 && again.headers.get("idempotent-replay") === "true" && again.data.envelope.id === d1.envelope.id, "replay con la misma clave");
+  assert(
+    again.status === 201 && again.headers.get("idempotent-replay") === "true" && again.data.envelope.id === d1.envelope.id,
+    "replay con la misma clave",
+  );
   const other = await call("POST", "/v1/envelopes", { ...body1, subject: `${subject1} bis` }, { headers: { "Idempotency-Key": idem1 } });
   assert(other.status === 409 && other.data.error.code === "idempotency_mismatch", `otra petición con la misma clave: ${other.status}`);
   assert((await countBySubject(subject1)) === 1, "un solo sobre con ese asunto");
@@ -210,7 +230,10 @@ const r2 = await call("POST", "/v1/envelopes", multipartBody(), { headers: { "Id
 assert(r2.status === 201, `multipart: ${r2.status} ${JSON.stringify(r2.data).slice(0, 400)}`);
 assert(r2.data.envelope.status === "sent" && r2.data.documents.length === 2, "enviado con 2 documentos");
 assert(r2.data.documents[0].name === "contrato.pdf" && r2.data.documents[1].name === "Anexo A.pdf", "nombres: el de la parte o el indicado");
-assert(r2.data.fields.length === 2 && r2.data.fields.find((f) => f.type === "initials").documentId === r2.data.documents[1].id, "campo en el anexo por ref");
+assert(
+  r2.data.fields.length === 2 && r2.data.fields.find((f) => f.type === "initials").documentId === r2.data.documents[1].id,
+  "campo en el anexo por ref",
+);
 assert(!r2.data.signingUrls, "sin embebidos no hay signingUrls");
 const r2b = await call("POST", "/v1/envelopes", multipartBody(), { headers: { "Idempotency-Key": idem2 } });
 assert(r2b.headers.get("idempotent-replay") === "true" && r2b.data.envelope.id === r2.data.envelope.id, "replay multipart");
@@ -219,11 +242,17 @@ ok("multipart/form-data: payload JSON + 2 PDF, campo por ref de documento, firma
 // Sin `documents`: cada archivo es un documento, en orden.
 {
   const fd = new FormData();
-  fd.append("payload", JSON.stringify({ subject: `Oneshot implícito ${stamp}`, recipients: [{ name: "Implícito", email: `impl+${stamp}@example.com` }] }));
+  fd.append(
+    "payload",
+    JSON.stringify({ subject: `Oneshot implícito ${stamp}`, recipients: [{ name: "Implícito", email: `impl+${stamp}@example.com` }] }),
+  );
   fd.append("file", new Blob([contract], { type: "application/pdf" }), "uno.pdf");
   fd.append("file2", new Blob([annex], { type: "application/pdf" }), "dos.pdf");
   const r = await call("POST", "/v1/envelopes", fd);
-  assert(r.status === 201 && r.data.envelope.status === "draft" && r.data.documents.map((d) => d.name).join(",") === "uno.pdf,dos.pdf", `archivos sin documents: ${JSON.stringify(r.data).slice(0, 300)}`);
+  assert(
+    r.status === 201 && r.data.envelope.status === "draft" && r.data.documents.map((d) => d.name).join(",") === "uno.pdf,dos.pdf",
+    `archivos sin documents: ${JSON.stringify(r.data).slice(0, 300)}`,
+  );
   ok("multipart sin documents: cada archivo es un documento (queda en borrador sin send)");
 }
 
@@ -250,19 +279,31 @@ if (LOCAL) {
     fields: [{ type: "signature", anchor: { text: "[[firma]]", width: 150, height: 40 } }],
     send: true,
   });
-  assert(r.status === 201 && r.data.envelope.status === "sent" && r.data.documents[0].name === "contrato.pdf", `documento por URL: ${JSON.stringify(r.data).slice(0, 300)}`);
+  assert(
+    r.status === 201 && r.data.envelope.status === "sent" && r.data.documents[0].name === "contrato.pdf",
+    `documento por URL: ${JSON.stringify(r.data).slice(0, 300)}`,
+  );
   for (const [path, what] of [
     ["/redirige.pdf", "redirige"],
     ["/pagina.html", "no es un PDF"],
   ]) {
-    const bad = await call("POST", "/v1/envelopes", { subject: `Oneshot URL mala ${stamp}`, documents: [{ url: `http://127.0.0.1:${port}${path}` }] });
-    assert(bad.status === 400 && ["document_fetch_failed", "not_pdf"].includes(bad.data.error.code), `URL que ${what}: ${bad.status} ${JSON.stringify(bad.data)}`);
+    const bad = await call("POST", "/v1/envelopes", {
+      subject: `Oneshot URL mala ${stamp}`,
+      documents: [{ url: `http://127.0.0.1:${port}${path}` }],
+    });
+    assert(
+      bad.status === 400 && ["document_fetch_failed", "not_pdf"].includes(bad.data.error.code),
+      `URL que ${what}: ${bad.status} ${JSON.stringify(bad.data)}`,
+    );
   }
   srv.close();
   assert((await countBySubject(`Oneshot URL mala ${stamp}`)) === 0, "las URL malas no dejan sobres");
   ok("documento por URL (descarga), y URL que redirige o no es PDF rechazadas sin dejar sobre");
 } else {
-  const bad = await call("POST", "/v1/envelopes", { subject: `Oneshot SSRF ${stamp}`, documents: [{ url: "https://169.254.169.254/latest/meta-data.pdf" }] });
+  const bad = await call("POST", "/v1/envelopes", {
+    subject: `Oneshot SSRF ${stamp}`,
+    documents: [{ url: "https://169.254.169.254/latest/meta-data.pdf" }],
+  });
   assert(bad.status === 400 && bad.data.error.code === "document_fetch_failed", `URL interna bloqueada: ${bad.status} ${JSON.stringify(bad.data)}`);
   ok("documento por URL interna bloqueado (SSRF)");
 }
@@ -272,7 +313,11 @@ const subjectBad = `Oneshot fallido ${stamp}`;
 const failures = [
   [
     "PDF inválido",
-    { subject: subjectBad, documents: [{ base64: Buffer.from("%PDF-1.4 esto no es un pdf").toString("base64") }], recipients: [{ name: "X", email: `x+${stamp}@example.com` }] },
+    {
+      subject: subjectBad,
+      documents: [{ base64: Buffer.from("%PDF-1.4 esto no es un pdf").toString("base64") }],
+      recipients: [{ name: "X", email: `x+${stamp}@example.com` }],
+    },
     400,
   ],
   ["base64 que no es PDF", { subject: subjectBad, documents: [{ base64: Buffer.from("hola").toString("base64") }] }, 400, "not_pdf"],
@@ -290,7 +335,12 @@ const failures = [
   ],
   [
     "sobre incompleto para enviar (firmante sin campo de firma)",
-    { subject: subjectBad, documents: [{ base64: contract.toString("base64") }], recipients: [{ name: "X", email: `x+${stamp}@example.com` }], send: true },
+    {
+      subject: subjectBad,
+      documents: [{ base64: contract.toString("base64") }],
+      recipients: [{ name: "X", email: `x+${stamp}@example.com` }],
+      send: true,
+    },
     422,
     "envelope_incomplete",
   ],
@@ -319,7 +369,12 @@ const failures = [
     400,
     "invalid_field",
   ],
-  ["documento con base64 y url a la vez", { subject: subjectBad, documents: [{ base64: "JVBERi0=", url: "https://example.com/x.pdf" }] }, 400, "validation_error"],
+  [
+    "documento con base64 y url a la vez",
+    { subject: subjectBad, documents: [{ base64: "JVBERi0=", url: "https://example.com/x.pdf" }] },
+    400,
+    "validation_error",
+  ],
   ["send y status contradictorios", { subject: subjectBad, send: true, status: "draft" }, 400, "validation_error"],
   [
     "origen embebido no autorizado",
@@ -337,7 +392,10 @@ const failures = [
 ];
 for (const [what, body, status, code] of failures) {
   const r = await call("POST", "/v1/envelopes", body, { headers: { "Idempotency-Key": `fallo-${what}-${stamp}` } });
-  assert(r.status === status && (!code || r.data.error.code === code), `${what}: esperaba ${status} ${code ?? ""}, llegó ${r.status} ${JSON.stringify(r.data).slice(0, 300)}`);
+  assert(
+    r.status === status && (!code || r.data.error.code === code),
+    `${what}: esperaba ${status} ${code ?? ""}, llegó ${r.status} ${JSON.stringify(r.data).slice(0, 300)}`,
+  );
 }
 {
   const fd = new FormData();
@@ -380,7 +438,12 @@ ok(`atomicidad: ${failures.length + 2} pedidos inválidos no dejan sobres a medi
   await api("PUT", `/v1/templates/${tplId}/fields`, {
     fields: [{ documentId: doc.id, roleId: roles.roles[0].id, type: "signature", page: 0, x: 0.1, y: 0.6, width: 0.3, height: 0.06 }],
   });
-  const body = { templateId: tplId, subject: `Desde plantilla ${stamp}`, recipients: [{ role: "Cliente", name: "Tpl", email: `tpl+${stamp}@example.com` }], send: true };
+  const body = {
+    templateId: tplId,
+    subject: `Desde plantilla ${stamp}`,
+    recipients: [{ role: "Cliente", name: "Tpl", email: `tpl+${stamp}@example.com` }],
+    send: true,
+  };
   const a = await call("POST", "/v1/envelopes/from-template", body, { headers: { "Idempotency-Key": `tpl-${stamp}` } });
   assert(a.status === 201 && a.data.envelope.status === "sent", `plantilla + envío: ${a.status} ${JSON.stringify(a.data).slice(0, 300)}`);
   const b = await call("POST", "/v1/envelopes/from-template", body, { headers: { "Idempotency-Key": `tpl-${stamp}` } });
@@ -424,7 +487,10 @@ ok(`atomicidad: ${failures.length + 2} pedidos inválidos no dejan sobres a medi
   const spec = await api("GET", "/v1/openapi.json");
   const op = spec.paths["/v1/envelopes"].post;
   const json = op.requestBody.content["application/json"].schema;
-  assert(json.properties.documents && json.properties.recipients && json.properties.fields && json.properties.send, "OpenAPI: documents/recipients/fields/send");
+  assert(
+    json.properties.documents && json.properties.recipients && json.properties.fields && json.properties.send,
+    "OpenAPI: documents/recipients/fields/send",
+  );
   assert(op.requestBody.content["multipart/form-data"], "OpenAPI: multipart");
   ok("OpenAPI de POST /v1/envelopes con el sobre completo (JSON y multipart)");
 }

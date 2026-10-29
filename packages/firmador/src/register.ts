@@ -28,7 +28,10 @@ export function linuxDesktopEntry(exec: string): string {
  * comillas dejaba roto el registro con una ruta que tuviera $, \ o % (p. ej. ~/Descargas/100%/calasign-firmador).
  */
 function desktopExecArg(path: string): string {
-  return path.replace(/(["`$\\])/g, "\\$1").replace(/\\/g, "\\\\").replace(/%/g, "%%");
+  return path
+    .replace(/(["`$\\])/g, "\\$1")
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "%%");
 }
 
 /** Comandos `reg add` de Windows (HKCU, sin permisos de administrador). */

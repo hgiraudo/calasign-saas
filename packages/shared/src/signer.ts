@@ -21,7 +21,12 @@ export const EnvelopeReminderSettings = {
 
 // ───────────── OTP ─────────────
 
-export const OtpVerifyInput = z.object({ code: z.string().trim().regex(/^\d{6}$/) });
+export const OtpVerifyInput = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/),
+});
 export type OtpVerifyInput = z.infer<typeof OtpVerifyInput>;
 
 export interface OtpSendResponse {
@@ -60,7 +65,10 @@ export type DelegateInput = z.infer<typeof DelegateInput>;
 export const ReassignInput = z
   .object({
     ...Contact,
-    channels: z.array(z.enum(["email", "whatsapp", "telegram"])).min(1).optional(),
+    channels: z
+      .array(z.enum(["email", "whatsapp", "telegram"]))
+      .min(1)
+      .optional(),
     locale: z.enum(["es", "pt-BR", "en"]).optional().nullable(),
     reason: z.string().trim().max(1000).optional().nullable(),
   })

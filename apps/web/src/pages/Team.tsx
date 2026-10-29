@@ -111,7 +111,10 @@ export function TeamPage() {
   const [roles, setRoles] = useState<RolesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadRoles = () => api<RolesResponse>("/v1/roles").then(setRoles).catch((e) => setError(errorText(e)));
+  const loadRoles = () =>
+    api<RolesResponse>("/v1/roles")
+      .then(setRoles)
+      .catch((e) => setError(errorText(e)));
   useEffect(() => {
     void loadRoles();
   }, []);
@@ -296,12 +299,11 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
           const after = permsOfMember(roles, target);
           // Lo mismo que decide la API (revokeMemberAccess): pierde algún permiso o deja de ser propietario. Sin los
           // permisos de alguno de los dos roles, se avisa por las dudas.
-          const demotion =
-            (m.role === "owner" && target.role !== "owner") || !before || !after || before.some((p) => !after.includes(p));
+          const demotion = (m.role === "owner" && target.role !== "owner") || !before || !after || before.some((p) => !after.includes(p));
           const self = m.userId === me?.user.id;
           const ownerChange = m.role === "owner" || target.role === "owner";
           const targetLabel =
-            target.role === "custom" ? roles?.items.find((r) => r.id === target.roleId)?.name ?? target.roleId ?? "" : label(target.role);
+            target.role === "custom" ? (roles?.items.find((r) => r.id === target.roleId)?.name ?? target.roleId ?? "") : label(target.role);
           const close = () => {
             if (!roleBusy) setPendingRole(null);
           };
@@ -597,14 +599,14 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
                   </td>
                   <td className="right">
                     {canManagePerms(access, r.permissions) && (
-                    <div className="row-end">
-                      <button type="button" className="btn btn-sm" onClick={() => setEditing(r)}>
-                        {tt("roles.edit")}
-                      </button>
-                      <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(r.id)}>
-                        {tt("roles.delete")}
-                      </button>
-                    </div>
+                      <div className="row-end">
+                        <button type="button" className="btn btn-sm" onClick={() => setEditing(r)}>
+                          {tt("roles.edit")}
+                        </button>
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(r.id)}>
+                          {tt("roles.delete")}
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>

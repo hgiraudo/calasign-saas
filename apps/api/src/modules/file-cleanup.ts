@@ -40,7 +40,10 @@ export async function deleteFileIfUnused(db: Db, blobs: BlobStore, fileId: strin
     if (isForeignKeyViolation(e)) return false;
     // La primera fase falló (base): la fila sigue; el barrido repite el borrado entero (varios llamadores ignoran el error).
     await db
-      .query(`INSERT INTO pending_file_deletions (file_id, error) VALUES ($1, $2) ON CONFLICT (file_id) DO UPDATE SET error = EXCLUDED.error`, [fileId, errText(e)])
+      .query(`INSERT INTO pending_file_deletions (file_id, error) VALUES ($1, $2) ON CONFLICT (file_id) DO UPDATE SET error = EXCLUDED.error`, [
+        fileId,
+        errText(e),
+      ])
       .catch(() => {});
     throw e;
   }
@@ -75,9 +78,10 @@ export async function discardRecipientAttachments(db: Db, recipientId: string): 
        AND id IN (SELECT attachment_file_id FROM fields WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL) RETURNING storage_key`,
     [recipientId],
   );
-  await db.query(`UPDATE fields SET attachment_file_id = NULL, value = NULL, filled_at = NULL WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL`, [
-    recipientId,
-  ]);
+  await db.query(
+    `UPDATE fields SET attachment_file_id = NULL, value = NULL, filled_at = NULL WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL`,
+    [recipientId],
+  );
   return discarded.map((f) => f.storage_key);
 }
 
@@ -142,7 +146,9 @@ export async function retryPendingFileDeletions(db: Db, blobs: BlobStore, limit 
       if (await deleteFileIfUnused(db, blobs, r.file_id)) deleted++;
       else await db.query(`DELETE FROM pending_file_deletions WHERE file_id = $1 AND storage_key IS NULL`, [r.file_id]);
     } catch (err) {
-      await db.query(`UPDATE pending_file_deletions SET attempted_at = now(), error = $2 WHERE file_id = $1`, [r.file_id, errText(err)]).catch(() => {});
+      await db
+        .query(`UPDATE pending_file_deletions SET attempted_at = now(), error = $2 WHERE file_id = $1`, [r.file_id, errText(err)])
+        .catch(() => {});
     }
   }
   return { deleted, seen: rows.length };

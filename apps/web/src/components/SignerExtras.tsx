@@ -55,7 +55,12 @@ export function OtpGate({
       // Ya se mandó un código hace poco (p. ej. el celular recargó la página al volver de los mensajes): se muestra el
       // campo para escribirlo. Si no, quedaba solo el botón deshabilitado y había que pedir otro (que anula el anterior).
       if (e instanceof HttpError && OTP_LIMIT_CODES.includes(e.code ?? "") && !sent) {
-        setSent({ sent: true, destination: session.otpDestination ?? "", resendInSeconds: d?.resendInSeconds ?? 0, expiresAt: "" } as OtpSendResponse);
+        setSent({
+          sent: true,
+          destination: session.otpDestination ?? "",
+          resendInSeconds: d?.resendInSeconds ?? 0,
+          expiresAt: "",
+        } as OtpSendResponse);
       }
       setError(errorText(e));
       // otp_no_destination / otp_destination_suppressed son datos del destinatario (el remitente debe corregirlos), no
@@ -192,7 +197,14 @@ export function DelegateModal({
     try {
       const r = await api<{ delegated: boolean; to: string }>(`${base}/delegate`, {
         method: "POST",
-        body: { name: name.trim(), email: email.trim() || null, phone: phone.trim() || null, reason: reason.trim(), idDocumentNumber: idDoc.trim() || null, idDocumentType: (idDoc.trim() && idDocType) || null },
+        body: {
+          name: name.trim(),
+          email: email.trim() || null,
+          phone: phone.trim() || null,
+          reason: reason.trim(),
+          idDocumentNumber: idDoc.trim() || null,
+          idDocumentType: (idDoc.trim() && idDocType) || null,
+        },
       });
       onDone(r.to);
     } catch (e) {

@@ -3,7 +3,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { encrypt } from "../src/lib/util";
 import { MappingError, mapPrefill, mapRecipients } from "../src/modules/crm/mapping";
-import { CrmConn, attachSigned, fetchRecord, oauthApp, oauthConfigured, testConnection, tokenSupported, writeStatus } from "../src/modules/crm/providers";
+import {
+  CrmConn,
+  attachSigned,
+  fetchRecord,
+  oauthApp,
+  oauthConfigured,
+  testConnection,
+  tokenSupported,
+  writeStatus,
+} from "../src/modules/crm/providers";
 
 const DEAL = "65f0a1b2c3d4e5f6a7b8c9d0";
 const C1 = "65f0a1b2c3d4e5f6a7b8c9d1";
@@ -53,16 +62,34 @@ function fakeRd(): typeof fetch {
     if (p === "/crm/v2/users") return json(200, { data: [{ id: "u1", name: "Admin", email: "admin@acme.com.br" }] });
     if (p === `/crm/v2/deals/${DEAL}` && method === "GET")
       return json(200, {
-        data: { id: DEAL, name: "Licença anual ACME", one_time_price: 1500, contact_ids: [C1, GONE, C2, C1], custom_fields: { cnpj: "12.345.678/0001-90", estado_calasign: "" } },
+        data: {
+          id: DEAL,
+          name: "Licença anual ACME",
+          one_time_price: 1500,
+          contact_ids: [C1, GONE, C2, C1],
+          custom_fields: { cnpj: "12.345.678/0001-90", estado_calasign: "" },
+        },
       });
     if (p === `/crm/v2/deals/${DEAL}` && method === "PUT") return json(200, { data: { id: DEAL } });
     if (p === `/crm/v2/contacts/${C1}`)
-      return json(200, { data: { id: C1, name: "Ana Souza", job_title: "Diretora", emails: [{ email: "ana@acme.com.br" }], phones: [{ phone: "+55 11 3333-4444", type: "work" }, { phone: "+55 11 99999-0000", type: "mobile" }] } });
+      return json(200, {
+        data: {
+          id: C1,
+          name: "Ana Souza",
+          job_title: "Diretora",
+          emails: [{ email: "ana@acme.com.br" }],
+          phones: [
+            { phone: "+55 11 3333-4444", type: "work" },
+            { phone: "+55 11 99999-0000", type: "mobile" },
+          ],
+        },
+      });
     if (p === `/crm/v2/contacts/${C2}`) return json(200, { data: { id: C2, name: "", emails: [{ email: "beto@acme.com.br" }], phones: [] } });
     if (p === `/crm/v2/contacts/${GONE}`) return json(404, { errors: [{ detail: "Contact not found" }] });
     if (p === "/crm/v2/custom_fields") return json(200, { data: fields, links: {} });
     if (p === `/crm/v2/deals/${DEAL}/files` && method === "POST") return json(201, { data: { id: "file-1", name: "x.pdf" } });
-    if (p === `/crm/v2/deals/${DEAL}/notes` && method === "POST") return noteFails ? json(500, { errors: [{ detail: "boom" }] }) : json(201, { data: { id: "note-1" } });
+    if (p === `/crm/v2/deals/${DEAL}/notes` && method === "POST")
+      return noteFails ? json(500, { errors: [{ detail: "boom" }] }) : json(201, { data: { id: "note-1" } });
     return json(404, { errors: [{ detail: `mock: ${method} ${p}` }] });
   }) as typeof fetch;
 }
@@ -70,7 +97,14 @@ function fakeRd(): typeof fetch {
 const conn = (creds: Record<string, unknown> = { access_token: "rd-at-1", refresh_token: "rd-rt", expires_at: Date.now() + 3_600_000 }) =>
   new CrmConn({ id: "c1", provider: "rdstation", auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: {} }, null);
 
-const attach = { fileName: "Contrato.pdf", pdf: new TextEncoder().encode("%PDF-1.4 x"), subject: "Contrato ACME", envelopeId: "env-1", sha256: "ab".repeat(32), url: "https://app.calasign.test/app/envelopes/env-1" };
+const attach = {
+  fileName: "Contrato.pdf",
+  pdf: new TextEncoder().encode("%PDF-1.4 x"),
+  subject: "Contrato ACME",
+  envelopeId: "env-1",
+  sha256: "ab".repeat(32),
+  url: "https://app.calasign.test/app/envelopes/env-1",
+};
 
 beforeEach(() => {
   calls = [];
@@ -120,7 +154,12 @@ describe("RD Station CRM", () => {
       { role: "Testemunha", source: "contact", index: 1 },
     ] as any);
     expect(rec.map((x) => x.email)).toEqual(["ana@acme.com.br", "beto@acme.com.br"]);
-    expect(mapPrefill(r, [{ field: "Valor", property: "one_time_price" }, { field: "CNPJ", property: "CNPJ" }])).toEqual({ Valor: "1500", CNPJ: "12.345.678/0001-90" });
+    expect(
+      mapPrefill(r, [
+        { field: "Valor", property: "one_time_price" },
+        { field: "CNPJ", property: "CNPJ" },
+      ]),
+    ).toEqual({ Valor: "1500", CNPJ: "12.345.678/0001-90" });
   });
 
   it("sin campos pedidos por nombre no lee la definición de campos", async () => {

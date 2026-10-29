@@ -255,10 +255,10 @@ export async function provisionMembership(
   ]);
   if (inv) await t.query(`UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE id = $1`, [inv.id, userId]);
   // Otra invitación pendiente al mismo correo ya no hace falta: si quedara, después de una baja lo volvía a sumar.
-  await t.query(`UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`, [
-    tenantId,
-    email,
-  ]);
+  await t.query(
+    `UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`,
+    [tenantId, email],
+  );
   await clearConsoleRemoval(t, tenantId, userId);
   return { role, roleId, invitationId: inv?.id ?? null };
 }

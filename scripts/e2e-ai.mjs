@@ -62,7 +62,12 @@ function contractPdf() {
     "Jurisdiccion de los tribunales de Bogota.",
     "La responsabilidad se limita a 18 meses de honorarios.",
   ];
-  const page2 = ["Firma del cliente: ____________________", "Aclaracion: ____________________", "Fecha: ____________", "Firma del proveedor: ____________________"];
+  const page2 = [
+    "Firma del cliente: ____________________",
+    "Aclaracion: ____________________",
+    "Fecha: ____________",
+    "Firma del proveedor: ____________________",
+  ];
   const esc = (s) => s.replace(/[\\()]/g, (c) => "\\" + c);
   const stream = (lines) => "BT /F1 12 Tf 72 760 Td 18 TL " + lines.map((l) => `(${esc(l)}) Tj T*`).join(" ") + " ET";
   const objs = [];
@@ -120,7 +125,16 @@ function heavyPdf() {
   obj(5, `<< /Length ${big.length} /Filter /FlateDecode >>`, big);
   obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
   const xref = len;
-  push(Buffer.from(`xref\n0 7\n0000000000 65535 f \n` + offsets.slice(1).map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join(""), "latin1"));
+  push(
+    Buffer.from(
+      `xref\n0 7\n0000000000 65535 f \n` +
+        offsets
+          .slice(1)
+          .map((o) => `${String(o).padStart(10, "0")} 00000 n \n`)
+          .join(""),
+      "latin1",
+    ),
+  );
   push(Buffer.from(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`, "latin1"));
   return Buffer.concat(parts);
 }
@@ -145,7 +159,9 @@ async function sign(token, name) {
   let sess = await signer("GET", `/v1/signing/${token}`);
   await signer("POST", `/v1/signing/${token}/consent`);
   sess = await signer("GET", `/v1/signing/${token}`);
-  const fields = sess.fields.filter((f) => ["text", "checkbox"].includes(f.type)).map((f) => ({ id: f.id, value: f.type === "checkbox" ? "true" : "x" }));
+  const fields = sess.fields
+    .filter((f) => ["text", "checkbox"].includes(f.type))
+    .map((f) => ({ id: f.id, value: f.type === "checkbox" ? "true" : "x" }));
   await signer("POST", `/v1/signing/${token}/complete`, { fields, signature: { kind: "drawn", imagePng: PNG } });
   step(`${name} firmó`);
   return signer;
@@ -153,7 +169,12 @@ async function sign(token, name) {
 
 // ───────────────────────────── Alta y sobre ─────────────────────────────
 
-await sender("POST", "/v1/auth/signup", { name: "Remitente IA", email: `ia+${stamp}@example.com`, password: "una-clave-segura-123", organization: `IA ${stamp}` });
+await sender("POST", "/v1/auth/signup", {
+  name: "Remitente IA",
+  email: `ia+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `IA ${stamp}`,
+});
 let settings = await sender("GET", "/v1/settings/ai");
 assert(settings.enabled === false && settings.provider === "mock", `IA deshabilitada por defecto y proveedor mock (${settings.provider})`);
 step("IA deshabilitada por defecto; proveedor mock (sin clave)");
@@ -182,7 +203,8 @@ const sigProveedor = det.suggestions.find((s) => s.type === "signature" && s.rol
 assert(sigCliente && sigProveedor, `sugerencias de firma por rol: ${JSON.stringify(det.suggestions.map((s) => [s.type, s.roleHint]))}`);
 assert(sigCliente.page === 1 && sigCliente.signerIndex === 0 && sigProveedor.signerIndex === 1, "página y firmante sugeridos");
 assert(det.suggestions.some((s) => s.type === "date_signed") && det.suggestions.some((s) => s.type === "name"), "fecha y aclaración sugeridas");
-for (const s of det.suggestions) assert(s.x >= 0 && s.y >= 0 && s.x + s.width <= 1 && s.y + s.height <= 1, "coordenadas normalizadas dentro de la página");
+for (const s of det.suggestions)
+  assert(s.x >= 0 && s.y >= 0 && s.x + s.width <= 1 && s.y + s.height <= 1, "coordenadas normalizadas dentro de la página");
 step(`detección por heurísticas sin IA: ${det.suggestions.length} sugerencias («Firma del cliente: ____» → firmante 1)`);
 
 await expectStatus(sender("POST", `/v1/envelopes/${envelope.id}/ai/review`, {}), 403, "revisión con IA deshabilitada");
@@ -202,7 +224,11 @@ await expectStatus(sender("POST", `/v1/envelopes/${envelope.id}/ai/review`, {}),
   assert(e?.error?.code === "pdf_too_heavy" && Date.now() - t0 < 5000, `422 pdf_too_heavy enseguida (${Date.now() - t0} ms, ${JSON.stringify(e)})`);
   step(`PDF con un stream de 120 MB: 422 pdf_too_heavy en ${Date.now() - t0} ms, sin dejar a la API sin responder`);
 }
-await expectStatus(sender("PATCH", `/v1/envelopes/${envelope.id}/ai/settings`, { signerAssist: true }), 403, "asistencia al firmante con IA deshabilitada");
+await expectStatus(
+  sender("PATCH", `/v1/envelopes/${envelope.id}/ai/settings`, { signerAssist: true }),
+  403,
+  "asistencia al firmante con IA deshabilitada",
+);
 step("IA deshabilitada → 403");
 
 // ───────────────────────────── Habilitar: requiere aceptar el aviso ─────────────────────────────
@@ -222,21 +248,36 @@ step("habilitar exige aceptar el aviso de tratamiento de datos (403 sin él)");
 det = await sender("POST", `/v1/envelopes/${envelope.id}/ai/detect-fields`, {});
 assert(det.usage && det.usage.provider === "mock" && det.sent && det.sent.characters > 100, "con IA se informa uso y qué se envió");
 const preview = await sender("GET", `/v1/envelopes/${envelope.id}/ai/preview?feature=detect_fields`);
-assert(preview.text.includes("[Página 1]") && preview.text.includes("[d1-p2-l1] Firma del cliente") && preview.sent.characters === det.sent.characters, "la vista previa muestra exactamente lo que se envía");
+assert(
+  preview.text.includes("[Página 1]") && preview.text.includes("[d1-p2-l1] Firma del cliente") && preview.sent.characters === det.sent.characters,
+  "la vista previa muestra exactamente lo que se envía",
+);
 step(`detección con IA: ${det.suggestions.length} sugerencias; vista previa = ${preview.sent.characters} caracteres enviados`);
 
 // ───────────────────────────── Revisión del playbook ─────────────────────────────
 
 const review = await sender("POST", `/v1/envelopes/${envelope.id}/ai/review`, {});
 assert(review.findings.map((f) => f.status).join(",") === "ok,violation,not_found", `estados del playbook: ${review.findings.map((f) => f.status)}`);
-assert(review.findings[1].citation?.verified && review.findings[1].citation.quote.includes("18 meses") && review.findings[1].citation.page === 1, "la violación cita el texto literal con su página");
+assert(
+  review.findings[1].citation?.verified && review.findings[1].citation.quote.includes("18 meses") && review.findings[1].citation.page === 1,
+  "la violación cita el texto literal con su página",
+);
 const last = await sender("GET", `/v1/envelopes/${envelope.id}/ai/review`);
 assert(last?.findings?.length === 3, "la última revisión queda guardada");
 step("playbook: jurisdicción ok, responsabilidad 18 meses > 12 (violación citada), confidencialidad no encontrada");
 
 // ───────────────────────────── Campos aceptados y envío con asistencia al firmante ─────────────────────────────
 
-const toField = (s, recipientId) => ({ documentId: doc.id, recipientId, type: s.type, page: s.page, x: s.x, y: s.y, width: s.width, height: s.height });
+const toField = (s, recipientId) => ({
+  documentId: doc.id,
+  recipientId,
+  type: s.type,
+  page: s.page,
+  x: s.x,
+  y: s.y,
+  width: s.width,
+  height: s.height,
+});
 await sender("PUT", `/v1/envelopes/${envelope.id}/fields`, { fields: [toField(sigCliente, cliente), toField(sigProveedor, proveedor)] });
 const ai = await sender("PATCH", `/v1/envelopes/${envelope.id}/ai/settings`, { signerAssist: true });
 assert(ai.signerAssist === true, "asistencia al firmante habilitada");
@@ -254,7 +295,10 @@ const summary = await s1("POST", `/v1/signing/${t1}/ai/summary`);
 assert(summary.summary.length > 30 && summary.citations.length > 0 && summary.citations.every((c) => c.verified), "resumen con citas verificadas");
 assert(/asesoramiento legal/.test(summary.disclaimer), "resumen con descargo");
 const answer = await s1("POST", `/v1/signing/${t1}/ai/ask`, { question: "Cual es el precio mensual?" });
-assert(answer.answered && answer.citations[0]?.quote.includes("USD 1.500,50") && answer.citations[0].page === 1 && answer.citations[0].verified, "respuesta con cita literal y página");
+assert(
+  answer.answered && answer.citations[0]?.quote.includes("USD 1.500,50") && answer.citations[0].page === 1 && answer.citations[0].verified,
+  "respuesta con cita literal y página",
+);
 const unknown = await s1("POST", `/v1/signing/${t1}/ai/ask`, { question: "Se permiten mascotas en la oficina?" });
 assert(unknown.answered === false, "si el documento no lo dice, no inventa");
 step("firmante: resumen con citas verificadas, respuesta con página («USD 1.500,50», pág. 1) y «no lo dice» cuando corresponde");
@@ -275,9 +319,15 @@ assert(detail.envelope.status === "completed", `sobre completado (${detail.envel
 const sweep = await sender("POST", "/dev/ai/sweep");
 assert(sweep.extracted >= 1, `extracción automática al completarse (${JSON.stringify(sweep)})`);
 let meta = await sender("GET", `/v1/envelopes/${envelope.id}/ai/metadata`);
-assert(meta.source === "ai" && meta.metadata.expiryDate === "2027-01-31" && meta.metadata.effectiveDate === "2026-02-01", `fechas extraídas: ${JSON.stringify(meta.metadata)}`);
+assert(
+  meta.source === "ai" && meta.metadata.expiryDate === "2027-01-31" && meta.metadata.effectiveDate === "2026-02-01",
+  `fechas extraídas: ${JSON.stringify(meta.metadata)}`,
+);
 assert(meta.metadata.amounts[0]?.value === 1500.5 && meta.metadata.amounts[0].currency === "USD", "monto y moneda");
-assert(meta.metadata.parties.length === 2 && meta.metadata.noticePeriodDays === 60 && meta.metadata.autoRenewal === true, "partes, preaviso y renovación automática");
+assert(
+  meta.metadata.parties.length === 2 && meta.metadata.noticePeriodDays === 60 && meta.metadata.autoRenewal === true,
+  "partes, preaviso y renovación automática",
+);
 assert(meta.renewalAlertAt && meta.renewalAlertAt < "2027-01-31", `alerta programada antes del vencimiento (${meta.renewalAlertAt})`);
 step(`metadatos extraídos al completarse; alerta de renovación programada para ${meta.renewalAlertAt}`);
 
@@ -290,8 +340,13 @@ await expectStatus(
 
 // Edición manual con un vencimiento cercano → la alerta queda para hoy y el sweeper la envía.
 const soon = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10);
-meta = await sender("PUT", `/v1/envelopes/${envelope.id}/ai/metadata`, { metadata: { ...meta.metadata, expiryDate: soon, renewalDate: null, noticePeriodDays: null, autoRenewal: false } });
-assert(meta.source === "manual" && meta.renewalAlertAt === new Date().toISOString().slice(0, 10), `alerta reprogramada para hoy (${meta.renewalAlertAt})`);
+meta = await sender("PUT", `/v1/envelopes/${envelope.id}/ai/metadata`, {
+  metadata: { ...meta.metadata, expiryDate: soon, renewalDate: null, noticePeriodDays: null, autoRenewal: false },
+});
+assert(
+  meta.source === "manual" && meta.renewalAlertAt === new Date().toISOString().slice(0, 10),
+  `alerta reprogramada para hoy (${meta.renewalAlertAt})`,
+);
 const sweep2 = await sender("POST", "/dev/ai/sweep");
 assert(sweep2.alerted >= 1, "el sweeper envía la alerta");
 meta = await sender("GET", `/v1/envelopes/${envelope.id}/ai/metadata`);
@@ -312,10 +367,17 @@ step("edición manual de metadatos; alerta de renovación enviada al remitente u
 
 const { items: events } = await sender("GET", `/v1/envelopes/${envelope.id}/events`);
 const types = new Set(events.map((e) => e.type));
-for (const t of ["ai.detect_fields", "ai.playbook_review", "ai.summary", "ai.ask", "ai.extract_metadata", "ai.metadata_edited", "ai.renewal_alert"]) assert(types.has(t), `evento ${t}`);
+for (const t of ["ai.detect_fields", "ai.playbook_review", "ai.summary", "ai.ask", "ai.extract_metadata", "ai.metadata_edited", "ai.renewal_alert"])
+  assert(types.has(t), `evento ${t}`);
 const askEv = events.find((e) => e.type === "ai.ask");
-assert(askEv.actorType === "recipient" && /^[0-9a-f]{64}$/.test(askEv.data.promptSha256) && askEv.data.model && askEv.data.inputTokens > 0, "evento con hash del prompt, modelo y tokens");
-assert(!JSON.stringify(askEv.data).includes("precio mensual") && !JSON.stringify(events).includes("Servicios Andinos SAS"), "la evidencia no guarda el texto enviado ni la pregunta");
+assert(
+  askEv.actorType === "recipient" && /^[0-9a-f]{64}$/.test(askEv.data.promptSha256) && askEv.data.model && askEv.data.inputTokens > 0,
+  "evento con hash del prompt, modelo y tokens",
+);
+assert(
+  !JSON.stringify(askEv.data).includes("precio mensual") && !JSON.stringify(events).includes("Servicios Andinos SAS"),
+  "la evidencia no guarda el texto enviado ni la pregunta",
+);
 step("cada interacción queda en la evidencia (hash del prompt, modelo, tokens), sin el texto");
 
 // ───────────────────────────── Presupuesto y desactivación ─────────────────────────────

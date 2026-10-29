@@ -31,9 +31,7 @@ function money(v: number | null, cur: string | null, locale: string) {
 function Excerpt({ text }: { text: string }) {
   const parts = text.split(/(«[^»]*»)/g);
   return (
-    <div className="agr-excerpt">
-      …{parts.map((p, i) => (p.startsWith("«") ? <mark key={i}>{p.slice(1, -1)}</mark> : <span key={i}>{p}</span>))}…
-    </div>
+    <div className="agr-excerpt">…{parts.map((p, i) => (p.startsWith("«") ? <mark key={i}>{p.slice(1, -1)}</mark> : <span key={i}>{p}</span>))}…</div>
   );
 }
 
@@ -74,8 +72,12 @@ export function AgreementsPage() {
     void load();
   }, [load]);
   const loadMeta = useCallback(() => {
-    api<{ items: AgreementFieldDef[] }>("/v1/agreement-fields").then((r) => setFields(r.items)).catch(() => undefined);
-    api<{ items: AgreementView[] }>("/v1/agreement-views").then((r) => setViews(r.items)).catch(() => undefined);
+    api<{ items: AgreementFieldDef[] }>("/v1/agreement-fields")
+      .then((r) => setFields(r.items))
+      .catch(() => undefined);
+    api<{ items: AgreementView[] }>("/v1/agreement-views")
+      .then((r) => setViews(r.items))
+      .catch(() => undefined);
   }, []);
   useEffect(loadMeta, [loadMeta]);
 
@@ -203,8 +205,19 @@ export function AgreementsPage() {
       </div>
 
       <div className="agr-filters" role="search">
-        <input type="search" maxLength={200} value={q} onChange={(e) => setQ(e.target.value)} placeholder={ta("repo.search")} aria-label={ta("repo.search")} />
-        <select value={params.get("status") ?? String(viewFilters.status ?? "")} onChange={(e) => setParam("status", e.target.value)} aria-label={ta("col.status")}>
+        <input
+          type="search"
+          maxLength={200}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={ta("repo.search")}
+          aria-label={ta("repo.search")}
+        />
+        <select
+          value={params.get("status") ?? String(viewFilters.status ?? "")}
+          onChange={(e) => setParam("status", e.target.value)}
+          aria-label={ta("col.status")}
+        >
           <option value="">{ta("repo.allStatus")}</option>
           {(["active", "expired", "terminated"] as const).map((s) => (
             <option key={s} value={s}>
@@ -212,12 +225,20 @@ export function AgreementsPage() {
             </option>
           ))}
         </select>
-        <select value={params.get("source") ?? String(viewFilters.source ?? "")} onChange={(e) => setParam("source", e.target.value)} aria-label={ta("col.source")}>
+        <select
+          value={params.get("source") ?? String(viewFilters.source ?? "")}
+          onChange={(e) => setParam("source", e.target.value)}
+          aria-label={ta("col.source")}
+        >
           <option value="">{ta("repo.allSources")}</option>
           <option value="envelope">{ta("source.envelope")}</option>
           <option value="external">{ta("source.external")}</option>
         </select>
-        <select value={params.get("expiresWithinDays") ?? String(viewFilters.expiresWithinDays ?? "")} onChange={(e) => setParam("expiresWithinDays", e.target.value)} aria-label={ta("repo.expiringIn")}>
+        <select
+          value={params.get("expiresWithinDays") ?? String(viewFilters.expiresWithinDays ?? "")}
+          onChange={(e) => setParam("expiresWithinDays", e.target.value)}
+          aria-label={ta("repo.expiringIn")}
+        >
           <option value="">{ta("repo.anyTime")}</option>
           {[30, 60, 90, 180].map((n) => (
             <option key={n} value={n}>
@@ -228,7 +249,12 @@ export function AgreementsPage() {
         {fields
           .filter((f) => f.type === "select")
           .map((f) => (
-            <select key={f.id} value={params.get(`f.${f.key}`) ?? viewFields[f.key] ?? ""} onChange={(e) => setParam(`f.${f.key}`, e.target.value)} aria-label={f.label}>
+            <select
+              key={f.id}
+              value={params.get(`f.${f.key}`) ?? viewFields[f.key] ?? ""}
+              onChange={(e) => setParam(`f.${f.key}`, e.target.value)}
+              aria-label={f.label}
+            >
               <option value="">{f.label}</option>
               {(f.options ?? []).map((o) => (
                 <option key={o} value={o}>
@@ -371,7 +397,17 @@ export function AgreementsPage() {
   );
 }
 
-function SaveViewModal({ filters, canShare, onClose, onSaved }: { filters: Record<string, unknown>; canShare: boolean; onClose: () => void; onSaved: (v: AgreementView) => void }) {
+function SaveViewModal({
+  filters,
+  canShare,
+  onClose,
+  onSaved,
+}: {
+  filters: Record<string, unknown>;
+  canShare: boolean;
+  onClose: () => void;
+  onSaved: (v: AgreementView) => void;
+}) {
   const ta = useAgrText();
   const { t } = useI18n();
   const [name, setName] = useState("");
@@ -500,7 +536,9 @@ function fullBody(d: MetaDraft, valueLabel: string, metadata: Record<string, str
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean),
-    counterparties: d.counterparties.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), email: c.email?.trim() || null, role: c.role?.trim() || null })),
+    counterparties: d.counterparties
+      .filter((c) => c.name.trim())
+      .map((c) => ({ name: c.name.trim(), email: c.email?.trim() || null, role: c.role?.trim() || null })),
     metadata,
   };
 }
@@ -588,7 +626,12 @@ function MetaForm({ d, setD, fields, readOnly }: { d: MetaDraft; setD: (d: MetaD
         <legend>{ta("ag.counterparties")}</legend>
         {d.counterparties.map((c, i) => (
           <div key={i} className="agr-subrow">
-            <input aria-label={ta("ag.name")} placeholder={ta("ag.name")} value={c.name} onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+            <input
+              aria-label={ta("ag.name")}
+              placeholder={ta("ag.name")}
+              value={c.name}
+              onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })}
+            />
             <input
               aria-label={ta("ag.email")}
               placeholder={ta("ag.email")}
@@ -596,14 +639,28 @@ function MetaForm({ d, setD, fields, readOnly }: { d: MetaDraft; setD: (d: MetaD
               value={c.email ?? ""}
               onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, email: e.target.value } : x)) })}
             />
-            <input aria-label={ta("ag.role")} placeholder={ta("ag.role")} value={c.role ?? ""} onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)) })} />
-            <button type="button" className="btn btn-sm btn-ghost" aria-label={tc("common.delete")} onClick={() => up({ counterparties: d.counterparties.filter((_, j) => j !== i) })}>
+            <input
+              aria-label={ta("ag.role")}
+              placeholder={ta("ag.role")}
+              value={c.role ?? ""}
+              onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)) })}
+            />
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              aria-label={tc("common.delete")}
+              onClick={() => up({ counterparties: d.counterparties.filter((_, j) => j !== i) })}
+            >
               ×
             </button>
           </div>
         ))}
         <div>
-          <button type="button" className="btn btn-sm" onClick={() => up({ counterparties: [...d.counterparties, { name: "", email: null, role: null }] })}>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => up({ counterparties: [...d.counterparties, { name: "", email: null, role: null }] })}
+          >
             {ta("ag.addCounterparty")}
           </button>
         </div>
@@ -837,7 +894,9 @@ export function AgreementDetailPage() {
         setD(draftFrom(x));
       })
       .catch((e) => setError(errorText(e)));
-    api<{ items: AgreementFieldDef[] }>("/v1/agreement-fields").then((r) => setFields(r.items)).catch(() => undefined);
+    api<{ items: AgreementFieldDef[] }>("/v1/agreement-fields")
+      .then((r) => setFields(r.items))
+      .catch(() => undefined);
   }, [id]);
 
   const dirty = useMemo(() => a && JSON.stringify(draftFrom(a)) !== JSON.stringify(d), [a, d]);
@@ -857,7 +916,11 @@ export function AgreementDetailPage() {
     try {
       // X-Expected-Updated-At: si el acuerdo cambió desde que se cargó (otra pestaña, otra persona, un workflow), 409
       // version_changed en vez de pisarlo.
-      const x = await api<Agreement>(`/v1/agreements/${id}`, { method: "PATCH", body, headers: a ? { "X-Expected-Updated-At": a.updatedAt } : undefined });
+      const x = await api<Agreement>(`/v1/agreements/${id}`, {
+        method: "PATCH",
+        body,
+        headers: a ? { "X-Expected-Updated-At": a.updatedAt } : undefined,
+      });
       setA(x);
       setD(draftFrom(x));
       setSaved(true);

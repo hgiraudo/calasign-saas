@@ -129,31 +129,90 @@ const id = {
 const F = (o) => ({ documentId: tdoc.id, page: 0, width: 0.3, height: 0.03, x: 0.1, ...o });
 const baseFields = [
   F({ id: id.garante, roleId: rCliente, type: "checkbox", y: 0.1, width: 0.03, height: 0.02, label: "Tiene garante", required: false }),
-  F({ id: id.nombreGarante, roleId: rCliente, type: "text", y: 0.15, label: "Nombre del garante", conditions: [{ fieldId: id.garante, operator: "checked" }] }),
+  F({
+    id: id.nombreGarante,
+    roleId: rCliente,
+    type: "text",
+    y: 0.15,
+    label: "Nombre del garante",
+    conditions: [{ fieldId: id.garante, operator: "checked" }],
+  }),
   F({ id: id.precio, roleId: rCliente, type: "number", y: 0.2, label: "Precio" }),
   F({ id: id.cantidad, roleId: rCliente, type: "number", y: 0.25, label: "Cantidad" }),
   F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "({Precio} * {Cantidad}) * 1,21" }),
   F({ id: id.plan, roleId: rCliente, type: "dropdown", y: 0.35, label: "Plan", options: ["Mensual", "Anual"] }),
-  F({ id: id.detalleAnual, roleId: rCliente, type: "text", y: 0.4, label: "Detalle anual", conditions: [{ fieldId: id.plan, operator: "equals", value: "Anual" }] }),
+  F({
+    id: id.detalleAnual,
+    roleId: rCliente,
+    type: "text",
+    y: 0.4,
+    label: "Detalle anual",
+    conditions: [{ fieldId: id.plan, operator: "equals", value: "Anual" }],
+  }),
   F({ id: id.firmaCliente, roleId: rCliente, type: "signature", page: 1, y: 0.7, height: 0.08 }),
   F({ id: id.firmaEmpresa, roleId: rEmpresa, type: "signature", page: 1, x: 0.55, y: 0.7, height: 0.08 }),
 ];
 
 // Validaciones de la lógica al guardar.
-await api("PUT", `/v1/templates/${template.id}/fields`, { fields: [...baseFields.filter((f) => f.id !== id.total), F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "{Precio} * {Inexistente}" })] }, { expect: 400 });
-await api("PUT", `/v1/templates/${template.id}/fields`, { fields: [...baseFields.filter((f) => f.id !== id.total), F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "{Total} + 1" })] }, { expect: 400 });
-await api("PUT", `/v1/templates/${template.id}/fields`, { fields: [...baseFields.filter((f) => f.id !== id.total), F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "{Precio} * (2" })] }, { expect: 400 });
 await api(
   "PUT",
   `/v1/templates/${template.id}/fields`,
   {
-    fields: baseFields.map((f) =>
-      f.id === id.garante ? { ...f, conditions: [{ fieldId: id.nombreGarante, operator: "filled" }] } : f,
-    ),
+    fields: [
+      ...baseFields.filter((f) => f.id !== id.total),
+      F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "{Precio} * {Inexistente}" }),
+    ],
+  },
+  { expect: 400 },
+);
+await api(
+  "PUT",
+  `/v1/templates/${template.id}/fields`,
+  {
+    fields: [
+      ...baseFields.filter((f) => f.id !== id.total),
+      F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "{Total} + 1" }),
+    ],
+  },
+  { expect: 400 },
+);
+await api(
+  "PUT",
+  `/v1/templates/${template.id}/fields`,
+  {
+    fields: [
+      ...baseFields.filter((f) => f.id !== id.total),
+      F({ id: id.total, roleId: rCliente, type: "number", y: 0.3, label: "Total", formula: "{Precio} * (2" }),
+    ],
+  },
+  { expect: 400 },
+);
+await api(
+  "PUT",
+  `/v1/templates/${template.id}/fields`,
+  {
+    fields: baseFields.map((f) => (f.id === id.garante ? { ...f, conditions: [{ fieldId: id.nombreGarante, operator: "filled" }] } : f)),
   },
   { expect: 400 }, // ciclo garante ↔ nombre del garante
 );
-await api("PUT", `/v1/templates/${template.id}/fields`, { fields: [F({ id: id.garante, roleId: rCliente, type: "checkbox", y: 0.1, width: 0.03, height: 0.02, conditions: [{ fieldId: id.garante, operator: "checked" }] })] }, { expect: 400 });
+await api(
+  "PUT",
+  `/v1/templates/${template.id}/fields`,
+  {
+    fields: [
+      F({
+        id: id.garante,
+        roleId: rCliente,
+        type: "checkbox",
+        y: 0.1,
+        width: 0.03,
+        height: 0.02,
+        conditions: [{ fieldId: id.garante, operator: "checked" }],
+      }),
+    ],
+  },
+  { expect: 400 },
+);
 const tpl = await api("PUT", `/v1/templates/${template.id}/fields`, { fields: baseFields });
 const tTotal = tpl.fields.find((f) => f.id === id.total);
 assert(tTotal.formula && tTotal.required === false, "el campo calculado no es obligatorio para el firmante");
@@ -164,7 +223,10 @@ step("plantilla con condiciones y fórmula; fórmulas inválidas, autorreferenci
 
 const skeleton = await (await api("GET", `/v1/templates/${template.id}/bulk-csv`, null, { raw: true })).text();
 const header = skeleton.replace(/^﻿/, "").split("\r\n")[0];
-assert(header.includes("Cliente.email") && header.includes("Empresa.name") && header.includes("field.Precio") && !header.includes("field.Total"), `CSV de ejemplo: ${header}`);
+assert(
+  header.includes("Cliente.email") && header.includes("Empresa.name") && header.includes("field.Precio") && !header.includes("field.Total"),
+  `CSV de ejemplo: ${header}`,
+);
 
 const ROWS = 25;
 const lines = ["subject;Cliente.name;Cliente.email;Cliente.channels;Empresa.name;Empresa.email;field.Precio;field.Cantidad;field.Plan"];
@@ -173,7 +235,9 @@ for (let i = 1; i <= ROWS; i++) {
   let name = `Cliente ${i} ${stamp}`;
   if (i === 7) email = "no-es-un-correo";
   if (i === 19) name = "";
-  lines.push(`Solicitud ${i};"${name}";${email};email;"Empresa, Rep ${stamp}";empresa.${stamp}@example.com;${100 + i};${i % 5 === 0 ? "" : 2};Mensual`);
+  lines.push(
+    `Solicitud ${i};"${name}";${email};email;"Empresa, Rep ${stamp}";empresa.${stamp}@example.com;${100 + i};${i % 5 === 0 ? "" : 2};Mensual`,
+  );
 }
 const csv = "﻿" + lines.join("\r\n") + "\r\n";
 
@@ -185,7 +249,13 @@ assert(rejected.error.details.invalid === 2, "sin skipInvalid → 422 con el det
 await api("POST", "/v1/bulk-sends/validate", { templateId: template.id, csv: "Cliente.email;Desconocido.name\r\na@b.com;x\r\n" }, { expect: 422 });
 step(`CSV de ejemplo y validación previa: ${val.valid} filas válidas, filas 7 y 19 con error; columnas desconocidas → 422`);
 
-let bulk = await api("POST", "/v1/bulk-sends", { templateId: template.id, csv, skipInvalid: true, name: "Campaña octubre", message: "Firmá tu solicitud" });
+let bulk = await api("POST", "/v1/bulk-sends", {
+  templateId: template.id,
+  csv,
+  skipInvalid: true,
+  name: "Campaña octubre",
+  message: "Firmá tu solicitud",
+});
 assert(bulk.total === ROWS && bulk.failed === 2, "creado con 2 filas fallidas");
 for (let i = 0; i < 120 && bulk.status !== "completed"; i++) {
   await sleep(500);
@@ -199,7 +269,10 @@ assert(sentTotal === ROWS - 2 && new Set(sentItems.map((x) => x.envelopeId)).siz
 const results = await (await api("GET", `/v1/bulk-sends/${bulk.id}/results.csv`, null, { raw: true })).text();
 assert(results.trim().split("\r\n").length === ROWS + 1 && results.includes("failed"), "CSV de resultados");
 const env1 = await api("GET", `/v1/envelopes/${sentItems[0].envelopeId}`);
-assert(env1.envelope.status === "sent" && env1.envelope.metadata.bulkSendId === bulk.id && env1.envelope.subject === "Solicitud 1", "sobre del envío masivo enviado, con asunto por fila");
+assert(
+  env1.envelope.status === "sent" && env1.envelope.metadata.bulkSendId === bulk.id && env1.envelope.subject === "Solicitud 1",
+  "sobre del envío masivo enviado, con asunto por fila",
+);
 assert(env1.fields.find((f) => f.label === "Precio").value === "101", "prellenado por fila");
 step(`envío masivo: ${bulk.sent} sobres enviados por la cola, 2 fallidos, resultados en CSV`);
 
@@ -244,12 +317,18 @@ step(`cancelación de un envío de 60 filas: ${big.sent} alcanzaron a salir, ${b
   await keyApi("PUT", `/v1/templates/${kt.id}/roles`, { roles: [{ id: randomUUID(), name: "Cliente", role: "signer", routingOrder: 1 }] });
   await keyApi("PUT", `/v1/templates/${kt.id}/shares`, { groupIds: [], visibility: "restricted" });
   await keyApi("GET", `/v1/templates/${kt.id}`);
-  assert((await keyApi("GET", "/v1/templates")).items.some((x) => x.id === kt.id), "la key ve en el listado su plantilla restringida");
+  assert(
+    (await keyApi("GET", "/v1/templates")).items.some((x) => x.id === kt.id),
+    "la key ve en el listado su plantilla restringida",
+  );
   const { items: keyItems } = await keyApi("GET", `/v1/bulk-sends/${kb.id}/items?status=sent`);
   const keyEnv = await keyApi("GET", `/v1/envelopes/${keyItems[0].envelopeId}`);
   assert(keyEnv.envelope.metadata.bulkSendId === kb.id, "la API key ve el sobre de su envío masivo");
   const keyList = await keyApi("GET", "/v1/envelopes?limit=100");
-  assert(keyList.items.some((x) => x.id === keyEnv.envelope.id), "el sobre aparece en el listado de la API key");
+  assert(
+    keyList.items.some((x) => x.id === keyEnv.envelope.id),
+    "el sobre aparece en el listado de la API key",
+  );
   await keyApi("POST", `/v1/envelopes/${keyEnv.envelope.id}/void`, { reason: "prueba" });
   step("API key con rol miembro: ve, lista y anula los sobres de su propio envío masivo");
 }
@@ -295,7 +374,10 @@ sess = await api(
 );
 assert(sess.recipient.status === "signed", "cliente firmó");
 let d1 = await api("GET", `/v1/envelopes/${e1}`);
-assert(d1.fields.find((f) => f.label === "Total").value === "363", `fórmula calculada en el servidor: ${d1.fields.find((f) => f.label === "Total").value}`);
+assert(
+  d1.fields.find((f) => f.label === "Total").value === "363",
+  `fórmula calculada en el servidor: ${d1.fields.find((f) => f.label === "Total").value}`,
+);
 assert(d1.fields.find((f) => f.label === "Detalle anual").value === null, "campo oculto sin valor");
 assert(d1.fields.find((f) => f.label === "Nombre del garante").value === null, "campo condicional oculto vacío");
 
@@ -362,7 +444,10 @@ await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: pu
   // Token vencido o inválido: código estable y "volvé a enviarlo" (la web pide un token nuevo), no "recargá la página",
   // que hace perder lo que la persona cargó.
   const bad = await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: "x".repeat(40) }, { expect: 400, anon: true });
-  assert(bad.error.code === "invalid_form_token" && bad.error.details?.retryAfterSeconds >= 1 && !/recarg/i.test(bad.error.message), `token del formulario inválido: ${JSON.stringify(bad.error)}`);
+  assert(
+    bad.error.code === "invalid_form_token" && bad.error.details?.retryAfterSeconds >= 1 && !/recarg/i.test(bad.error.message),
+    `token del formulario inválido: ${JSON.stringify(bad.error)}`,
+  );
 }
 await sleep(2700);
 const sub = await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: pub.formToken, embed: true }, { expect: 201, anon: true });
@@ -371,7 +456,12 @@ const tokF = sub.signingPath.slice(3).replace("?embed=1", "");
 sess = await api("GET", `/v1/signing/${tokF}`, null, { anon: true });
 assert(sess.canSign && sess.recipient.name === me.name, "la persona del formulario puede firmar en la misma sesión");
 assert(sess.canDelegate === false, "quien se autoregistró sin validar el correo no ve la opción de delegar");
-await api("POST", `/v1/signing/${tokF}/delegate`, { name: "Tercero", email: `tercero.${stamp}@example.com`, reason: "x" }, { expect: 403, anon: true });
+await api(
+  "POST",
+  `/v1/signing/${tokF}/delegate`,
+  { name: "Tercero", email: `tercero.${stamp}@example.com`, reason: "x" },
+  { expect: 403, anon: true },
+);
 assert(byLabel(sess, "Plan").value === "Anual", "prellenado del formulario");
 assert(byLabel(sess, "Detalle anual") && sess.logicFields !== undefined, "sesión con campos de lógica");
 await api("POST", `/v1/signing/${tokF}/consent`, null, { anon: true });
@@ -413,7 +503,10 @@ assert(formEnvs.length === 1 && formEnvs[0].id === sub.envelopeId, "sobres cread
 const fd = await api("GET", `/v1/envelopes/${sub.envelopeId}`);
 assert(fd.envelope.metadata.webFormId === form.id && fd.fields.find((f) => f.label === "Total").value === "121", "metadata y total del formulario");
 const { items: evs } = await api("GET", `/v1/envelopes/${sub.envelopeId}/events`);
-assert(evs.some((e) => e.type === "recipient.self_registered"), "evidencia del autorregistro");
+assert(
+  evs.some((e) => e.type === "recipient.self_registered"),
+  "evidencia del autorregistro",
+);
 {
   // El Oficial rechaza: el aviso de rechazo no va al correo autorregistrado sin validar (solo la copia final).
   let tokO = null;
@@ -436,7 +529,12 @@ assert(form.uses === 1, "uso contado");
 pub = await api("GET", `/v1/public/forms/${form.slug}`, null, { anon: true });
 assert(!pub.available && pub.unavailableReason === "exhausted", "agotado tras maxUses");
 await sleep(2700);
-await api("POST", `/v1/public/forms/${form.slug}/submit`, { name: "Otra persona", email: `otra.${stamp}@example.com`, formToken: pub.formToken }, { expect: 410, anon: true });
+await api(
+  "POST",
+  `/v1/public/forms/${form.slug}/submit`,
+  { name: "Otra persona", email: `otra.${stamp}@example.com`, formToken: pub.formToken },
+  { expect: 410, anon: true },
+);
 step("formulario web: antibots (rápido, trampa, token), firma en la misma sesión, embebible, límite de usos");
 
 // Formulario con OTP: la persona tiene que validar su correo antes de ver el documento.
@@ -449,7 +547,12 @@ const otpForm = await api("POST", "/v1/web-forms", {
 });
 const pub2 = await api("GET", `/v1/public/forms/${otpForm.slug}`, null, { anon: true });
 await sleep(2700);
-const sub2 = await api("POST", `/v1/public/forms/${otpForm.slug}/submit`, { name: "Con Código", email: `otp.${stamp}@example.com`, formToken: pub2.formToken }, { expect: 201, anon: true });
+const sub2 = await api(
+  "POST",
+  `/v1/public/forms/${otpForm.slug}/submit`,
+  { name: "Con Código", email: `otp.${stamp}@example.com`, formToken: pub2.formToken },
+  { expect: 201, anon: true },
+);
 const s2 = await api("GET", `/v1/signing/${sub2.signingPath.slice(3)}`, null, { anon: true });
 assert(s2.otpRequired && s2.documents.length === 0, "con OTP no se ven documentos sin el código");
 // Con OTP: la invitación de respaldo sale recién después de validar el correo.
@@ -481,8 +584,14 @@ await api("PATCH", `/v1/web-forms/${otpForm.id}`, { active: false });
 {
   // Altas y cambios de formularios quedan en la auditoría de la cuenta (como los webhooks).
   const { items: au } = await api("GET", "/v1/audit-log?action=web_form.*&limit=200");
-  assert(au.some((x) => x.action === "web_form.created" && x.targetId === otpForm.id), "alta del formulario en la auditoría");
-  assert(au.some((x) => x.action === "web_form.updated" && x.targetId === otpForm.id && x.data.fields.includes("active")), "cambio del formulario en la auditoría");
+  assert(
+    au.some((x) => x.action === "web_form.created" && x.targetId === otpForm.id),
+    "alta del formulario en la auditoría",
+  );
+  assert(
+    au.some((x) => x.action === "web_form.updated" && x.targetId === otpForm.id && x.data.fields.includes("active")),
+    "cambio del formulario en la auditoría",
+  );
 }
 const pub3 = await api("GET", `/v1/public/forms/${otpForm.slug}`, null, { anon: true });
 assert(!pub3.available && pub3.unavailableReason === "inactive", "desactivado");
@@ -500,8 +609,14 @@ step("formulario con código por correo y desactivación");
   assert(acc.ok, `aceptar invitación: ${acc.status}`);
   const memberCookie = acc.headers.get("set-cookie").split(";")[0];
   const asMember = async (method, path, body) =>
-    fetch(BASE + path, { method, headers: { cookie: memberCookie, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
-  let r = await asMember("PATCH", `/v1/web-forms/${form.id}`, { fixedRecipients: [{ roleId: rEmpresa, name: "Beto", email: `beto+scale${stamp}@example.com` }] });
+    fetch(BASE + path, {
+      method,
+      headers: { cookie: memberCookie, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  let r = await asMember("PATCH", `/v1/web-forms/${form.id}`, {
+    fixedRecipients: [{ roleId: rEmpresa, name: "Beto", email: `beto+scale${stamp}@example.com` }],
+  });
   assert(r.status === 403, `un miembro no cambia el formulario de otro: ${r.status}`);
   r = await asMember("DELETE", `/v1/web-forms/${form.id}`);
   assert(r.status === 403, `un miembro no borra el formulario de otro: ${r.status}`);
@@ -512,7 +627,10 @@ step("formulario con código por correo y desactivación");
   const list = await (await asMember("GET", "/v1/bulk-sends")).json();
   assert(!list.items.some((b) => b.id === bulk.id), "el listado del miembro no muestra envíos ajenos");
   const own = await api("GET", "/v1/bulk-sends");
-  assert(own.items.some((b) => b.id === bulk.id), "quien lo lanzó sigue viendo su envío");
+  assert(
+    own.items.some((b) => b.id === bulk.id),
+    "quien lo lanzó sigue viendo su envío",
+  );
   const f2 = await api("GET", `/v1/web-forms/${form.id}`);
   assert(f2.fixedRecipients[0].email === `oficial.${stamp}@example.com`, "el firmante fijo no cambió");
 
@@ -529,7 +647,10 @@ step("formulario con código por correo y desactivación");
   let mp = await api("GET", `/v1/public/forms/${memberForm.slug}`, null, { anon: true });
   assert(mp.available, "el formulario del miembro está disponible");
   let adm = await api("GET", `/v1/web-forms/${memberForm.id}`);
-  assert(adm.ownerInactiveReason === null && adm.ownerInactiveCode === null, `con su creador habilitado la consola no marca nada: ${adm.ownerInactiveReason}`);
+  assert(
+    adm.ownerInactiveReason === null && adm.ownerInactiveCode === null,
+    `con su creador habilitado la consola no marca nada: ${adm.ownerInactiveReason}`,
+  );
   const { items: members } = await api("GET", "/v1/members");
   const beto = members.find((m) => m.email === `beto+scale${stamp}@example.com`);
   await api("DELETE", `/v1/members/${beto.userId}`, null, { expect: 204 });
@@ -537,17 +658,29 @@ step("formulario con código por correo y desactivación");
   assert(!mp.available && mp.unavailableReason === "inactive", `sin su creador el formulario no se ofrece: ${JSON.stringify(mp)}`);
   // La consola muestra lo mismo que ve el público (antes figuraba "activo" sin más).
   adm = await api("GET", `/v1/web-forms/${memberForm.id}`);
-  assert(adm.active && typeof adm.ownerInactiveReason === "string" && /miembro/.test(adm.ownerInactiveReason), `la consola marca el formulario sin dueño habilitado: ${JSON.stringify(adm.ownerInactiveReason)}`);
+  assert(
+    adm.active && typeof adm.ownerInactiveReason === "string" && /miembro/.test(adm.ownerInactiveReason),
+    `la consola marca el formulario sin dueño habilitado: ${JSON.stringify(adm.ownerInactiveReason)}`,
+  );
   const listed = (await api("GET", "/v1/web-forms")).items.find((x) => x.id === memberForm.id);
   assert(listed?.ownerInactiveReason === adm.ownerInactiveReason, "el listado también lo marca");
   assert(adm.ownerInactiveCode === "not_member" && listed?.ownerInactiveCode === "not_member", `código estable del motivo: ${adm.ownerInactiveCode}`);
   await sleep(2600);
-  await api("POST", `/v1/public/forms/${memberForm.slug}/submit`, { name: "Tercero", email: `tercero.${stamp}@example.com`, formToken: mp.formToken }, { expect: 410, anon: true });
+  await api(
+    "POST",
+    `/v1/public/forms/${memberForm.slug}/submit`,
+    { name: "Tercero", email: `tercero.${stamp}@example.com`, formToken: mp.formToken },
+    { expect: 410, anon: true },
+  );
 
   // Un formulario creado por API key es de la key: la key lo edita y, revocada, el formulario deja de crear sobres.
   const key = await api("POST", "/v1/api-keys", { name: `formularios ${stamp}`, role: "member" });
   const asKey = (method, path, body) =>
-    fetch(BASE + path, { method, headers: { authorization: `Bearer ${key.secret}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    fetch(BASE + path, {
+      method,
+      headers: { authorization: `Bearer ${key.secret}`, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
   r = await asKey("POST", "/v1/web-forms", formBody(`De la key ${stamp}`));
   assert(r.status === 201, `la key crea su formulario: ${r.status}`);
   const keyForm = await r.json();
@@ -555,14 +688,22 @@ step("formulario con código por correo y desactivación");
   assert(r.status === 200, `la key edita su propio formulario: ${r.status}`);
   let kp = await api("GET", `/v1/public/forms/${keyForm.slug}`, null, { anon: true });
   await sleep(2600);
-  const ks = await api("POST", `/v1/public/forms/${keyForm.slug}/submit`, { name: "Cliente Key", email: `cliente.key.${stamp}@example.com`, formToken: kp.formToken }, { expect: 201, anon: true });
+  const ks = await api(
+    "POST",
+    `/v1/public/forms/${keyForm.slug}/submit`,
+    { name: "Cliente Key", email: `cliente.key.${stamp}@example.com`, formToken: kp.formToken },
+    { expect: 201, anon: true },
+  );
   r = await asKey("GET", `/v1/envelopes/${ks.envelopeId}`);
   assert(r.status === 200, `la key ve el sobre de su formulario: ${r.status}`);
   // El remitente corrige el correo de quien lo completó: ese correo ya lo cargó el remitente, así que la invitación sale.
   const kd = await api("GET", `/v1/envelopes/${ks.envelopeId}`);
   const selfReg = kd.recipients.find((x) => x.email === `cliente.key.${stamp}@example.com`);
   const fixed = `cliente.corregido.${stamp}@example.com`;
-  await api("POST", `/v1/envelopes/${ks.envelopeId}/corrections`, { updateRecipients: [{ id: selfReg.id, email: fixed }], reason: "correo mal escrito" });
+  await api("POST", `/v1/envelopes/${ks.envelopeId}/corrections`, {
+    updateRecipients: [{ id: selfReg.id, email: fixed }],
+    reason: "correo mal escrito",
+  });
   let gotInvite = false;
   for (let i = 0; i < 40 && !gotInvite; i++) {
     gotInvite = (await api("GET", "/dev/mailbox")).items.some((x) => x.to === fixed && /para firmar/.test(x.subject ?? ""));
@@ -589,18 +730,30 @@ step("un miembro no modifica formularios ni envíos masivos ajenos; un formulari
     const co = await api("POST", "/v1/billing/checkout", { plan, currency: "BRL", provider: "mock" });
     const page = await api("GET", co.url.replace(BASE, ""));
     const action = /action="([^"]+)"/.exec(page)[1].replace(/&amp;/g, "&");
-    const res = await fetch(BASE + action, { method: "POST", headers: { cookie, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ outcome: "paid" }) });
+    const res = await fetch(BASE + action, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ outcome: "paid" }),
+    });
     assert(res.status < 400, `checkout simulado a ${plan}: ${res.status}`);
     const bill = await api("GET", "/v1/billing");
     assert(bill.plan.id === plan, `plan ${plan} activo (${bill.plan.id})`);
   };
   await toPlan("starter"); // Starter no incluye formularios web y admite 3 usuarios
   pp = await api("GET", `/v1/public/forms/${planForm.slug}`, null, { anon: true });
-  assert(!pp.available && pp.unavailableReason === "inactive", `sin formularios web en el plan, el formulario no se ofrece: ${JSON.stringify(pp.unavailableReason)}`);
+  assert(
+    !pp.available && pp.unavailableReason === "inactive",
+    `sin formularios web en el plan, el formulario no se ofrece: ${JSON.stringify(pp.unavailableReason)}`,
+  );
   const padm = await api("GET", `/v1/web-forms/${planForm.id}`);
   assert(padm.ownerInactiveCode === "plan_feature", `la consola marca el plan como motivo: ${padm.ownerInactiveCode}`);
   await sleep(2600);
-  await api("POST", `/v1/public/forms/${planForm.slug}/submit`, { name: "Tras bajar", email: `tras.bajar.${stamp}@example.com`, formToken: pp.formToken }, { expect: 410, anon: true });
+  await api(
+    "POST",
+    `/v1/public/forms/${planForm.slug}/submit`,
+    { name: "Tras bajar", email: `tras.bajar.${stamp}@example.com`, formToken: pp.formToken },
+    { expect: 410, anon: true },
+  );
 
   // Cupo de usuarios: miembros + invitaciones pendientes. Se deja un solo lugar libre y se mandan 4 invitaciones a la
   // vez: entra una sola (antes el control corría sin bloqueo y entraban varias).
@@ -615,10 +768,17 @@ step("un miembro no modifica formularios ni envíos masivos ajenos; un formulari
   assert(n === 2, `queda un lugar libre en Starter (${n} de 3)`);
   const burst = await Promise.all(
     [0, 1, 2, 3].map((i) =>
-      fetch(BASE + "/v1/invitations", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ email: `rafaga.${i}.${stamp}@example.com`, role: "member" }) }).then((r) => r.status),
+      fetch(BASE + "/v1/invitations", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ email: `rafaga.${i}.${stamp}@example.com`, role: "member" }),
+      }).then((r) => r.status),
     ),
   );
-  assert(burst.filter((x) => x === 201).length === 1 && burst.filter((x) => x === 402).length === 3, `invitaciones simultáneas con un lugar libre: entra una (${burst.join(",")})`);
+  assert(
+    burst.filter((x) => x === 201).length === 1 && burst.filter((x) => x === 402).length === 3,
+    `invitaciones simultáneas con un lugar libre: entra una (${burst.join(",")})`,
+  );
   assert((await used()) === 3, "el cupo no se supera");
   // Con el cupo lleno, reenviar una invitación pendiente la reemplaza (no suma): no es 402.
   const pending = (await api("GET", "/v1/invitations")).items.find((i) => i.status === "pending");
@@ -631,15 +791,22 @@ step("un miembro no modifica formularios ni envíos masivos ajenos; un formulari
   const kycRes = await fetch(BASE + `/v1/envelopes/${kycEnv.id}/recipients`, {
     method: "PUT",
     headers: { cookie, "content-type": "application/json" },
-    body: JSON.stringify({ recipients: [{ name: "Kai", email: `kai.${stamp}@example.com`, idVerification: { provider: "mock", level: "document" } }] }),
+    body: JSON.stringify({
+      recipients: [{ name: "Kai", email: `kai.${stamp}@example.com`, idVerification: { provider: "mock", level: "document" } }],
+    }),
   });
   const kycBody = await kycRes.json();
-  assert(kycRes.status === 402 && kycBody.error?.details?.feature === "kyc", `en Starter no se puede exigir la verificación de identidad (${kycRes.status} ${kycBody.error?.code})`);
+  assert(
+    kycRes.status === 402 && kycBody.error?.details?.feature === "kyc",
+    `en Starter no se puede exigir la verificación de identidad (${kycRes.status} ${kycBody.error?.code})`,
+  );
   await api("PUT", `/v1/envelopes/${kycEnv.id}/recipients`, { recipients: [{ name: "Kai", email: `kai.${stamp}@example.com` }] });
   await toPlan("business");
   pp = await api("GET", `/v1/public/forms/${planForm.slug}`, null, { anon: true });
   assert(pp.available, "de vuelta en Business el formulario se ofrece otra vez");
 }
-step("plan sin formularios web: los formularios no crean sobres (código plan_feature); sin KYC en el plan no se exige verificación; invitaciones: cupo con bloqueo y reenvío sin 402");
+step(
+  "plan sin formularios web: los formularios no crean sobres (código plan_feature); sin KYC en el plan no se exige verificación; invitaciones: cupo con bloqueo y reenvío sin 402",
+);
 
 console.log("\nE2E ESCALA OK");

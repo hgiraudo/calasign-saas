@@ -39,7 +39,14 @@ export interface PlanDefinition {
 
 export const PLANS: Record<PlanId, PlanDefinition> = {
   free: { id: "free", name: "Free", envelopesPerMonth: 5, users: 1, aiTokensPerMonth: 0, features: [] },
-  starter: { id: "starter", name: "Starter", envelopesPerMonth: 50, users: 3, aiTokensPerMonth: 2_000_000, features: ["api", "webhooks", "branding"] },
+  starter: {
+    id: "starter",
+    name: "Starter",
+    envelopesPerMonth: 50,
+    users: 3,
+    aiTokensPerMonth: 2_000_000,
+    features: ["api", "webhooks", "branding"],
+  },
   business: {
     id: "business",
     name: "Business",

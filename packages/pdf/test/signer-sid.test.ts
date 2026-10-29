@@ -23,7 +23,12 @@ describe("firmante identificado por subjectKeyIdentifier", () => {
     doc.addPage([595, 842]).drawText("Contrato", { x: 50, y: 780, size: 14, font });
     const prepared = await prepareExternalSignature(await doc.save(), [attackerDer], { fieldName: "Firma1" });
     const signature = new Uint8Array(sign("sha256", Buffer.from(prepared.signedAttrsDer), attacker.keyPem));
-    const cms = await assembleCms({ signedAttrsDer: prepared.signedAttrsDer, chainDer: [attackerDer], signature, signatureAlgorithm: "RSASSA-PKCS1-v1_5" });
+    const cms = await assembleCms({
+      signedAttrsDer: prepared.signedAttrsDer,
+      chainDer: [attackerDer],
+      signature,
+      signatureAlgorithm: "RSASSA-PKCS1-v1_5",
+    });
 
     // sid = subjectKeyIdentifier del atacante; certificados = [víctima, atacante].
     const ci = pkijs.ContentInfo.fromBER(toAB(cms));
@@ -38,7 +43,13 @@ describe("firmante identificado por subjectKeyIdentifier", () => {
 
     const [, start, end] = prepared.byteRange;
     const buf = Buffer.from(prepared.preparedPdf);
-    buf.write(Buffer.from(forged).toString("hex").padEnd(end - start - 2, "0"), start + 1, "latin1");
+    buf.write(
+      Buffer.from(forged)
+        .toString("hex")
+        .padEnd(end - start - 2, "0"),
+      start + 1,
+      "latin1",
+    );
 
     const report = await validatePdf(new Uint8Array(buf), { trustAnchors: pemToDerList(ca.certPem) });
     const s = report.signatures[0];

@@ -78,7 +78,11 @@ beforeAll(async () => {
 const seal = (bytes: Uint8Array) => finalizeEnvelopePdf({ documents: [{ name: "a.pdf", bytes }], fields: [], certificate: cert() }, { provider });
 const render = (bytes: Uint8Array) => renderEnvelopePdf({ documents: [{ name: "a.pdf", bytes }], fields: [], certificate: cert() });
 const toArrayBuffer = (u: Uint8Array) => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer;
-const codeOf = (p: Promise<unknown>) => p.then(() => "ok", (e) => (e instanceof InvalidPdfError ? e.code : String(e)));
+const codeOf = (p: Promise<unknown>) =>
+  p.then(
+    () => "ok",
+    (e) => (e instanceof InvalidPdfError ? e.code : String(e)),
+  );
 const text = async (b: Uint8Array) => (await extractPdfPlainText(b)).text;
 
 function decoded(s: unknown): string {
@@ -151,12 +155,16 @@ describe("contenido opcional (capas)", () => {
       return ctx.obj({ OCGs: [ocg], D: { Order: [ocg] } }) as PDFDict;
     });
     const on = await layered((ctx, ocg) => ctx.obj({ OCGs: [ocg], D: ctx.obj({ ON: [ocg] }) }) as PDFDict);
-    const pdf = await renderEnvelopePdf({ documents: [off, viewOff, on].map((bytes, i) => ({ name: `${i}.pdf`, bytes })), fields: [], certificate: cert() });
+    const pdf = await renderEnvelopePdf({
+      documents: [off, viewOff, on].map((bytes, i) => ({ name: `${i}.pdf`, bytes })),
+      fields: [],
+      certificate: cert(),
+    });
     const [a, b, c] = [await finalLayers(pdf, 0), await finalLayers(pdf, 1), await finalLayers(pdf, 2)];
     expect(a.ocgs).toHaveLength(3);
     expect(new Set([a.oc1, b.oc1, c.oc1]).size).toBe(3);
     expect([a.oc1Off, b.oc1Off, c.oc1Off]).toEqual([true, true, false]);
-    expect((a.ocp!.lookup(PDFName.of("D"), PDFDict).lookup(PDFName.of("Order"), PDFArray)).asArray()).toEqual([b.oc1]);
+    expect(a.ocp!.lookup(PDFName.of("D"), PDFDict).lookup(PDFName.of("Order"), PDFArray).asArray()).toEqual([b.oc1]);
     // Sin capas apagadas en ningún documento, el PDF final no lleva /OCProperties (todo se ve).
     expect((await finalLayers(await render(on))).ocp).toBeUndefined();
   });
@@ -171,7 +179,7 @@ describe("contenido opcional (capas)", () => {
     tf.acroField.getWidgets()[0].dict.set(PDFName.of("OC"), ocg);
     const out = await PDFDocument.load(await render(await doc.save()));
     const p = out.getPages()[0];
-    const key = [...(p.node.Resources()!.lookup(PDFName.of("Properties"), PDFDict).entries())].find(([, v]) => v instanceof PDFRef)![0];
+    const key = [...p.node.Resources()!.lookup(PDFName.of("Properties"), PDFDict).entries()].find(([, v]) => v instanceof PDFRef)![0];
     expect(drawn(out, p).content).toMatch(new RegExp(`/OC ${key.asString()} BDC\\s+q[\\s\\S]*?Do\\s+Q\\s+EMC`));
   });
 
@@ -221,7 +229,8 @@ describe("contenido opcional (capas)", () => {
         ctx.register(ctx.obj({ Type: "OCMD", OCGs: [ocg2, ocg], P: "AllOff" }));
         return ctx.obj({ OCGs: [ocg], D: {} });
       },
-      "la página usa una capa que no está en /OCGs (BaseState OFF)": (ctx, _ocg, ocg2) => ctx.obj({ OCGs: [ocg2], D: { BaseState: "OFF", ON: [ocg2] } }),
+      "la página usa una capa que no está en /OCGs (BaseState OFF)": (ctx, _ocg, ocg2) =>
+        ctx.obj({ OCGs: [ocg2], D: { BaseState: "OFF", ON: [ocg2] } }),
     };
     for (const [name, c] of Object.entries(cases)) expect(await codeOf(preparePdfUpload(await layered(c as any))), name).toBe("ok");
   });
@@ -339,7 +348,9 @@ describe("formularios", () => {
   it("la apariencia se escala de su BBox (y Matrix) al /Rect del widget, como en un lector", async () => {
     const { doc, page, ctx } = await baseDoc();
     const ap = ctx.register(ctx.stream("0 0 1 rg 0 0 10 10 re f", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10] }));
-    const w = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Btn", Ff: 65536, T: PDFString.of("b"), Rect: [100, 100, 300, 150], AP: { N: ap } }));
+    const w = ctx.register(
+      ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Btn", Ff: 65536, T: PDFString.of("b"), Rect: [100, 100, 300, 150], AP: { N: ap } }),
+    );
     page.node.set(PDFName.of("Annots"), ctx.obj([w]));
     doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [w] }));
     const prep = await PDFDocument.load((await preparePdfUpload(await doc.save())).bytes);
@@ -372,12 +383,23 @@ async function activeDoc() {
   const fileAnnot = ctx.register(ctx.obj({ Type: "Annot", Subtype: "FileAttachment", Rect: [10, 40, 30, 60], FS: spec }));
   const screen = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Screen", Rect: [10, 70, 30, 90] }));
   page.node.set(PDFName.of("Annots"), ctx.obj([uri, launch, jsLink, fileAnnot, screen]));
-  doc.catalog.set(PDFName.of("Names"), ctx.obj({ JavaScript: { Names: [PDFString.of("a"), js("app.alert('doc')")] }, EmbeddedFiles: { Names: [PDFString.of("x.pdf"), spec] } }));
+  doc.catalog.set(
+    PDFName.of("Names"),
+    ctx.obj({ JavaScript: { Names: [PDFString.of("a"), js("app.alert('doc')")] }, EmbeddedFiles: { Names: [PDFString.of("x.pdf"), spec] } }),
+  );
   doc.catalog.set(PDFName.of("OpenAction"), js("app.alert('open')"));
   doc.catalog.set(PDFName.of("AA"), ctx.obj({ WC: js("app.alert('close')") }));
   doc.catalog.set(PDFName.of("Collection"), ctx.obj({ Type: "Collection", D: PDFString.of("x.pdf"), View: "D" }));
   // Archivos asociados (PDF/A-3, Factur-X) en el catálogo y en la página.
-  const af = (name: string) => ctx.register(ctx.obj({ Type: "Filespec", F: PDFString.of(name), AFRelationship: "Data", EF: { F: ctx.register(ctx.stream("<factura/>", { Type: "EmbeddedFile" })) } }));
+  const af = (name: string) =>
+    ctx.register(
+      ctx.obj({
+        Type: "Filespec",
+        F: PDFString.of(name),
+        AFRelationship: "Data",
+        EF: { F: ctx.register(ctx.stream("<factura/>", { Type: "EmbeddedFile" })) },
+      }),
+    );
   doc.catalog.set(PDFName.of("AF"), ctx.obj([af("factur-x.xml")]));
   page.node.set(PDFName.of("AF"), ctx.obj([af("pagina.xml")]));
   const outline = ctx.register(ctx.obj({ Title: PDFString.of("M"), A: js("app.alert('outline')") }));
@@ -407,7 +429,9 @@ describe("contenido activo", () => {
     expect(annots.every((a) => a.get(PDFName.of("AA")) === undefined)).toBe(true);
     for (const k of ["OpenAction", "AA", "Collection", "AF"]) expect(doc.catalog.get(PDFName.of(k)), k).toBeUndefined();
     expect(page.node.get(PDFName.of("AF"))).toBeUndefined();
-    const embedded = doc.context.enumerateIndirectObjects().filter(([, o]) => o instanceof PDFStream && o.dict.get(PDFName.of("Type")) === PDFName.of("EmbeddedFile"));
+    const embedded = doc.context
+      .enumerateIndirectObjects()
+      .filter(([, o]) => o instanceof PDFStream && o.dict.get(PDFName.of("Type")) === PDFName.of("EmbeddedFile"));
     expect(embedded).toHaveLength(0);
     const names = doc.catalog.lookupMaybe(PDFName.of("Names"), PDFDict);
     expect(names?.get(PDFName.of("JavaScript"))).toBeUndefined();
@@ -448,7 +472,12 @@ describe("placeholder del ByteRange", () => {
   it("no se comprimen imágenes sin filtro ni streams de más de 2 MB (deflate lento que no hace falta)", async () => {
     const { doc, page, ctx } = await baseDoc();
     const pixels = Buffer.alloc(40 * 40 * 3, 200);
-    const img = ctx.register(PDFRawStream.of(ctx.obj({ Type: "XObject", Subtype: "Image", Width: 40, Height: 40, ColorSpace: "DeviceRGB", BitsPerComponent: 8, Length: pixels.length }), pixels));
+    const img = ctx.register(
+      PDFRawStream.of(
+        ctx.obj({ Type: "XObject", Subtype: "Image", Width: 40, Height: 40, ColorSpace: "DeviceRGB", BitsPerComponent: 8, Length: pixels.length }),
+        pixels,
+      ),
+    );
     const key = page.node.newXObject("Im", img);
     page.node.addContentStream(ctx.register(ctx.stream(`q 40 0 0 40 10 10 cm /${key.decodeText()} Do Q\n`)));
     page.node.addContentStream(ctx.register(ctx.stream(`% ${"x".repeat(2.5 * 1024 * 1024)}\n`)));
@@ -458,7 +487,9 @@ describe("placeholder del ByteRange", () => {
     expect(image.dict.get(PDFName.of("Filter"))).toBeUndefined();
     expect(raws.find((o) => o.contents.length > 2 * 1024 * 1024)?.dict.get(PDFName.of("Filter"))).toBeUndefined();
     // El resto de los content streams sí.
-    expect(raws.filter((o) => !o.dict.has(PDFName.of("Filter")) && o.contents.length < 1024 && o.dict.get(PDFName.of("Type")) !== PDFName.of("Metadata"))).toHaveLength(0);
+    expect(
+      raws.filter((o) => !o.dict.has(PDFName.of("Filter")) && o.contents.length < 1024 && o.dict.get(PDFName.of("Type")) !== PDFName.of("Metadata")),
+    ).toHaveLength(0);
   });
 
   it("un original viejo con la secuencia literal se sella, y admite firmas incrementales y externas", async () => {
@@ -466,7 +497,12 @@ describe("placeholder del ByteRange", () => {
     expect(Buffer.from(sealed).includes("/ByteRange [0 /**********")).toBe(true);
     let v = await validatePdf(sealed, { trustAnchors: pemToDerList(rootPem) });
     expect(v.summary.allValid).toBe(true);
-    const twice = await addSignatureIncremental(sealed, { type: "Sig", fieldName: "Empresa", signatureLength: 16_000, sign: (c) => buildPadesCms(c, provider, {}) });
+    const twice = await addSignatureIncremental(sealed, {
+      type: "Sig",
+      fieldName: "Empresa",
+      signatureLength: 16_000,
+      sign: (c) => buildPadesCms(c, provider, {}),
+    });
     v = await validatePdf(twice, { trustAnchors: pemToDerList(rootPem) });
     expect(v.signatures).toHaveLength(2);
     expect(v.summary.allValid).toBe(true);
@@ -498,7 +534,12 @@ describe("revisiones posteriores (lista blanca del catálogo)", () => {
     expect((await validatePdf(u2.serialize(), {})).signatures[0].changesAfter).toBe("content");
 
     // Una firma posterior invisible (toca /AcroForm /Fields y /SigFlags) sigue siendo evidencia.
-    const later = await addSignatureIncremental(sealed, { type: "Sig", fieldName: "Otra", signatureLength: 16_000, sign: (c) => buildPadesCms(c, provider, {}) });
+    const later = await addSignatureIncremental(sealed, {
+      type: "Sig",
+      fieldName: "Otra",
+      signatureLength: 16_000,
+      sign: (c) => buildPadesCms(c, provider, {}),
+    });
     expect((await validatePdf(later, {})).signatures[0].changesAfter).toBe("evidence_only");
   });
 
@@ -515,8 +556,9 @@ describe("revisiones posteriores (lista blanca del catálogo)", () => {
     };
     const acroOf = (u: IncrementalUpdate, cat: PDFDict) => u.context.lookup(cat.get(PDFName.of("AcroForm")), PDFDict);
     const evidence: Record<string, (u: IncrementalUpdate, cat: PDFDict) => void> = {
-      "nada": () => {},
-      "Extensions ESIC": (u, cat) => cat.set(PDFName.of("Extensions"), u.context.obj({ ESIC: { BaseVersion: PDFName.of("1.7"), ExtensionLevel: 2 } })),
+      nada: () => {},
+      "Extensions ESIC": (u, cat) =>
+        cat.set(PDFName.of("Extensions"), u.context.obj({ ESIC: { BaseVersion: PDFName.of("1.7"), ExtensionLevel: 2 } })),
       "Metadata nueva": (u, cat) => cat.set(PDFName.of("Metadata"), u.add(u.context.stream("<x:xmpmeta/>", { Type: "Metadata", Subtype: "XML" }))),
       "Version 2.0": (_u, cat) => cat.set(PDFName.of("Version"), PDFName.of("2.0")),
       "Lang, MarkInfo, ViewerPreferences, PageLabels": (u, cat) => {
@@ -525,7 +567,8 @@ describe("revisiones posteriores (lista blanca del catálogo)", () => {
         cat.set(PDFName.of("ViewerPreferences"), u.context.obj({ DisplayDocTitle: true }));
         cat.set(PDFName.of("PageLabels"), u.context.obj({ Nums: [0, { S: "r" }] }));
       },
-      "Names /Dests": (u, cat) => cat.set(PDFName.of("Names"), u.context.obj({ Dests: { Names: [PDFString.of("x"), [u.doc.getPage(0).ref, "Fit"]] } })),
+      "Names /Dests": (u, cat) =>
+        cat.set(PDFName.of("Names"), u.context.obj({ Dests: { Names: [PDFString.of("x"), [u.doc.getPage(0).ref, "Fit"]] } })),
       "AcroForm DA+DR+Q": (u, cat) => {
         const a = acroOf(u, cat);
         a.set(PDFName.of("DA"), PDFString.of("/Helv 0 Tf 0 g"));
@@ -537,11 +580,12 @@ describe("revisiones posteriores (lista blanca del catálogo)", () => {
     for (const [name, fn] of Object.entries(evidence)) expect(await revise(fn), name).toBe("evidence_only");
     const content: Record<string, (u: IncrementalUpdate, cat: PDFDict) => void> = {
       "NeedAppearances true": (u, cat) => acroOf(u, cat).set(PDFName.of("NeedAppearances"), u.context.obj(true)),
-      "XFA": (u, cat) => acroOf(u, cat).set(PDFName.of("XFA"), u.add(u.context.stream("<xdp:xdp/>"))),
-      "OpenAction": (u, cat) => cat.set(PDFName.of("OpenAction"), u.context.obj({ S: "JavaScript", JS: PDFString.of("app.alert(1)") })),
-      "AA": (u, cat) => cat.set(PDFName.of("AA"), u.context.obj({ WC: { S: "JavaScript", JS: PDFString.of("1") } })),
-      "URI": (u, cat) => cat.set(PDFName.of("URI"), u.context.obj({ Base: PDFString.of("https://x") })),
-      "Names /JavaScript": (u, cat) => cat.set(PDFName.of("Names"), u.context.obj({ JavaScript: { Names: [PDFString.of("a"), { S: "JavaScript", JS: PDFString.of("1") }] } })),
+      XFA: (u, cat) => acroOf(u, cat).set(PDFName.of("XFA"), u.add(u.context.stream("<xdp:xdp/>"))),
+      OpenAction: (u, cat) => cat.set(PDFName.of("OpenAction"), u.context.obj({ S: "JavaScript", JS: PDFString.of("app.alert(1)") })),
+      AA: (u, cat) => cat.set(PDFName.of("AA"), u.context.obj({ WC: { S: "JavaScript", JS: PDFString.of("1") } })),
+      URI: (u, cat) => cat.set(PDFName.of("URI"), u.context.obj({ Base: PDFString.of("https://x") })),
+      "Names /JavaScript": (u, cat) =>
+        cat.set(PDFName.of("Names"), u.context.obj({ JavaScript: { Names: [PDFString.of("a"), { S: "JavaScript", JS: PDFString.of("1") }] } })),
     };
     for (const [name, fn] of Object.entries(content)) expect(await revise(fn), name).toBe("content");
   });
@@ -558,7 +602,12 @@ describe("validación: certificado firmante y algoritmos débiles", () => {
     };
     const good = await addSignatureIncremental(sealed, { type: "Sig", fieldName: "Ok", signatureLength: 16_000, sign: signWith(chain) });
     expect((await validatePdf(good, {})).signatures[0].integrity.valid).toBe(true);
-    const bad = await addSignatureIncremental(sealed, { type: "Sig", fieldName: "Mal", signatureLength: 16_000, sign: signWith(pemToDerList(other.chainPem)) });
+    const bad = await addSignatureIncremental(sealed, {
+      type: "Sig",
+      fieldName: "Mal",
+      signatureLength: 16_000,
+      sign: signWith(pemToDerList(other.chainPem)),
+    });
     const r = await validatePdf(bad, {});
     expect(r.signatures[0].integrity).toEqual({ valid: false, reason: expect.stringMatching(/signingCertificate/) });
   });
@@ -590,7 +639,10 @@ describe("validación: certificado firmante y algoritmos débiles", () => {
     const spki = new Uint8Array(publicKey.export({ type: "spki", format: "der" }));
     const weakCert = await issueSealCertificate(ca, { commonName: "Clave corta", subjectPublicKeySpki: spki });
     const weak = new LocalKeyProvider("weak", privateKey.export({ type: "pkcs8", format: "pem" }) as string, weakCert.chainPem);
-    const pdf = await finalizeEnvelopePdf({ documents: [{ name: "a.pdf", bytes: await (await baseDoc()).doc.save() }], fields: [], certificate: cert() }, { provider: weak });
+    const pdf = await finalizeEnvelopePdf(
+      { documents: [{ name: "a.pdf", bytes: await (await baseDoc()).doc.save() }], fields: [], certificate: cert() },
+      { provider: weak },
+    );
     const r = await validatePdf(pdf, { trustAnchors: pemToDerList(ca.certPem) });
     expect(r.signatures[0].integrity.valid).toBe(true);
     expect(r.signatures[0].chain.trusted).toBe(true);
@@ -694,7 +746,19 @@ describe("PDF cifrado", () => {
       // R2 solo admite los permisos de los 6 bits bajos.
       const perms = r === 2 ? "-64" : "-3904";
       const userArg = user ? [`-sUserPassword=${user}`] : [];
-      execFileSync("gs", ["-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite", "-sOwnerPassword=duenio", ...userArg, `-dEncryptionR=${r}`, `-dKeyLength=${bits}`, `-dPermissions=${perms}`, `-sOutputFile=${out}`, join(dir, "in.pdf")]);
+      execFileSync("gs", [
+        "-q",
+        "-dNOPAUSE",
+        "-dBATCH",
+        "-sDEVICE=pdfwrite",
+        "-sOwnerPassword=duenio",
+        ...userArg,
+        `-dEncryptionR=${r}`,
+        `-dKeyLength=${bits}`,
+        `-dPermissions=${perms}`,
+        `-sOutputFile=${out}`,
+        join(dir, "in.pdf"),
+      ]);
       return new Uint8Array(readFileSync(out));
     };
     for (const [r, bits] of [
@@ -846,7 +910,9 @@ describe("contenido marcado sin cerrar", () => {
     expect(c.get(1)).toBe(ref);
     expect(closedAtEnd(doc, page)).toBeGreaterThanOrEqual(1024);
     // Un formulario con la misma bomba no se reescribe: los EMC de reserva van al final de la página que lo dibuja.
-    const form = ctx.register(PDFRawStream.of(ctx.obj({ Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10], Filter: "FlateDecode", Length: bomb.length }), bomb));
+    const form = ctx.register(
+      PDFRawStream.of(ctx.obj({ Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10], Filter: "FlateDecode", Length: bomb.length }), bomb),
+    );
     const page2 = doc.addPage([200, 200]);
     page2.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: form } }));
     page2.node.set(PDFName.of("Contents"), ctx.register(ctx.stream("/X0 Do\n")));
@@ -994,7 +1060,13 @@ describe("contenido marcado sin cerrar", () => {
 
 describe("capas: /Order y /RBGroups indirectos", () => {
   it("se resuelven antes de copiarlos al PDF final", async () => {
-    const bytes = await layered((ctx, ocg, ocg2) => ctx.obj({ OCGs: [ocg, ocg2], D: { OFF: [ocg], Order: ctx.register(ctx.obj([ocg, ocg2])), RBGroups: ctx.register(ctx.obj([[ocg, ocg2]])) } }) as PDFDict);
+    const bytes = await layered(
+      (ctx, ocg, ocg2) =>
+        ctx.obj({
+          OCGs: [ocg, ocg2],
+          D: { OFF: [ocg], Order: ctx.register(ctx.obj([ocg, ocg2])), RBGroups: ctx.register(ctx.obj([[ocg, ocg2]])) },
+        }) as PDFDict,
+    );
     const l = await finalLayers(await render(bytes));
     const d = l.ocp!.lookup(PDFName.of("D"), PDFDict);
     expect(d.lookup(PDFName.of("Order"), PDFArray).asArray()).toHaveLength(2);
@@ -1009,13 +1081,18 @@ describe("archivos asociados (/AF) y embebidos (/EF) en cualquier diccionario", 
     const page = doc.addPage([400, 400]);
     const ctx = doc.context;
     const ef = ctx.register(ctx.stream("MZ-PAYLOAD-SECRET", { Type: "EmbeddedFile" }));
-    const fs = ctx.register(ctx.obj({ Type: "Filespec", F: PDFString.of("x.exe"), UF: PDFString.of("x.exe"), EF: { F: ef }, AFRelationship: "Data" }));
+    const fs = ctx.register(
+      ctx.obj({ Type: "Filespec", F: PDFString.of("x.exe"), UF: PDFString.of("x.exe"), EF: { F: ef }, AFRelationship: "Data" }),
+    );
     const xo = ctx.register(ctx.stream("0 0 1 rg 0 0 10 10 re f", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10], AF: [fs] }));
     page.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: xo } }));
     page.node.addContentStream(ctx.register(ctx.stream("q /X0 Do Q")));
     // Una anotación de enlace con un /Filespec (acción permitida no; pero el /FS queda alcanzable desde la anotación).
     page.node.set(PDFName.of("Annots"), ctx.obj([ctx.obj({ Type: "Annot", Subtype: "Link", Rect: [0, 0, 10, 10], FS: fs })]));
-    doc.catalog.set(PDFName.of("StructTreeRoot"), ctx.register(ctx.obj({ Type: "StructTreeRoot", K: { Type: "StructElem", S: "Document", AF: [fs] } })));
+    doc.catalog.set(
+      PDFName.of("StructTreeRoot"),
+      ctx.register(ctx.obj({ Type: "StructTreeRoot", K: { Type: "StructElem", S: "Document", AF: [fs] } })),
+    );
     return doc.save({ useObjectStreams: false });
   }
   const embedded = (doc: PDFDocument) =>
@@ -1075,7 +1152,12 @@ describe("revisiones posteriores: marcadores y valores por defecto del formulari
     u.doc.catalog.set(PDFName.of("StructTreeRoot"), treeRoot);
     u.doc.catalog.set(PDFName.of("Outlines"), root);
     u.touch(u.catalogRef);
-    const signed = await addSignatureIncremental(u.serialize(), { type: "Sig", fieldName: "Firma", signatureLength: 16_000, sign: (c) => buildPadesCms(c, provider, {}) });
+    const signed = await addSignatureIncremental(u.serialize(), {
+      type: "Sig",
+      fieldName: "Firma",
+      signatureLength: 16_000,
+      sign: (c) => buildPadesCms(c, provider, {}),
+    });
     const later = async (change: (d: PDFDict) => void) => {
       const l = await IncrementalUpdate.open(signed);
       const d = l.context.lookup(elem, PDFDict);
@@ -1098,13 +1180,27 @@ describe("revisiones posteriores: marcadores y valores por defecto del formulari
       const page = u.doc.getPage(0);
       const ap = u.add(ctx.stream("BT /Helv 12 Tf 2 8 Td (hola) Tj ET", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 150, 30] }));
       const widget = u.add(
-        ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Tx", T: PDFString.of("campo"), V: PDFString.of("hola"), Rect: [50, 50, 200, 80], P: page.ref, ...(withAp ? { AP: { N: ap } } : {}) }),
+        ctx.obj({
+          Type: "Annot",
+          Subtype: "Widget",
+          FT: "Tx",
+          T: PDFString.of("campo"),
+          V: PDFString.of("hola"),
+          Rect: [50, 50, 200, 80],
+          P: page.ref,
+          ...(withAp ? { AP: { N: ap } } : {}),
+        }),
       );
       page.node.set(PDFName.of("Annots"), ctx.obj([widget]));
       u.touch(page.ref);
       u.doc.catalog.set(PDFName.of("AcroForm"), u.add(ctx.obj({ Fields: [widget], DA: PDFString.of("/Helv 12 Tf 0 g") })));
       u.touch(u.catalogRef);
-      const signed = await addSignatureIncremental(u.serialize(), { type: "Sig", fieldName: "Firma", signatureLength: 16_000, sign: (c) => buildPadesCms(c, provider, {}) });
+      const signed = await addSignatureIncremental(u.serialize(), {
+        type: "Sig",
+        fieldName: "Firma",
+        signatureLength: 16_000,
+        sign: (c) => buildPadesCms(c, provider, {}),
+      });
       const later = await IncrementalUpdate.open(signed);
       const acroRef = later.doc.catalog.get(PDFName.of("AcroForm")) as PDFRef;
       later.context.lookup(acroRef, PDFDict).set(PDFName.of("DA"), PDFString.of("/Helv 40 Tf 1 0 0 rg"));

@@ -36,7 +36,11 @@ afterEach(() => {
 
 describe("celdas", () => {
   it("sin CELLS hay una sola celda por defecto con el almacenamiento de siempre", () => {
-    const c = cellsMod.parseCells(undefined, { storage: { driver: "local", bucket: "", prefix: "", region: "us-east-1" }, dataDir: "/data", defaultId: "us" });
+    const c = cellsMod.parseCells(undefined, {
+      storage: { driver: "local", bucket: "", prefix: "", region: "us-east-1" },
+      dataDir: "/data",
+      defaultId: "us",
+    });
     expect(c).toHaveLength(1);
     expect(c[0]).toMatchObject({ id: "us", default: true, storage: { driver: "local", dir: "/data/blobs" } });
   });
@@ -61,7 +65,10 @@ describe("celdas", () => {
 });
 
 /** Resolver de prueba: celda y clave por organización, registra fallas. */
-function fakeResolver(map: Record<string, { cell: string; byokKeyArn: string | null; byokStatus: "none" | "active" | "failing" }>, history: string[] = []) {
+function fakeResolver(
+  map: Record<string, { cell: string; byokKeyArn: string | null; byokStatus: "none" | "active" | "failing" }>,
+  history: string[] = [],
+) {
   const failures: string[] = [];
   const successes: string[] = [];
   return {
@@ -88,7 +95,10 @@ describe("almacenamiento por celda y BYOK", () => {
   it("cada organización va a la celda de su directorio", async () => {
     process.env.CELLS = JSON.stringify({ us: { default: true }, br: {} });
     cellsMod.resetCells();
-    const { resolver } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: null, byokStatus: "none" }, [TENANT_B]: { cell: "br", byokKeyArn: null, byokStatus: "none" } });
+    const { resolver } = fakeResolver({
+      [TENANT_A]: { cell: "us", byokKeyArn: null, byokStatus: "none" },
+      [TENANT_B]: { cell: "br", byokKeyArn: null, byokStatus: "none" },
+    });
     const store = storage.createBlobStore(resolver);
     await store.put(`tenants/${TENANT_A}/x/a.pdf`, new TextEncoder().encode("A"), "application/pdf");
     await store.put(`tenants/${TENANT_B}/x/b.pdf`, new TextEncoder().encode("B"), "application/pdf");
@@ -114,7 +124,10 @@ describe("almacenamiento por celda y BYOK", () => {
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: BAD_ARN, byokStatus: "active" } });
     const store = storage.createBlobStore(resolver);
     const key = `tenants/${TENANT_A}/byok/blocked.pdf`;
-    await expect(store.put(key, new TextEncoder().encode("x"), "application/pdf")).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    await expect(store.put(key, new TextEncoder().encode("x"), "application/pdf")).rejects.toMatchObject({
+      status: 503,
+      code: "byok_key_unavailable",
+    });
     expect(failures).toEqual([`${TENANT_A}:${BAD_ARN}`]);
     expect(existsSync(join(cellsMod.cells()[0].storage.dir!, key))).toBe(false);
   });
@@ -130,7 +143,10 @@ describe("almacenamiento por celda y BYOK", () => {
     storage.setS3ClientFactory(() => ({ send: async (cmd: any) => void sent.push(cmd.input) }));
     process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us", region: "us-east-1" } } });
     cellsMod.resetCells();
-    const { resolver } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" }, [TENANT_B]: { cell: "us", byokKeyArn: null, byokStatus: "none" } });
+    const { resolver } = fakeResolver({
+      [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" },
+      [TENANT_B]: { cell: "us", byokKeyArn: null, byokStatus: "none" },
+    });
     const store = storage.createBlobStore(resolver);
     await store.put(`tenants/${TENANT_A}/s3.pdf`, new Uint8Array([1]), "application/pdf");
     await store.put(`tenants/${TENANT_B}/s3.pdf`, new Uint8Array([1]), "application/pdf");
@@ -149,7 +165,9 @@ describe("almacenamiento por celda y BYOK", () => {
     process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
     cellsMod.resetCells();
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-    await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/z.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toMatchObject({ status: 503 });
+    await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/z.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toMatchObject({
+      status: 503,
+    });
     expect(failures).toHaveLength(1);
   });
 
@@ -169,11 +187,17 @@ describe("almacenamiento por celda y BYOK", () => {
     });
     try {
       const key = `tenants/${TENANT_A}/byok/viejo.pdf`;
-      await storage.createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OLD_ARN, byokStatus: "active" } }).resolver).put(key, new Uint8Array([7]), "application/pdf");
+      await storage
+        .createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OLD_ARN, byokStatus: "active" } }).resolver)
+        .put(key, new Uint8Array([7]), "application/pdf");
       broken.add(OLD_ARN);
       // La anterior está en el historial de la organización: 503 de la clave (con su ARN), sin marcar la actual.
       const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } }, [OLD_ARN]);
-      await expect(storage.createBlobStore(resolver).get(key)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable", details: { keyArn: OLD_ARN } });
+      await expect(storage.createBlobStore(resolver).get(key)).rejects.toMatchObject({
+        status: 503,
+        code: "byok_key_unavailable",
+        details: { keyArn: OLD_ARN },
+      });
       expect(failures).toEqual([]);
     } finally {
       kms.setKmsClientFactory(() => kms.mockKms());
@@ -191,7 +215,10 @@ describe("almacenamiento por celda y BYOK", () => {
     process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
     cellsMod.resetCells();
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } }, [OLD_ARN]);
-    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/viejo.pdf`)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/viejo.pdf`)).rejects.toMatchObject({
+      status: 503,
+      code: "byok_key_unavailable",
+    });
     expect(failures).toEqual([]);
   });
 
@@ -224,9 +251,14 @@ describe("almacenamiento por celda y BYOK", () => {
   });
 
   it("un AccessDenied de S3 que sí es de KMS se atribuye a la clave confirmada por HeadObject", async () => {
-    s3With(s3Err("AccessDenied", "User: arn:aws:sts::1:assumed-role/app is not authorized to perform: kms:Decrypt on resource: " + OK_ARN), { SSEKMSKeyId: OK_ARN });
+    s3With(s3Err("AccessDenied", "User: arn:aws:sts::1:assumed-role/app is not authorized to perform: kms:Decrypt on resource: " + OK_ARN), {
+      SSEKMSKeyId: OK_ARN,
+    });
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/k.pdf`)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/k.pdf`)).rejects.toMatchObject({
+      status: 503,
+      code: "byok_key_unavailable",
+    });
     expect(failures).toEqual([`${TENANT_A}:${OK_ARN}`]);
   });
 
@@ -246,7 +278,12 @@ describe("almacenamiento por celda y BYOK", () => {
     for (const head of [s3Err("Forbidden", "Forbidden"), {}]) {
       s3With(original, head);
       const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-      const err: any = await quiet(() => storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/h.pdf`).catch((e) => e));
+      const err: any = await quiet(() =>
+        storage
+          .createBlobStore(resolver)
+          .get(`tenants/${TENANT_A}/h.pdf`)
+          .catch((e) => e),
+      );
       expect(err).toMatchObject({ status: 503, code: "storage_unavailable" });
       expect(JSON.stringify(err.details ?? null)).not.toContain(OK_ARN);
       expect(failures).toEqual([]);
@@ -274,9 +311,12 @@ describe("almacenamiento por celda y BYOK", () => {
       expect(p).toMatchObject({ status: 503, code: "storage_unavailable" });
       expect(JSON.stringify(p.details ?? null)).not.toContain(OK_ARN);
       // Sin BYOK (clave de la plataforma) también: 503, no un 500 crudo.
-      const plain: any = await quiet(() => storage.createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: null, byokStatus: "none" } }).resolver)
-        .put(`tenants/${TENANT_A}/t3.pdf`, new Uint8Array([1]), "application/pdf")
-        .catch((e) => e));
+      const plain: any = await quiet(() =>
+        storage
+          .createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: null, byokStatus: "none" } }).resolver)
+          .put(`tenants/${TENANT_A}/t3.pdf`, new Uint8Array([1]), "application/pdf")
+          .catch((e) => e),
+      );
       expect(plain).toMatchObject({ status: 503, code: "storage_unavailable" });
       expect(failures).toEqual([]);
     }
@@ -340,7 +380,10 @@ describe("almacenamiento por celda y BYOK", () => {
   it("con BYOK desactivada (none) una falla de su clave no la marca como fallida", async () => {
     s3With(s3Err("KMS.DisabledException", "key is disabled"), { SSEKMSKeyId: OK_ARN });
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "none" } }, [OK_ARN]);
-    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/d.pdf`)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/d.pdf`)).rejects.toMatchObject({
+      status: 503,
+      code: "byok_key_unavailable",
+    });
     expect(failures).toEqual([]);
   });
 
@@ -351,7 +394,10 @@ describe("almacenamiento por celda y BYOK", () => {
     const warn = console.warn;
     console.warn = () => {};
     try {
-      const err: any = await storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/pre-byok.pdf`).catch((e) => e);
+      const err: any = await storage
+        .createBlobStore(resolver)
+        .get(`tenants/${TENANT_A}/pre-byok.pdf`)
+        .catch((e) => e);
       expect(err).toMatchObject({ status: 503, code: "storage_unavailable" });
       expect(JSON.stringify(err.details ?? null)).not.toContain(PLATFORM);
       expect(err.message).not.toMatch(/organizaci/);
@@ -383,7 +429,9 @@ describe("almacenamiento por celda y BYOK", () => {
     process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
     cellsMod.resetCells();
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-    await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/n.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toThrow(/ENOTFOUND/);
+    await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/n.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toThrow(
+      /ENOTFOUND/,
+    );
     expect(failures).toHaveLength(0);
     expect(kms.isKeyError(Object.assign(new Error("KMS.DisabledException: key is disabled"), { name: "KMS.DisabledException" }))).toBe(true);
     expect(kms.isKeyError(new Error("connect ETIMEDOUT kms.us-east-1.amazonaws.com"))).toBe(false);
@@ -394,14 +442,27 @@ describe("custodia de certificados con BYOK", () => {
   it("envuelve y abre la clave con la clave del cliente, atada a la organización", async () => {
     const { sealKey, openKey } = custody;
     const CERT = "0192f0e0-0000-7000-8000-00000000c0de";
-    const sealed = await sealKey("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n", { tenantId: TENANT_A, certificateId: CERT }, { tenantId: TENANT_A, keyArn: OK_ARN });
+    const sealed = await sealKey(
+      "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+      { tenantId: TENANT_A, certificateId: CERT },
+      { tenantId: TENANT_A, keyArn: OK_ARN },
+    );
     expect(sealed.method).toBe("kms-byok");
     expect(sealed.keyArn).toBe(OK_ARN);
-    const row = { id: CERT, key_ciphertext: sealed.ciphertext, key_wrapped: sealed.wrapped, key_wrap_method: sealed.method, key_wrap_key_arn: OK_ARN, tenant_id: TENANT_A };
+    const row = {
+      id: CERT,
+      key_ciphertext: sealed.ciphertext,
+      key_wrapped: sealed.wrapped,
+      key_wrap_method: sealed.method,
+      key_wrap_key_arn: OK_ARN,
+      tenant_id: TENANT_A,
+    };
     expect(await openKey(row)).toContain("abc");
     // Con el contexto de otra organización no abre.
     await expect(openKey({ ...row, tenant_id: TENANT_B })).rejects.toMatchObject({ code: "byok_key_unavailable" });
-    await expect(sealKey("x", { tenantId: TENANT_A, certificateId: CERT }, { tenantId: TENANT_A, keyArn: BAD_ARN })).rejects.toMatchObject({ code: "byok_key_unavailable" });
+    await expect(sealKey("x", { tenantId: TENANT_A, certificateId: CERT }, { tenantId: TENANT_A, keyArn: BAD_ARN })).rejects.toMatchObject({
+      code: "byok_key_unavailable",
+    });
   }, 30_000);
 });
 

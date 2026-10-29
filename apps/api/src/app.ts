@@ -65,7 +65,10 @@ export const TURNSTILE_PAGE_PREFIXES = ["/f/", "/wf/"] as const;
 
 /** Suma `origin` a script-src y frame-src de un CSP (frame-src se crea si no está, con 'self' como el default-src). */
 export function withTurnstile(csp: string, origin: string): string {
-  const parts = csp.split(";").map((d) => d.trim()).filter(Boolean);
+  const parts = csp
+    .split(";")
+    .map((d) => d.trim())
+    .filter(Boolean);
   const add = (name: string, fallback: string) => {
     const k = parts.findIndex((d) => d.split(/\s+/)[0].toLowerCase() === name);
     if (k >= 0) parts[k] = `${parts[k]} ${origin}`;
@@ -78,12 +81,20 @@ export function withTurnstile(csp: string, origin: string): string {
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   // Logs sin secretos: los tokens de firma, invitaciones, códigos y credenciales viajan en la URL o en headers.
-  const safeLogger = { level: config.logLevel, serializers: { req: safeRequestSerializer }, redact: { paths: LOG_REDACT_PATHS, censor: "[redactado]" } };
+  const safeLogger = {
+    level: config.logLevel,
+    serializers: { req: safeRequestSerializer },
+    redact: { paths: LOG_REDACT_PATHS, censor: "[redactado]" },
+  };
   const logger =
     deps.logger === undefined
       ? safeLogger
       : typeof deps.logger === "object"
-        ? { ...safeLogger, ...deps.logger, serializers: { ...safeLogger.serializers, ...((deps.logger as { serializers?: object }).serializers ?? {}) } }
+        ? {
+            ...safeLogger,
+            ...deps.logger,
+            serializers: { ...safeLogger.serializers, ...((deps.logger as { serializers?: object }).serializers ?? {}) },
+          }
         : deps.logger;
   const app = Fastify({
     logger,
@@ -141,7 +152,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await app.register(cookie);
   // Campos de texto acotados: sin tope, busboy admitía ~1000 campos de 1 MB por pedido (todos en memoria). Las rutas que
   // necesitan más (subida en un paso, "meta" de un acuerdo) pasan los suyos en req.parts()/req.file().
-  await app.register(multipart, { limits: { files: 1, fileSize: config.maxUploadBytes, fields: 10, fieldSize: 64 * 1024, parts: 12, headerPairs: 50 } });
+  await app.register(multipart, {
+    limits: { files: 1, fileSize: config.maxUploadBytes, fields: 10, fieldSize: 64 * 1024, parts: 12, headerPairs: 50 },
+  });
   // X-Request-Id en toda respuesta (también errores, 429 del límite, 404 y las que escriben directo sobre la conexión,
   // como el stream de eventos y /mcp): es el id de los logs, el que los SDK muestran como requestId. Antes de los
   // hooks del límite de pedidos para que el 429 también lo lleve.
@@ -214,21 +227,28 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     // una restricción única (23505, p. ej. dos altas simultáneas con el mismo correo).
     const pgCode = (err as { code?: unknown }).code;
     if (pgCode === "22P02") return reply.code(400).send({ error: { code: "invalid_id", message: "Identificador inválido" } });
-    if (pgCode === "23505") return reply.code(409).send({ error: { code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá" } });
+    if (pgCode === "23505")
+      return reply.code(409).send({ error: { code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá" } });
     // Serialización (40001) o deadlock (40P01) contra otro pedido simultáneo: del momento, se reintenta.
     if (pgCode === "40001" || pgCode === "40P01") {
       reply.header("retry-after", "1");
-      return reply.code(503).send({ error: { code: "concurrent_update", message: "Otro cambio simultáneo cruzó este pedido: reintentá en unos segundos" } });
+      return reply
+        .code(503)
+        .send({ error: { code: "concurrent_update", message: "Otro cambio simultáneo cruzó este pedido: reintentá en unos segundos" } });
     }
     // Texto con el carácter NUL (\u0000): Postgres lo rechaza en columnas de texto (22021) y en jsonb (22P05). Lo manda
     // el cliente (p. ej. el motivo de un rechazo o un asunto): es un pedido inválido, no un error interno.
     // La TSA externa falló (red, rechazo): no es un error interno de la plataforma.
     if ((err as Error)?.name === "TsaError") {
-      return reply.code(502).send({ error: { code: "tsa_unavailable", message: "La autoridad de sellado de tiempo no respondió como se esperaba: reintentá en unos minutos" } });
+      return reply.code(502).send({
+        error: { code: "tsa_unavailable", message: "La autoridad de sellado de tiempo no respondió como se esperaba: reintentá en unos minutos" },
+      });
     }
     // Fechas que JS acepta y Postgres no (año 0, años de más de 4 dígitos): 400, no 500.
-    if (pgCode === "22007" || pgCode === "22008" || pgCode === "22009") return reply.code(400).send({ error: { code: "invalid_date", message: "Fecha fuera de rango o inválida" } });
-    if (pgCode === "22021" || pgCode === "22P05") return reply.code(400).send({ error: { code: "invalid_text", message: "El texto contiene caracteres no admitidos" } });
+    if (pgCode === "22007" || pgCode === "22008" || pgCode === "22009")
+      return reply.code(400).send({ error: { code: "invalid_date", message: "Fecha fuera de rango o inválida" } });
+    if (pgCode === "22021" || pgCode === "22P05")
+      return reply.code(400).send({ error: { code: "invalid_text", message: "El texto contiene caracteres no admitidos" } });
     const fe = err as FastifyError;
     if (fe.statusCode && fe.statusCode < 500) {
       return reply.code(fe.statusCode).send({ error: { code: fe.code ?? "bad_request", message: fe.message } });
@@ -270,7 +290,8 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   app.get("/internal/health", async (req, reply) => {
     const loopback = (a: string | undefined) => !!a && (a === "::1" || a.startsWith("127.") || a.startsWith("::ffff:127."));
     const proxied = req.headers["x-forwarded-for"] !== undefined || req.headers.forwarded !== undefined || req.headers["x-real-ip"] !== undefined;
-    if (proxied || !loopback(req.socket.remoteAddress) || !loopback(req.ip)) return reply.code(404).send({ error: { code: "not_found", message: "No encontrado" } });
+    if (proxied || !loopback(req.socket.remoteAddress) || !loopback(req.ip))
+      return reply.code(404).send({ error: { code: "not_found", message: "No encontrado" } });
     return { ok: true, queue: await queueHealth(deps.db) };
   });
   await authRoutes(app, services);

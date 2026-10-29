@@ -150,7 +150,7 @@ function OAuthAppsAdmin() {
   // Permisos del rol de una app de servicio (o del rol elegido): la API rechaza crear, rotar o revocar una app cuyo rol
   // tiene permisos que quien está en la sesión no tiene (assertCanGrantRole / assertCanManageServiceApp).
   const permsOfRole = (r: string | null, roleId: string | null) =>
-    !r ? [] : roleOptions.find((o) => o.value === (r === "custom" ? `custom:${roleId}` : r))?.permissions ?? null;
+    !r ? [] : (roleOptions.find((o) => o.value === (r === "custom" ? `custom:${roleId}` : r))?.permissions ?? null);
   const roleGrantable = canManagePerms(access, roleOptions.find((o) => o.value === role)?.permissions);
 
   useEffect(() => {
@@ -221,7 +221,8 @@ function OAuthAppsAdmin() {
           <div className="stack" style={{ gap: 4 }}>
             {(["client_credentials", "authorization_code"] as const).map((g) => (
               <label key={g} className="check">
-                <input type="checkbox" checked={grants.includes(g)} onChange={(e) => setGrants((cur) => toggle(cur, g, e.target.checked))} /> {p(`oauth.grant.${g}`)}
+                <input type="checkbox" checked={grants.includes(g)} onChange={(e) => setGrants((cur) => toggle(cur, g, e.target.checked))} />{" "}
+                {p(`oauth.grant.${g}`)}
               </label>
             ))}
           </div>
@@ -230,7 +231,13 @@ function OAuthAppsAdmin() {
           <>
             <label className="field">
               <span>{p("oauth.redirects")}</span>
-              <textarea rows={2} required value={redirects} onChange={(e) => setRedirects(e.target.value)} placeholder={`https://app.${placeholderText("domain")}/oauth/callback`} />
+              <textarea
+                rows={2}
+                required
+                value={redirects}
+                onChange={(e) => setRedirects(e.target.value)}
+                placeholder={`https://app.${placeholderText("domain")}/oauth/callback`}
+              />
             </label>
             {!grants.includes("client_credentials") && (
               <label className="check">
@@ -243,7 +250,13 @@ function OAuthAppsAdmin() {
           <label className="field" style={{ maxWidth: 320 }}>
             <span>{p("oauth.role")}</span>
             <select value={role} onChange={(e) => setRole(e.target.value)}>
-              {(roleOptions.length ? roleOptions : [{ value: "member", role: "member", name: null, permissions: null }, { value: "admin", role: "admin", name: null, permissions: null }]).map((o) => (
+              {(roleOptions.length
+                ? roleOptions
+                : [
+                    { value: "member", role: "member", name: null, permissions: null },
+                    { value: "admin", role: "admin", name: null, permissions: null },
+                  ]
+              ).map((o) => (
                 <option key={o.value} value={o.value} disabled={!canManagePerms(access, o.permissions)}>
                   {o.name ?? roleLabel(o.role)}
                 </option>
@@ -256,13 +269,24 @@ function OAuthAppsAdmin() {
           <div className="chips">
             {OAUTH_SCOPES.map((s) => (
               <label key={s} className="check" title={p(`scope.${s}`)}>
-                <input type="checkbox" checked={scopes.includes(s)} onChange={(e) => setScopes((cur) => toggle(cur, s, e.target.checked))} /> <code>{s}</code>
+                <input type="checkbox" checked={scopes.includes(s)} onChange={(e) => setScopes((cur) => toggle(cur, s, e.target.checked))} />{" "}
+                <code>{s}</code>
               </label>
             ))}
           </div>
         </fieldset>
         <div className="row-end">
-          <button className="btn btn-primary" disabled={busy || !name.trim() || grants.length === 0 || scopes.length === 0 || !inPlan || (grants.includes("client_credentials") && !roleGrantable)}>
+          <button
+            className="btn btn-primary"
+            disabled={
+              busy ||
+              !name.trim() ||
+              grants.length === 0 ||
+              scopes.length === 0 ||
+              !inPlan ||
+              (grants.includes("client_credentials") && !roleGrantable)
+            }
+          >
             {p("oauth.create")}
           </button>
         </div>
@@ -292,15 +316,24 @@ function OAuthAppsAdmin() {
                 <code className="small break">{a.clientId}</code>
                 <span className="muted small">
                   {a.grantTypes.map((g) => p(`oauth.grant.${g}`)).join(" · ")}
-                  {a.role ? ` · ${roleLabel(a.role, roleOptions.find((o) => o.value === `custom:${a.roleId}`)?.name)}` : ""} · {a.confidential ? <code>{a.secretPrefix}…</code> : p("oauth.public")}
+                  {a.role ? ` · ${roleLabel(a.role, roleOptions.find((o) => o.value === `custom:${a.roleId}`)?.name)}` : ""} ·{" "}
+                  {a.confidential ? <code>{a.secretPrefix}…</code> : p("oauth.public")}
                 </span>
-                <span className="small">{a.scopes.map((s) => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}</span>
+                <span className="small">
+                  {a.scopes.map((s) => (
+                    <code key={s} style={{ marginRight: 6 }}>
+                      {s}
+                    </code>
+                  ))}
+                </span>
                 {a.redirectUris.length > 0 && <span className="muted small break">{a.redirectUris.join(" · ")}</span>}
                 <span className="muted small">
                   {formatDateTime(a.createdAt, locale)} · {p("oauth.activeTokens", { n: a.activeTokens })}
                 </span>
               </div>
-              <span className={`badge ${a.revokedAt ? "badge-voided" : "badge-completed"}`}>{a.revokedAt ? p("oauth.revoked") : p("common.active")}</span>
+              <span className={`badge ${a.revokedAt ? "badge-voided" : "badge-completed"}`}>
+                {a.revokedAt ? p("oauth.revoked") : p("common.active")}
+              </span>
             </div>
             {!a.revokedAt && canManagePerms(access, permsOfRole(a.role, a.roleId)) && (
               <div className="row-wrap">
@@ -321,7 +354,11 @@ function OAuthAppsAdmin() {
                   </button>
                 )}
                 <span className="grow" />
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/oauth/apps/${a.id}`, { method: "DELETE" }))}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  onClick={() => confirmAction() && act(() => api(`/v1/oauth/apps/${a.id}`, { method: "DELETE" }))}
+                >
                   {p("oauth.revoke")}
                 </button>
               </div>
@@ -364,7 +401,11 @@ function ConnectedApps() {
               </span>
               <span className="small">{c.scopes.map((s) => p(`scope.${s}`)).join(" · ")}</span>
             </div>
-            <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/oauth/connected-apps/${c.clientId}`, { method: "DELETE" }))}>
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              onClick={() => confirmAction() && act(() => api(`/v1/oauth/connected-apps/${c.clientId}`, { method: "DELETE" }))}
+            >
               {p("oauth.disconnect")}
             </button>
           </div>
@@ -387,7 +428,8 @@ const CHANNELS: Record<NotificationKind, { label: string; url: string; name: str
   rocketchat: { label: "Rocket.Chat", url: "https://chat.{domain}/hooks/…", name: "#" },
   webex: { label: "Webex", url: "https://webexapis.com/v1/webhooks/incoming/…", name: "" },
 };
-const channelNamePlaceholder = (k: NotificationKind) => (CHANNELS[k].name ? `${CHANNELS[k].name}${placeholderText("chatChannel")}` : placeholderText("chatTeam"));
+const channelNamePlaceholder = (k: NotificationKind) =>
+  CHANNELS[k].name ? `${CHANNELS[k].name}${placeholderText("chatChannel")}` : placeholderText("chatTeam");
 const channelUrlPlaceholder = (k: NotificationKind) => interpolate(CHANNELS[k].url, { domain: placeholderText("domain") });
 
 export function NotificationIntegrationsPage() {
@@ -433,47 +475,51 @@ export function NotificationIntegrationsPage() {
           {t("common.needsViewAll")}
         </div>
       ) : (
-      <form onSubmit={add} className="card pad stack">
-        <fieldset className="field">
-          <span>{p("ntf.kind")}</span>
-          <div className="chips" role="radiogroup">
-            {NOTIFICATION_KINDS.map((k) => (
-              <label key={k} className="check">
-                <input type="radio" name="ntf-kind" value={k} checked={kind === k} onChange={() => setKind(k)} /> {CHANNELS[k].label}
-              </label>
-            ))}
+        <form onSubmit={add} className="card pad stack">
+          <fieldset className="field">
+            <span>{p("ntf.kind")}</span>
+            <div className="chips" role="radiogroup">
+              {NOTIFICATION_KINDS.map((k) => (
+                <label key={k} className="check">
+                  <input type="radio" name="ntf-kind" value={k} checked={kind === k} onChange={() => setKind(k)} /> {CHANNELS[k].label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="hint" role="note">
+            <strong>{p("ntf.how")}</strong> — {p(`ntf.how.${kind}`)}
           </div>
-        </fieldset>
-        <div className="hint" role="note">
-          <strong>{p("ntf.how")}</strong> — {p(`ntf.how.${kind}`)}
-        </div>
-        <div className="row-wrap">
-          <label className="field grow">
-            <span>{p("ntf.name")}</span>
-            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={channelNamePlaceholder(kind)} />
+          <div className="row-wrap">
+            <label className="field grow">
+              <span>{p("ntf.name")}</span>
+              <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={channelNamePlaceholder(kind)} />
+            </label>
+          </div>
+          <label className="field">
+            <span>{p("ntf.url")}</span>
+            <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={channelUrlPlaceholder(kind)} />
           </label>
-        </div>
-        <label className="field">
-          <span>{p("ntf.url")}</span>
-          <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={channelUrlPlaceholder(kind)} />
-        </label>
-        <fieldset className="field">
-          <span>{p("ntf.events")}</span>
-          <div className="chips">
-            {NOTIFICATION_EVENTS.map((ev) => (
-              <label key={ev} className="check">
-                <input type="checkbox" checked={events.includes(ev)} onChange={(e) => setEvents((cur) => (e.target.checked ? [...cur, ev] : cur.filter((x) => x !== ev)))} />{" "}
-                {p(`ntf.ev.${ev}`)}
-              </label>
-            ))}
+          <fieldset className="field">
+            <span>{p("ntf.events")}</span>
+            <div className="chips">
+              {NOTIFICATION_EVENTS.map((ev) => (
+                <label key={ev} className="check">
+                  <input
+                    type="checkbox"
+                    checked={events.includes(ev)}
+                    onChange={(e) => setEvents((cur) => (e.target.checked ? [...cur, ev] : cur.filter((x) => x !== ev)))}
+                  />{" "}
+                  {p(`ntf.ev.${ev}`)}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="row-end">
+            <button className="btn btn-primary" disabled={busy || !url || !name || events.length === 0}>
+              {p("ntf.add")}
+            </button>
           </div>
-        </fieldset>
-        <div className="row-end">
-          <button className="btn btn-primary" disabled={busy || !url || !name || events.length === 0}>
-            {p("ntf.add")}
-          </button>
-        </div>
-      </form>
+        </form>
       )}
 
       <ErrorBox error={error} />
@@ -498,38 +544,57 @@ export function NotificationIntegrationsPage() {
                 <code className="small break">{it.urlHint}</code>
                 <span className="muted small">{it.events.map((ev) => p(`ntf.ev.${ev}`)).join(" · ")}</span>
                 <span className="muted small">
-                  {it.lastSentAt ? p("ntf.last", { when: formatDateTime(it.lastSentAt, locale), status: it.lastStatus ? `HTTP ${it.lastStatus}` : it.lastError ?? "—" }) : p("common.never")}
+                  {it.lastSentAt
+                    ? p("ntf.last", {
+                        when: formatDateTime(it.lastSentAt, locale),
+                        status: it.lastStatus ? `HTTP ${it.lastStatus}` : (it.lastError ?? "—"),
+                      })
+                    : p("common.never")}
                 </span>
-                {it.lastError && <span className="small" style={{ color: "#b91c1c" }}>{it.lastError}</span>}
+                {it.lastError && (
+                  <span className="small" style={{ color: "#b91c1c" }}>
+                    {it.lastError}
+                  </span>
+                )}
               </div>
-              <span className={`badge ${it.active ? "badge-completed" : "badge-voided"}`}>{it.active ? p("common.active") : p("common.inactive")}</span>
+              <span className={`badge ${it.active ? "badge-completed" : "badge-voided"}`}>
+                {it.active ? p("common.active") : p("common.inactive")}
+              </span>
             </div>
             {canEdit && (
-            <div className="row-wrap">
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() =>
-                  act(async () => {
-                    // Como en almacenamiento: el aviso de una prueba anterior no queda a la vista, y una prueba fallida
-                    // se muestra como error (antes salía en el recuadro verde de éxito).
-                    setNote(null);
-                    const r = await api<{ ok: boolean; error: string | null }>(`/v1/notification-integrations/${it.id}/test`, { method: "POST" });
-                    if (r.ok) setNote(p("ntf.testOk"));
-                    else setError(p("ntf.testFail", { error: r.error ?? "?" }));
-                  })
-                }
-              >
-                {p("common.test")}
-              </button>
-              <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/notification-integrations/${it.id}`, { method: "PATCH", body: { active: !it.active } }))}>
-                {it.active ? p("common.deactivate") : p("common.activate")}
-              </button>
-              <span className="grow" />
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/notification-integrations/${it.id}`, { method: "DELETE" }))}>
-                {p("common.delete")}
-              </button>
-            </div>
+              <div className="row-wrap">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() =>
+                    act(async () => {
+                      // Como en almacenamiento: el aviso de una prueba anterior no queda a la vista, y una prueba fallida
+                      // se muestra como error (antes salía en el recuadro verde de éxito).
+                      setNote(null);
+                      const r = await api<{ ok: boolean; error: string | null }>(`/v1/notification-integrations/${it.id}/test`, { method: "POST" });
+                      if (r.ok) setNote(p("ntf.testOk"));
+                      else setError(p("ntf.testFail", { error: r.error ?? "?" }));
+                    })
+                  }
+                >
+                  {p("common.test")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => act(() => api(`/v1/notification-integrations/${it.id}`, { method: "PATCH", body: { active: !it.active } }))}
+                >
+                  {it.active ? p("common.deactivate") : p("common.activate")}
+                </button>
+                <span className="grow" />
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  onClick={() => confirmAction() && act(() => api(`/v1/notification-integrations/${it.id}`, { method: "DELETE" }))}
+                >
+                  {p("common.delete")}
+                </button>
+              </div>
             )}
           </div>
         ))
@@ -643,7 +708,15 @@ export function StoragePage() {
       window.location.href = r.authorizeUrl;
     });
 
-  const [s3, setS3] = useState({ name: "", endpoint: "https://s3.us-east-1.amazonaws.com", region: "us-east-1", bucket: "", prefix: "calasign", accessKeyId: "", secretAccessKey: "" });
+  const [s3, setS3] = useState({
+    name: "",
+    endpoint: "https://s3.us-east-1.amazonaws.com",
+    region: "us-east-1",
+    bucket: "",
+    prefix: "calasign",
+    accessKeyId: "",
+    secretAccessKey: "",
+  });
   const [busy, setBusy] = useState(false);
   const addS3 = async (e: FormEvent) => {
     e.preventDefault();
@@ -676,98 +749,121 @@ export function StoragePage() {
           {t("common.needsViewAll")}
         </div>
       ) : (
-      <>
-      {!providers ? (
-        <Spinner />
-      ) : (
-        <div className="settings-grid">
-          {providers
-            .filter((pv) => pv.provider !== "s3")
-            .map((pv) => (
-              <div key={pv.provider} className="card pad stack">
-                <strong>{p(`sto.p.${pv.provider}`)}</strong>
-                {pv.configured ? (
-                  <>
-                    <label className="field">
-                      <span>{p("sto.name")}</span>
-                      <input value={oauthName[pv.provider] ?? ""} placeholder={p(`sto.p.${pv.provider}`)} onChange={(e) => setOauthName((c) => ({ ...c, [pv.provider]: e.target.value }))} />
-                    </label>
-                    <label className="field">
-                      <span>{p("sto.folder")}</span>
-                      <input value={oauthFolder[pv.provider] ?? ""} placeholder="CalaSign" onChange={(e) => setOauthFolder((c) => ({ ...c, [pv.provider]: e.target.value }))} />
-                      <span className="small muted">{p("sto.folder.hint")}</span>
-                    </label>
-                    {pv.provider === "sharepoint" && (
+        <>
+          {!providers ? (
+            <Spinner />
+          ) : (
+            <div className="settings-grid">
+              {providers
+                .filter((pv) => pv.provider !== "s3")
+                .map((pv) => (
+                  <div key={pv.provider} className="card pad stack">
+                    <strong>{p(`sto.p.${pv.provider}`)}</strong>
+                    {pv.configured ? (
                       <>
                         <label className="field">
-                          <span>{cn("sto.siteUrl")}</span>
-                          <input type="url" required value={siteUrl} placeholder="https://empresa.sharepoint.com/sites/Legal" onChange={(e) => setSiteUrl(e.target.value)} />
+                          <span>{p("sto.name")}</span>
+                          <input
+                            value={oauthName[pv.provider] ?? ""}
+                            placeholder={p(`sto.p.${pv.provider}`)}
+                            onChange={(e) => setOauthName((c) => ({ ...c, [pv.provider]: e.target.value }))}
+                          />
                         </label>
                         <label className="field">
-                          <span>{cn("sto.library")}</span>
-                          <input value={library} onChange={(e) => setLibrary(e.target.value)} />
+                          <span>{p("sto.folder")}</span>
+                          <input
+                            value={oauthFolder[pv.provider] ?? ""}
+                            placeholder="CalaSign"
+                            onChange={(e) => setOauthFolder((c) => ({ ...c, [pv.provider]: e.target.value }))}
+                          />
+                          <span className="small muted">{p("sto.folder.hint")}</span>
                         </label>
+                        {pv.provider === "sharepoint" && (
+                          <>
+                            <label className="field">
+                              <span>{cn("sto.siteUrl")}</span>
+                              <input
+                                type="url"
+                                required
+                                value={siteUrl}
+                                placeholder="https://empresa.sharepoint.com/sites/Legal"
+                                onChange={(e) => setSiteUrl(e.target.value)}
+                              />
+                            </label>
+                            <label className="field">
+                              <span>{cn("sto.library")}</span>
+                              <input value={library} onChange={(e) => setLibrary(e.target.value)} />
+                            </label>
+                          </>
+                        )}
+                        <label className="row-wrap small">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(withEvidence[pv.provider])}
+                            onChange={(e) => setWithEvidence((c) => ({ ...c, [pv.provider]: e.target.checked }))}
+                          />
+                          {cn("sto.evidence")}
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={pv.provider === "sharepoint" && !siteUrl}
+                          onClick={() => startOAuth(pv.provider)}
+                        >
+                          {p("sto.connect")}
+                        </button>
                       </>
+                    ) : (
+                      <span className="badge badge-voided">{p("common.notConfigured")}</span>
                     )}
-                    <label className="row-wrap small">
-                      <input type="checkbox" checked={Boolean(withEvidence[pv.provider])} onChange={(e) => setWithEvidence((c) => ({ ...c, [pv.provider]: e.target.checked }))} />
-                      {cn("sto.evidence")}
-                    </label>
-                    <button type="button" className="btn btn-primary" disabled={pv.provider === "sharepoint" && !siteUrl} onClick={() => startOAuth(pv.provider)}>
-                      {p("sto.connect")}
-                    </button>
-                  </>
-                ) : (
-                  <span className="badge badge-voided">{p("common.notConfigured")}</span>
-                )}
-              </div>
-            ))}
-        </div>
-      )}
+                  </div>
+                ))}
+            </div>
+          )}
 
-      <form onSubmit={addS3} className="card pad stack" style={{ marginTop: 16 }}>
-        <strong>{p("sto.p.s3")}</strong>
-        <div className="row-wrap">
-          <label className="field grow">
-            <span>{p("sto.s3.endpoint")}</span>
-            <input type="url" required value={s3.endpoint} onChange={set("endpoint")} />
-          </label>
-          <label className="field">
-            <span>{p("sto.s3.region")}</span>
-            <input required value={s3.region} onChange={set("region")} />
-          </label>
-        </div>
-        <div className="row-wrap">
-          <label className="field grow">
-            <span>{p("sto.s3.bucket")}</span>
-            <input required value={s3.bucket} onChange={set("bucket")} />
-          </label>
-          <label className="field grow">
-            <span>{p("sto.s3.prefix")}</span>
-            <input value={s3.prefix} onChange={set("prefix")} />
-          </label>
-          <label className="field grow">
-            <span>{p("sto.name")}</span>
-            <input value={s3.name} onChange={set("name")} placeholder={s3.bucket} />
-          </label>
-        </div>
-        <div className="row-wrap">
-          <label className="field grow">
-            <span>{p("sto.s3.key")}</span>
-            <input required autoComplete="off" value={s3.accessKeyId} onChange={set("accessKeyId")} />
-          </label>
-          <label className="field grow">
-            <span>{p("sto.s3.secret")}</span>
-            <input required type="password" autoComplete="new-password" value={s3.secretAccessKey} onChange={set("secretAccessKey")} />
-          </label>
-        </div>
-        <div className="row-end">
-          <button className="btn btn-primary" disabled={busy}>
-            {p("sto.s3.add")}
-          </button>
-        </div>
-      </form>
-      </>
+          <form onSubmit={addS3} className="card pad stack" style={{ marginTop: 16 }}>
+            <strong>{p("sto.p.s3")}</strong>
+            <div className="row-wrap">
+              <label className="field grow">
+                <span>{p("sto.s3.endpoint")}</span>
+                <input type="url" required value={s3.endpoint} onChange={set("endpoint")} />
+              </label>
+              <label className="field">
+                <span>{p("sto.s3.region")}</span>
+                <input required value={s3.region} onChange={set("region")} />
+              </label>
+            </div>
+            <div className="row-wrap">
+              <label className="field grow">
+                <span>{p("sto.s3.bucket")}</span>
+                <input required value={s3.bucket} onChange={set("bucket")} />
+              </label>
+              <label className="field grow">
+                <span>{p("sto.s3.prefix")}</span>
+                <input value={s3.prefix} onChange={set("prefix")} />
+              </label>
+              <label className="field grow">
+                <span>{p("sto.name")}</span>
+                <input value={s3.name} onChange={set("name")} placeholder={s3.bucket} />
+              </label>
+            </div>
+            <div className="row-wrap">
+              <label className="field grow">
+                <span>{p("sto.s3.key")}</span>
+                <input required autoComplete="off" value={s3.accessKeyId} onChange={set("accessKeyId")} />
+              </label>
+              <label className="field grow">
+                <span>{p("sto.s3.secret")}</span>
+                <input required type="password" autoComplete="new-password" value={s3.secretAccessKey} onChange={set("secretAccessKey")} />
+              </label>
+            </div>
+            <div className="row-end">
+              <button className="btn btn-primary" disabled={busy}>
+                {p("sto.s3.add")}
+              </button>
+            </div>
+          </form>
+        </>
       )}
 
       <h2 style={{ marginTop: 24 }}>{p("sto.connections")}</h2>
@@ -797,48 +893,70 @@ export function StoragePage() {
                     })}
                   </span>
                 )}
-                <span className="muted small">{c.lastSuccessAt ? p("sto.lastOk", { when: formatDateTime(c.lastSuccessAt, locale) }) : p("common.never")}</span>
-                {c.deactivatedReason === "creator_removed" && <span className="small" style={{ color: "#b91c1c" }}>{p("sto.creatorRemoved")}</span>}
-                {c.lastError && <span className="small" style={{ color: "#b91c1c" }}>{c.lastError}</span>}
+                <span className="muted small">
+                  {c.lastSuccessAt ? p("sto.lastOk", { when: formatDateTime(c.lastSuccessAt, locale) }) : p("common.never")}
+                </span>
+                {c.deactivatedReason === "creator_removed" && (
+                  <span className="small" style={{ color: "#b91c1c" }}>
+                    {p("sto.creatorRemoved")}
+                  </span>
+                )}
+                {c.lastError && (
+                  <span className="small" style={{ color: "#b91c1c" }}>
+                    {c.lastError}
+                  </span>
+                )}
               </div>
               <span className={`badge ${c.active ? "badge-completed" : "badge-voided"}`}>{c.active ? p("common.active") : p("common.inactive")}</span>
             </div>
             {canEdit && (
-            <div className="row-wrap">
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() =>
-                  act(async () => {
-                    // Sin esto, el "prueba correcta" de otra conexión seguía a la vista junto al error de esta.
-                    setNote(null);
-                    const r = await api<{ ok: boolean; ref: string | null; error: string | null }>(`/v1/storage/connections/${c.id}/test`, { method: "POST" });
-                    if (r.ok) setNote(p("sto.testOk", { ref: r.ref ?? "" }));
-                    else setError(r.error);
-                  })
-                }
-              >
-                {p("common.test")}
-              </button>
-              {/* Desactivada porque quien la conectó dejó la organización: no se reactiva, hay que volver a conectarla. */}
-              {!(c.deactivatedReason === "creator_removed" && !c.active) && (
-                <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
-                  {c.active ? p("common.deactivate") : p("common.activate")}
+              <div className="row-wrap">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() =>
+                    act(async () => {
+                      // Sin esto, el "prueba correcta" de otra conexión seguía a la vista junto al error de esta.
+                      setNote(null);
+                      const r = await api<{ ok: boolean; ref: string | null; error: string | null }>(`/v1/storage/connections/${c.id}/test`, {
+                        method: "POST",
+                      });
+                      if (r.ok) setNote(p("sto.testOk", { ref: r.ref ?? "" }));
+                      else setError(r.error);
+                    })
+                  }
+                >
+                  {p("common.test")}
                 </button>
-              )}
-              <label className="row-wrap small">
-                <input
-                  type="checkbox"
-                  checked={c.includeEvidence}
-                  onChange={(e) => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { includeEvidence: e.target.checked } }))}
-                />
-                {cn("sto.evidence")}
-              </label>
-              <span className="grow" />
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/storage/connections/${c.id}`, { method: "DELETE" }))}>
-                {p("common.delete")}
-              </button>
-            </div>
+                {/* Desactivada porque quien la conectó dejó la organización: no se reactiva, hay que volver a conectarla. */}
+                {!(c.deactivatedReason === "creator_removed" && !c.active) && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}
+                  >
+                    {c.active ? p("common.deactivate") : p("common.activate")}
+                  </button>
+                )}
+                <label className="row-wrap small">
+                  <input
+                    type="checkbox"
+                    checked={c.includeEvidence}
+                    onChange={(e) =>
+                      act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { includeEvidence: e.target.checked } }))
+                    }
+                  />
+                  {cn("sto.evidence")}
+                </label>
+                <span className="grow" />
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  onClick={() => confirmAction() && act(() => api(`/v1/storage/connections/${c.id}`, { method: "DELETE" }))}
+                >
+                  {p("common.delete")}
+                </button>
+              </div>
             )}
           </div>
         ))
@@ -873,12 +991,20 @@ export function StoragePage() {
                     <div className="muted small">{x.connectionName}</div>
                   </td>
                   <td className="small">
-                    <span className={`badge ${x.status === "succeeded" ? "badge-completed" : x.status === "failed" ? "badge-declined" : "badge-sent"}`}>{p(`sto.st.${x.status}`)}</span>
+                    <span
+                      className={`badge ${x.status === "succeeded" ? "badge-completed" : x.status === "failed" ? "badge-declined" : "badge-sent"}`}
+                    >
+                      {p(`sto.st.${x.status}`)}
+                    </span>
                     <div className="muted break">{x.status === "succeeded" ? x.remoteRef : x.error}</div>
                   </td>
                   <td>
                     {canEdit && (x.status === "failed" || (x.status === "pending" && Date.now() - new Date(x.updatedAt).getTime() > 15 * 60_000)) && (
-                      <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/exports/${x.id}/retry`, { method: "POST" }))}>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => act(() => api(`/v1/storage/exports/${x.id}/retry`, { method: "POST" }))}
+                      >
                         {p("common.retry")}
                       </button>
                     )}
@@ -962,7 +1088,9 @@ export function CustomDomainPage() {
               <input required value={input} onChange={(e) => setInput(e.target.value)} placeholder={dom?.domain ?? "firmas.tuempresa.com"} />
             </label>
             <div style={{ alignSelf: "flex-end" }}>
-              <button className="btn btn-primary" disabled={saving || !inPlan}>{p("dom.set")}</button>
+              <button className="btn btn-primary" disabled={saving || !inPlan}>
+                {p("dom.set")}
+              </button>
             </div>
           </form>
 
@@ -993,7 +1121,11 @@ export function CustomDomainPage() {
                 </p>
               )}
               {dom.lastCheckedAt && <span className="muted small">{p("dom.lastCheck", { when: formatDateTime(dom.lastCheckedAt, locale) })}</span>}
-              {dom.lastError && dom.status !== "verified" && <span className="small" style={{ color: "#b91c1c" }}>{dom.lastError}</span>}
+              {dom.lastError && dom.status !== "verified" && (
+                <span className="small" style={{ color: "#b91c1c" }}>
+                  {dom.lastError}
+                </span>
+              )}
               <div className="row-wrap">
                 {dom.status !== "verified" && (
                   <button type="button" className="btn btn-primary btn-sm" onClick={() => act(() => api("/v1/domains/verify", { method: "POST" }))}>
@@ -1001,7 +1133,11 @@ export function CustomDomainPage() {
                   </button>
                 )}
                 <span className="grow" />
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api("/v1/domains", { method: "DELETE" }))}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  onClick={() => confirmAction() && act(() => api("/v1/domains", { method: "DELETE" }))}
+                >
                   {p("dom.remove")}
                 </button>
               </div>

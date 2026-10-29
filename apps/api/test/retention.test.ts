@@ -23,18 +23,22 @@ describe("retención", () => {
       const env = uuidv7();
       const orig = uuidv7();
       const signed = uuidv7();
-      await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'x')`, [orig, tenant, `o-${orig}`]);
-      await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',1,'y')`, [signed, tenant, `s-${signed}`]);
+      await db.query(
+        `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'x')`,
+        [orig, tenant, `o-${orig}`],
+      );
+      await db.query(
+        `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',1,'y')`,
+        [signed, tenant, `s-${signed}`],
+      );
       await db.query(
         `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id) VALUES ($1,$2,'S','completed', now() - make_interval(days => $3), $4)`,
         [env, tenant, completedDaysAgo, signed],
       );
-      await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`, [
-        uuidv7(),
-        tenant,
-        env,
-        orig,
-      ]);
+      await db.query(
+        `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`,
+        [uuidv7(), tenant, env, orig],
+      );
       return { env, orig, signed };
     };
     const old = await mk(45);

@@ -98,7 +98,8 @@ function recipientProblem(r: DraftRecipient): Parameters<ReturnType<typeof useSi
     return "edit.otpNeedsContact";
   }
   // La API lo rechaza (missing_id_document): exigir que el certificado corresponda al documento sin documento cargado.
-  if (r.role === "signer" && r.cert.signatureType === "certificate" && r.cert.matchIdDocument && !r.idDocumentNumber.trim()) return "edit.certNeedsIdDocument";
+  if (r.role === "signer" && r.cert.signatureType === "certificate" && r.cert.matchIdDocument && !r.idDocumentNumber.trim())
+    return "edit.certNeedsIdDocument";
   return null;
 }
 
@@ -194,13 +195,16 @@ export function EnvelopeEditPage() {
     }
   }, []);
 
-  const apply = useCallback((d: EnvelopeDetail) => {
-    track(d);
-    setRecipients(toDraftRecipients(d));
-    setFields(toDraftFields(d));
-    setRecDirty(false);
-    setFieldsDirty(false);
-  }, [track]);
+  const apply = useCallback(
+    (d: EnvelopeDetail) => {
+      track(d);
+      setRecipients(toDraftRecipients(d));
+      setFields(toDraftFields(d));
+      setRecDirty(false);
+      setFieldsDirty(false);
+    },
+    [track],
+  );
 
   /** Recarga el borrador tras un 409 version_changed (descarta lo no guardado, con confirmación). */
   const reload = async () => {
@@ -281,7 +285,10 @@ export function EnvelopeEditPage() {
       setFieldsDirty(false);
       return true;
     } catch (e) {
-      fail(e, recipients.map((r) => r.name.trim()));
+      fail(
+        e,
+        recipients.map((r) => r.name.trim()),
+      );
       return false;
     } finally {
       setBusy(false);
@@ -372,7 +379,14 @@ export function EnvelopeEditPage() {
   };
 
   if (notFound) return <Navigate to="/app" replace />;
-  if (!detail) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
+  if (!detail)
+    return error ? (
+      <div className="page">
+        <ErrorBox error={error} />
+      </div>
+    ) : (
+      <Spinner />
+    );
   // Quien solo puede ver el borrador (por un grupo, como anfitrión o con view_all) lo ve en el detalle, de solo lectura:
   // el asistente le dejaba editar todo y cada guardado daba 403.
   if (detail.envelope.status !== "draft" || detail.canManage === false) return <Navigate to={`/app/envelopes/${id}`} replace />;
@@ -804,7 +818,9 @@ function RecipientsStep({
                 </label>
               )}
               {r.role !== "cc" && <IdentitySelect value={r.idVerification} onChange={(v) => set(i, { idVerification: v })} />}
-              {r.role === "signer" && <CertificateOption value={r.cert} hasIdDocument={!!r.idDocumentNumber.trim()} onChange={(v) => set(i, { cert: v })} />}
+              {r.role === "signer" && (
+                <CertificateOption value={r.cert} hasIdDocument={!!r.idDocumentNumber.trim()} onChange={(v) => set(i, { cert: v })} />
+              )}
               <label className="field">
                 <span>{t("edit.locale")}</span>
                 <select value={r.locale} onChange={(e) => set(i, { locale: e.target.value as Locale | "" })}>
@@ -1079,7 +1095,10 @@ function ReviewStep({
             <li key={d.id}>
               <span className="doc-icon">PDF</span>
               <div className="grow">
-                {d.name} <span className="muted small">· {d.pageCount} {t("edit.pages")}</span>
+                {d.name}{" "}
+                <span className="muted small">
+                  · {d.pageCount} {t("edit.pages")}
+                </span>
               </div>
             </li>
           ))}
@@ -1098,9 +1117,7 @@ function ReviewStep({
                     {r.authMethod !== "link" ? ` · 🔒 ${authLabel(r.authMethod)}` : ""}
                   </span>
                   <div className="muted small">{[r.email, r.phone].filter(Boolean).join(" · ")}</div>
-                  {r.role === "signer" && (
-                    <div className="small">{tn("edit.fieldsCount", count)}</div>
-                  )}
+                  {r.role === "signer" && <div className="small">{tn("edit.fieldsCount", count)}</div>}
                 </div>
               </li>
             );

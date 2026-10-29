@@ -59,7 +59,11 @@ export const LOWCODE_OPS: Op[] = [
       "Hasta `limit` (1–10, por defecto 3) eventos con la forma exacta de una entrega, armados con los últimos sobres de la organización en el estado del evento; " +
       "si no hay, uno sintético. Sirven de datos de prueba en Zapier (performList), Make y n8n.",
     query: [
-      { name: "event", description: `Tipo de evento (por defecto envelope.completed): ${WEBHOOK_EVENT_TYPES.join(", ")}`, schema: { type: "string", enum: [...WEBHOOK_EVENT_TYPES] } },
+      {
+        name: "event",
+        description: `Tipo de evento (por defecto envelope.completed): ${WEBHOOK_EVENT_TYPES.join(", ")}`,
+        schema: { type: "string", enum: [...WEBHOOK_EVENT_TYPES] },
+      },
       { name: "limit", description: "1 a 10", schema: { type: "integer", minimum: 1, maximum: 10 } },
     ],
     response: z.object({ items: z.array(WebhookEventSchema) }),

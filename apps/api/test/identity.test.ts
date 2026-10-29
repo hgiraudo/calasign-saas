@@ -2,7 +2,15 @@ import { createHmac, generateKeyPairSync, sign as cryptoSign } from "node:crypto
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { matchIdentity, nameScore, normalizeDocumentNumber } from "../src/modules/identity/namematch";
-import { getAdapter, mapTruoraProcess, mapVeriffDecision, mockDecide, veriffSignature, verifyHs256Jwt, WebhookSignatureError } from "../src/modules/identity/providers";
+import {
+  getAdapter,
+  mapTruoraProcess,
+  mapVeriffDecision,
+  mockDecide,
+  veriffSignature,
+  verifyHs256Jwt,
+  WebhookSignatureError,
+} from "../src/modules/identity/providers";
 import { parseFilter, userPatchToAttrs } from "../src/modules/identity/scim";
 import { normalizeCert, validateIdToken } from "../src/modules/identity/sso";
 
@@ -85,7 +93,11 @@ describe("coincidencia de nombres", () => {
   });
   it("compara números de documento sin separadores", () => {
     expect(normalizeDocumentNumber("001-1234567-8")).toBe(normalizeDocumentNumber("00112345678"));
-    const r = matchIdentity({ name: "María José Gómez", documentNumber: "001-1234567-8" }, { fullName: "MARIA JOSE GOMEZ PEREZ", firstName: null, lastName: null, documentNumber: "00112345679" }, 0.8);
+    const r = matchIdentity(
+      { name: "María José Gómez", documentNumber: "001-1234567-8" },
+      { fullName: "MARIA JOSE GOMEZ PEREZ", firstName: null, lastName: null, documentNumber: "00112345679" },
+      0.8,
+    );
     expect(r.matched).toBe(true);
     expect(r.documentNumberMatched).toBe(false);
   });
@@ -95,17 +107,39 @@ describe("proveedor de prueba", () => {
   const settings = { decision: "approve" as const, extractedName: null, extractedDocumentNumber: null };
   const caps = (kinds: string[], same = false) => kinds.map((k, i) => ({ kind: k as any, sha256: same ? "x" : `h${i}` }));
   it("aprueba con todas las capturas y prueba de vida", () => {
-    const r = mockDecide("document_selfie_liveness", caps(["document_front", "document_back", "selfie", "selfie_liveness"]), settings, { name: "Ana Pérez", documentNumber: "123" }, "v1");
+    const r = mockDecide(
+      "document_selfie_liveness",
+      caps(["document_front", "document_back", "selfie", "selfie_liveness"]),
+      settings,
+      { name: "Ana Pérez", documentNumber: "123" },
+      "v1",
+    );
     expect(r.status).toBe("approved");
     expect(r.liveness).toBe(true);
     expect(r.person.fullName).toBe("Ana Pérez");
     expect(r.document.number).toBe("123");
   });
   it("rechaza capturas faltantes, frente/dorso iguales, rostro y vida", () => {
-    expect(mockDecide("document_selfie", caps(["document_front", "document_back"]), settings, { name: "A B", documentNumber: null }, "v").declineReason).toMatch(/missing_captures/);
-    expect(mockDecide("document", caps(["document_front", "document_back"], true), settings, { name: "A B", documentNumber: null }, "v").declineReason).toBe("document_front_back_identical");
-    expect(mockDecide("document_selfie", caps(["document_front", "document_back", "selfie"]), { ...settings, decision: "reject_face" }, { name: "A B", documentNumber: null }, "v").status).toBe("declined");
-    const same = [...caps(["document_front", "document_back"]), { kind: "selfie" as const, sha256: "s" }, { kind: "selfie_liveness" as const, sha256: "s" }];
+    expect(
+      mockDecide("document_selfie", caps(["document_front", "document_back"]), settings, { name: "A B", documentNumber: null }, "v").declineReason,
+    ).toMatch(/missing_captures/);
+    expect(
+      mockDecide("document", caps(["document_front", "document_back"], true), settings, { name: "A B", documentNumber: null }, "v").declineReason,
+    ).toBe("document_front_back_identical");
+    expect(
+      mockDecide(
+        "document_selfie",
+        caps(["document_front", "document_back", "selfie"]),
+        { ...settings, decision: "reject_face" },
+        { name: "A B", documentNumber: null },
+        "v",
+      ).status,
+    ).toBe("declined");
+    const same = [
+      ...caps(["document_front", "document_back"]),
+      { kind: "selfie" as const, sha256: "s" },
+      { kind: "selfie_liveness" as const, sha256: "s" },
+    ];
     expect(mockDecide("document_selfie_liveness", same, settings, { name: "A B", documentNumber: null }, "v").declineReason).toBe("liveness_failed");
   });
 });
@@ -122,7 +156,10 @@ describe("Veriff", () => {
       status: "review",
       riskFlags: ["resubmission_requested"],
     });
-    expect(mapVeriffDecision({ ...VERIFF_DECISION.verification, status: "declined", reason: "Fraud" })).toMatchObject({ status: "declined", declineReason: "Fraud" });
+    expect(mapVeriffDecision({ ...VERIFF_DECISION.verification, status: "declined", reason: "Fraud" })).toMatchObject({
+      status: "declined",
+      declineReason: "Fraud",
+    });
   });
   it("verifica la firma HMAC del webhook", () => {
     process.env.VERIFF_API_KEY = "k";
@@ -149,7 +186,9 @@ describe("Truora", () => {
   });
   it("verifica el JWT HS256 del webhook", () => {
     const h = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-    const p = Buffer.from(JSON.stringify({ events: [{ event_type: "digital-identity", event_action: "succeeded", object: { ...TRUORA_RESULT } }] })).toString("base64url");
+    const p = Buffer.from(
+      JSON.stringify({ events: [{ event_type: "digital-identity", event_action: "succeeded", object: { ...TRUORA_RESULT } }] }),
+    ).toString("base64url");
     const s = createHmac("sha256", "whsec").update(`${h}.${p}`).digest("base64url");
     expect(verifyHs256Jwt(`${h}.${p}.${s}`, "whsec").events[0].object.account_id).toBe(TRUORA_RESULT.account_id);
     expect(() => verifyHs256Jwt(`${h}.${p}.${s}`, "otro")).toThrow(WebhookSignatureError);
@@ -211,7 +250,9 @@ describe("nivel exigido", () => {
     expect(levelSatisfied("document_selfie_liveness", { ...docOnly, faceMatchScore: 0.95, liveness: true }, 0.8)).toBe(true);
     // Veriff aprobado sin datos biométricos en la decisión.
     expect(levelSatisfied("document_selfie", mapVeriffDecision(VERIFF_DECISION.verification), 0.8)).toBe(false);
-    expect(levelSatisfied("document_selfie", mapVeriffDecision({ ...VERIFF_DECISION.verification, faceMatch: { similarity: 0.91 } }), 0.8)).toBe(true);
+    expect(levelSatisfied("document_selfie", mapVeriffDecision({ ...VERIFF_DECISION.verification, faceMatch: { similarity: 0.91 } }), 0.8)).toBe(
+      true,
+    );
   });
   it("distingue el dato contrario explícito (consume un intento) del dato faltante (level_not_met, configuración)", async () => {
     const { levelFailure } = await import("../src/modules/identity/kyc");
@@ -246,8 +287,13 @@ describe("nivel exigido", () => {
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "document").inferred).toEqual([]);
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "none").inferred).toEqual([]);
       (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document_selfie";
-      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ result: { faceMatched: true, liveness: null }, inferred: ["faceMatched"] });
-      expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(null);
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({
+        result: { faceMatched: true, liveness: null },
+        inferred: ["faceMatched"],
+      });
+      expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(
+        null,
+      );
       expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, status: "declined" }, 0.8).inferred).toEqual([]);
     } finally {
       (config.identity as { veriffIntegrationLevel: string | null }).veriffIntegrationLevel = prevLevel;
@@ -290,8 +336,13 @@ describe("SCIM", () => {
   });
   it("reduce operaciones PATCH de Azure AD y Okta", () => {
     expect(userPatchToAttrs([{ op: "Replace", path: "active", value: "False" }])).toEqual({ active: "False" });
-    expect(userPatchToAttrs([{ op: "replace", value: { active: false, "name.givenName": "Ana" } }])).toEqual({ active: false, "name.givenName": "Ana" });
-    expect(userPatchToAttrs([{ op: "replace", path: 'emails[type eq "work"].value', value: "Nuevo@Correo.com" }])).toEqual({ userName: "nuevo@correo.com" });
+    expect(userPatchToAttrs([{ op: "replace", value: { active: false, "name.givenName": "Ana" } }])).toEqual({
+      active: false,
+      "name.givenName": "Ana",
+    });
+    expect(userPatchToAttrs([{ op: "replace", path: 'emails[type eq "work"].value', value: "Nuevo@Correo.com" }])).toEqual({
+      userName: "nuevo@correo.com",
+    });
     expect(() => userPatchToAttrs([{ op: "move", path: "active", value: true }])).toThrow();
   });
 });

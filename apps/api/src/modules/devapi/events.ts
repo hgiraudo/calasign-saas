@@ -51,14 +51,17 @@ interface Filters {
 function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   // Una clave repetida (?after=1&after=2) llega como array: `.trim()` respondía 500 (como en audit.ts).
   for (const k of ["after", "since", "envelope_id", "scope"] as const) {
-    if (q[k] !== undefined && typeof q[k] !== "string") throw badRequest("validation_error", `${k} admite un solo valor`, [{ path: k, message: "un solo valor" }]);
+    if (q[k] !== undefined && typeof q[k] !== "string")
+      throw badRequest("validation_error", `${k} admite un solo valor`, [{ path: k, message: "un solo valor" }]);
   }
   const all = q.scope === "all";
-  if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
+  if (q.scope && q.scope !== "all" && q.scope !== "webhook")
+    throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
   // Last-Event-ID primero: EventSource reconecta con la MISMA URL, así que con `?after=X` en ella cada reconexión (a los
   // max_seconds) volvía a empezar en X y repetía todo lo ya entregado; el header trae el último id recibido.
   const after = (lastEventId ?? q.after ?? "").trim() || null;
-  if (after && !CURSOR_RE.test(after) && !TX_CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
+  if (after && !CURSOR_RE.test(after) && !TX_CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after))
+    throw badRequest("invalid_cursor", "Cursor inválido");
   let since: string | null = null;
   if (q.since) {
     const t = Date.parse(q.since);
@@ -68,10 +71,14 @@ function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   const types = queryList(q.types);
   if (!all) {
     const bad = types.filter((t) => !(WEBHOOK_EVENT_TYPES as readonly string[]).includes(t));
-    if (bad.length) throw badRequest("validation_error", `types desconocidos: ${bad.join(", ")}`, [{ path: "types", message: `válidos: ${WEBHOOK_EVENT_TYPES.join(", ")}` }]);
+    if (bad.length)
+      throw badRequest("validation_error", `types desconocidos: ${bad.join(", ")}`, [
+        { path: "types", message: `válidos: ${WEBHOOK_EVENT_TYPES.join(", ")}` },
+      ]);
   }
   const envelopeId = q.envelope_id?.trim() || null;
-  if (envelopeId && !/^[0-9a-f-]{36}$/i.test(envelopeId)) throw badRequest("validation_error", "envelope_id inválido", [{ path: "envelope_id", message: "uuid" }]);
+  if (envelopeId && !/^[0-9a-f-]{36}$/i.test(envelopeId))
+    throw badRequest("validation_error", "envelope_id inválido", [{ path: "envelope_id", message: "uuid" }]);
   return { after, since, types, envelopeId, all };
 }
 
@@ -240,11 +247,17 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const startAfter = f.after || f.since ? f.after : await currentCursor(s, a.tenantId);
     const maxSec = Math.min(3600, Math.max(60, Math.trunc(Number(req.query.max_seconds ?? 300)) || 300));
     if (shuttingDown) {
-      return reply.code(503).header("retry-after", "5").send({ error: { code: "shutting_down", message: "El servidor se está reiniciando" } });
+      return reply
+        .code(503)
+        .header("retry-after", "5")
+        .send({ error: { code: "shutting_down", message: "El servidor se está reiniciando" } });
     }
     const n = openStreams.get(a.tenantId) ?? 0;
     if (n >= MAX_STREAMS_PER_TENANT) {
-      return reply.code(429).header("retry-after", "30").send({ error: { code: "too_many_streams", message: `Máximo ${MAX_STREAMS_PER_TENANT} streams abiertos por organización` } });
+      return reply
+        .code(429)
+        .header("retry-after", "30")
+        .send({ error: { code: "too_many_streams", message: `Máximo ${MAX_STREAMS_PER_TENANT} streams abiertos por organización` } });
     }
     openStreams.set(a.tenantId, n + 1);
     reply.hijack();
@@ -290,9 +303,14 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const sessionToken = bearer ? null : (sessionCookieToken(req) ?? null);
     const stillAllowed = async () => {
       if (oauthToken && !(await resolveAccessToken(s.db, oauthToken))) return false;
-      if (sessionToken && !(await s.db.one(`SELECT 1 FROM sessions s WHERE s.token_hash = $1 AND ${sessionAliveSql("s")}`, [sha256Hex(sessionToken)]))) return false;
+      if (
+        sessionToken &&
+        !(await s.db.one(`SELECT 1 FROM sessions s WHERE s.token_hash = $1 AND ${sessionAliveSql("s")}`, [sha256Hex(sessionToken)]))
+      )
+        return false;
       if (a.apiKeyId && !(await s.db.one(`SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, [a.apiKeyId]))) return false;
-      if (!a.apiKeyId && a.userId && !(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]))) return false;
+      if (!a.apiKeyId && a.userId && !(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId])))
+        return false;
       // Plan: el acceso por API (key u OAuth) pudo salir del plan; el polling ya respondía 402 y el stream seguía.
       if ((a.apiKeyId || a.oauth) && !(await tenantPlan(s.db, a.tenantId)).plan.features.includes("api")) return false;
       // Permisos: un cambio de rol (o de su rol personalizado o grupos) corta el stream; al reconectar rige el acceso nuevo.

@@ -9,11 +9,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-domains-serving-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
-let config: typeof import("../src/config")["config"];
+let config: (typeof import("../src/config"))["config"];
 let uuidv7: () => string;
 let sha256Hex: (s: string) => string;
 const KEY = "cs_test_domains_serving_key";
@@ -24,7 +24,10 @@ const B = { tenant: "", domain: "firmas.org-b.test" };
 async function tenantWithDomain(name: string, domain: string) {
   const id = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, $3)`, [id, `t-${id.slice(-8)}`, name]);
-  await db.query(`INSERT INTO custom_domains (id, tenant_id, domain, verification_token, status, verified_at) VALUES ($1,$2,$3,'tok','verified',now())`, [uuidv7(), id, domain]);
+  await db.query(
+    `INSERT INTO custom_domains (id, tenant_id, domain, verification_token, status, verified_at) VALUES ($1,$2,$3,'tok','verified',now())`,
+    [uuidv7(), id, domain],
+  );
   return id;
 }
 
@@ -42,13 +45,15 @@ beforeAll(async () => {
   B.tenant = await tenantWithDomain("Org B", B.domain);
   A.brand = uuidv7();
   await db.query(`INSERT INTO brands (id, tenant_id, name, slug) VALUES ($1,$2,'Marca','marca-a-${A.brand.slice(-8)}')`, [A.brand, A.tenant]);
-  await db.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token, status, verified_at) VALUES ($1,$2,$3,$4,'tok','verified',now())`, [
+  await db.query(
+    `INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token, status, verified_at) VALUES ($1,$2,$3,$4,'tok','verified',now())`,
+    [uuidv7(), A.tenant, A.brand, A.brandDomain],
+  );
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
     uuidv7(),
     A.tenant,
-    A.brand,
-    A.brandDomain,
+    util.sha256Hex(KEY),
   ]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), A.tenant, util.sha256Hex(KEY)]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -100,34 +105,37 @@ describe("aislamiento de links públicos por dominio de firmantes", () => {
     const negId = uuidv7();
     const negToken = "n".repeat(10) + "Tok_negociacion_B1";
     await db.query(`INSERT INTO negotiations (id, tenant_id, title) VALUES ($1,$2,'N')`, [negId, B.tenant]);
-    await db.query(`INSERT INTO negotiation_participants (id, negotiation_id, tenant_id, name, email, token_hash, token_enc) VALUES ($1,$2,$3,'P','p@x.test',$4,'x')`, [
-      uuidv7(),
-      negId,
-      B.tenant,
-      sha256Hex(negToken),
-    ]);
+    await db.query(
+      `INSERT INTO negotiation_participants (id, negotiation_id, tenant_id, name, email, token_hash, token_enc) VALUES ($1,$2,$3,'P','p@x.test',$4,'x')`,
+      [uuidv7(), negId, B.tenant, sha256Hex(negToken)],
+    );
     const wfId = uuidv7();
     const runToken = "r".repeat(10) + "Tok_ejecucion_B_123";
     await db.query(`INSERT INTO workflows (id, tenant_id, name, steps, signing_secret_enc) VALUES ($1,$2,'W','[]','x')`, [wfId, B.tenant]);
-    await db.query(`INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, public_token_hash) VALUES ($1,$2,$3,'[]',$4)`, [uuidv7(), B.tenant, wfId, sha256Hex(runToken)]);
+    await db.query(`INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, public_token_hash) VALUES ($1,$2,$3,'[]',$4)`, [
+      uuidv7(),
+      B.tenant,
+      wfId,
+      sha256Hex(runToken),
+    ]);
     const env = uuidv7();
     const rec = uuidv7();
     await db.query(`INSERT INTO envelopes (id, tenant_id, subject) VALUES ($1,$2,'S')`, [env, B.tenant]);
-    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email) VALUES ($1,$2,$3,'signer','R','r@x.test')`, [rec, B.tenant, env]);
+    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email) VALUES ($1,$2,$3,'signer','R','r@x.test')`, [
+      rec,
+      B.tenant,
+      env,
+    ]);
     const payId = uuidv7();
-    await db.query(`INSERT INTO envelope_payments (id, tenant_id, envelope_id, recipient_id, provider, amount, currency, description) VALUES ($1,$2,$3,$4,'mock',10,'ARS','d')`, [
-      payId,
-      B.tenant,
-      env,
-      rec,
-    ]);
+    await db.query(
+      `INSERT INTO envelope_payments (id, tenant_id, envelope_id, recipient_id, provider, amount, currency, description) VALUES ($1,$2,$3,$4,'mock',10,'ARS','d')`,
+      [payId, B.tenant, env, rec],
+    );
     const idvId = uuidv7();
-    await db.query(`INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level) VALUES ($1,$2,$3,$4,'mock','document')`, [
-      idvId,
-      B.tenant,
-      env,
-      rec,
-    ]);
+    await db.query(
+      `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level) VALUES ($1,$2,$3,$4,'mock','document')`,
+      [idvId, B.tenant, env, rec],
+    );
 
     const urls = [
       `/v1/public/negotiations/${negToken}`,

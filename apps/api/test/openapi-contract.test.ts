@@ -39,7 +39,8 @@ function realRoutes(): { method: string; path: string; file: string }[] {
       const p = join(dir, name);
       if (statSync(p).isDirectory()) walk(p);
       else if (p.endsWith(".ts") && !name.includes("openapi")) {
-        for (const m of readFileSync(p, "utf8").matchAll(re)) out.push({ method: m[1], path: m[2].replace(/:(\w+)/g, "{$1}"), file: p.slice(SRC.length + 1) });
+        for (const m of readFileSync(p, "utf8").matchAll(re))
+          out.push({ method: m[1], path: m[2].replace(/:(\w+)/g, "{$1}"), file: p.slice(SRC.length + 1) });
       }
     }
   };
@@ -49,7 +50,13 @@ function realRoutes(): { method: string; path: string; file: string }[] {
 
 const shape = (p: string) => p.replace(/\{[^}]+\}/g, "{}");
 const examplesOf = (op: any, status: number) => Object.keys(op.responses[String(status)]?.content?.["application/json"]?.examples ?? {});
-const resolve = (r: any) => (r?.$ref ? r.$ref.split("/").slice(1).reduce((o: any, k: string) => o?.[k], doc) : r);
+const resolve = (r: any) =>
+  r?.$ref
+    ? r.$ref
+        .split("/")
+        .slice(1)
+        .reduce((o: any, k: string) => o?.[k], doc)
+    : r;
 
 describe("cobertura de rutas", () => {
   it("toda ruta registrada está en el OpenAPI o en la lista de exclusión", () => {
@@ -106,10 +113,28 @@ describe("códigos de error", () => {
   it("POST /v1/envelopes documenta los errores del sobre en una llamada (not_pdf único, 413 file_too_large y payload_too_large)", () => {
     const op = doc.paths["/v1/envelopes"].post;
     expect(examplesOf(op, 400)).toEqual(
-      expect.arrayContaining(["not_pdf", "unknown_part", "duplicate_part", "too_many_documents", "duplicate_document", "invalid_json", "payload_required", "too_many_fields"]),
+      expect.arrayContaining([
+        "not_pdf",
+        "unknown_part",
+        "duplicate_part",
+        "too_many_documents",
+        "duplicate_document",
+        "invalid_json",
+        "payload_required",
+        "too_many_fields",
+      ]),
     );
     expect(examplesOf(op, 413)).toEqual(expect.arrayContaining(["file_too_large", "payload_too_large"]));
-    for (const c of ["unknown_part", "duplicate_part", "payload_too_large", "too_many_documents", "duplicate_document", "invalid_json", "file_too_large", "not_pdf"]) {
+    for (const c of [
+      "unknown_part",
+      "duplicate_part",
+      "payload_too_large",
+      "too_many_documents",
+      "duplicate_document",
+      "invalid_json",
+      "file_too_large",
+      "not_pdf",
+    ]) {
       expect(op.description).toContain(c);
     }
     expect(ERRORS).not.toHaveProperty("invalid_pdf");
@@ -230,7 +255,9 @@ describe("esquemas de respuesta", () => {
     expect(schema("AiSettings").properties).toHaveProperty("effectiveTokenBudget");
     expect(schema("WorkflowRun").properties).toHaveProperty("redacted");
     expect(doc.paths["/v1/public/forms/{slug}"].get.responses["200"].content["application/json"].schema.properties).toHaveProperty("captchaSiteKey");
-    expect(doc.paths["/v1/public/workflows/{slug}"].get.responses["200"].content["application/json"].schema.properties).toHaveProperty("captchaSiteKey");
+    expect(doc.paths["/v1/public/workflows/{slug}"].get.responses["200"].content["application/json"].schema.properties).toHaveProperty(
+      "captchaSiteKey",
+    );
   });
 
   it("la descripción general documenta la convención de nombres de la query", () => {

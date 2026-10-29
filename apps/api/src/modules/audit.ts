@@ -99,29 +99,48 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract; dedupeM
   // Borrar un borrador borra también su registro de eventos: la constancia queda acá.
   "DELETE /v1/envelopes/:id": {
     action: "envelope.deleted",
-    extract: ({ params, req }) => ({ targetType: "envelope", targetId: params.id, data: { subject: (req as AuditedRequest).auditBefore?.subject ?? null } }),
+    extract: ({ params, req }) => ({
+      targetType: "envelope",
+      targetId: params.id,
+      data: { subject: (req as AuditedRequest).auditBefore?.subject ?? null },
+    }),
   },
   "POST /v1/api-keys": {
     action: "api_key.created",
     // El rol sale del pedido (la respuesta no lo trae); la política de rutas ya lo validó. Sin rol, la key es admin.
     extract: ({ body, req }) => {
       const input = (req.body ?? {}) as { role?: string; roleId?: string };
-      return { targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: input.role ?? "admin", roleId: input.role === "custom" ? (input.roleId ?? null) : null } };
+      return {
+        targetType: "api_key",
+        targetId: body?.apiKey?.id,
+        data: { name: body?.apiKey?.name, role: input.role ?? "admin", roleId: input.role === "custom" ? (input.roleId ?? null) : null },
+      };
     },
   },
   // GET /v1/reports/envelopes.csv (reports.exported) lo registra su handler (experience.ts), con filas y corte.
   "DELETE /v1/api-keys/:id": { action: "api_key.revoked", extract: ({ params }) => ({ targetType: "api_key", targetId: params.id }) },
-  "POST /v1/templates": { action: "template.created", extract: ({ body }) => ({ targetType: "template", targetId: body?.template?.id, data: { name: body?.template?.name } }) },
+  "POST /v1/templates": {
+    action: "template.created",
+    extract: ({ body }) => ({ targetType: "template", targetId: body?.template?.id, data: { name: body?.template?.name } }),
+  },
   "POST /v1/templates/from-envelope/:envelopeId": {
     action: "template.created",
-    extract: ({ body, params }) => ({ targetType: "template", targetId: body?.template?.id, data: { name: body?.template?.name, fromEnvelope: params.envelopeId } }),
+    extract: ({ body, params }) => ({
+      targetType: "template",
+      targetId: body?.template?.id,
+      data: { name: body?.template?.name, fromEnvelope: params.envelopeId },
+    }),
   },
   "DELETE /v1/templates/:id": { action: "template.deleted", extract: ({ params }) => ({ targetType: "template", targetId: params.id }) },
   // De la URL solo el host: los integradores suelen poner un secreto en ella (?token=…) y la auditoría la ven todos los
   // administradores (y se exporta).
   "POST /v1/webhooks": {
     action: "webhook.created",
-    extract: ({ body }) => ({ targetType: "webhook", targetId: body?.webhook?.id, data: { host: typeof body?.webhook?.url === "string" ? hostOf(body.webhook.url) : null } }),
+    extract: ({ body }) => ({
+      targetType: "webhook",
+      targetId: body?.webhook?.id,
+      data: { host: typeof body?.webhook?.url === "string" ? hostOf(body.webhook.url) : null },
+    }),
   },
   "PATCH /v1/webhooks/:id": {
     action: "webhook.updated",
@@ -129,15 +148,26 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract; dedupeM
       const before = (req as AuditedRequest).auditBefore?.url;
       const after = body?.url;
       // Cambio de URL: el host anterior y el nuevo (también si cambió solo la ruta o la query, con el mismo host).
-      const url = typeof before === "string" && typeof after === "string" && before !== after ? { fromHost: hostOf(before), toHost: hostOf(after) } : {};
+      const url =
+        typeof before === "string" && typeof after === "string" && before !== after ? { fromHost: hostOf(before), toHost: hostOf(after) } : {};
       return { targetType: "webhook", targetId: params.id, data: { fields: Object.keys((req.body as object) ?? {}), ...url } };
     },
   },
   "DELETE /v1/webhooks/:id": { action: "webhook.deleted", extract: ({ params }) => ({ targetType: "webhook", targetId: params.id }) },
-  "POST /v1/webhooks/:id/rotate-secret": { action: "webhook.secret_rotated", extract: ({ params, req }) => ({ targetType: "webhook", targetId: params.id, data: { graceHours: (req.body as { graceHours?: number } | null)?.graceHours ?? 24 } }) },
+  "POST /v1/webhooks/:id/rotate-secret": {
+    action: "webhook.secret_rotated",
+    extract: ({ params, req }) => ({
+      targetType: "webhook",
+      targetId: params.id,
+      data: { graceHours: (req.body as { graceHours?: number } | null)?.graceHours ?? 24 },
+    }),
+  },
   // Un formulario web publica un link que crea sobres a nombre de su dueño: quién lo creó, cambió (p. ej. el firmante
   // fijo, que recibe cada envío) o borró tiene que quedar en la auditoría, como los webhooks.
-  "POST /v1/web-forms": { action: "web_form.created", extract: ({ body }) => ({ targetType: "web_form", targetId: body?.id, data: { name: body?.name, templateId: body?.templateId } }) },
+  "POST /v1/web-forms": {
+    action: "web_form.created",
+    extract: ({ body }) => ({ targetType: "web_form", targetId: body?.id, data: { name: body?.name, templateId: body?.templateId } }),
+  },
   "PATCH /v1/web-forms/:id": {
     action: "web_form.updated",
     extract: ({ params, req }) => ({ targetType: "web_form", targetId: params.id, data: { fields: Object.keys((req.body as object) ?? {}) } }),
@@ -174,15 +204,30 @@ export function registerAuditHooks(app: FastifyInstance, s: Services) {
         if (status === 200) {
           const body = parse(payload);
           if (body?.user?.id && body?.tenant?.id) {
-            await recordAudit(s.db, { tenantId: body.tenant.id, action: "auth.login", actor: { type: "user", id: body.user.id, label: body.user.email }, ip, userAgent });
+            await recordAudit(s.db, {
+              tenantId: body.tenant.id,
+              action: "auth.login",
+              actor: { type: "user", id: body.user.id, label: body.user.email },
+              ip,
+              userAgent,
+            });
           }
         } else if (status === 401) {
-          const email = String((req.body as any)?.email ?? "").toLowerCase().trim();
+          const email = String((req.body as any)?.email ?? "")
+            .toLowerCase()
+            .trim();
           const u = email ? await s.db.one<any>(`SELECT id FROM users WHERE lower(email) = $1`, [email]) : null;
           if (u) {
             const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [u.id]);
             for (const t of tenants) {
-              await recordAudit(s.db, { tenantId: t.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: u.id, label: email }, ip, userAgent, data: { reason: "bad_password" } });
+              await recordAudit(s.db, {
+                tenantId: t.tenant_id,
+                action: "auth.login_failed",
+                actor: { type: "anonymous", id: u.id, label: email },
+                ip,
+                userAgent,
+                data: { reason: "bad_password" },
+              });
             }
           }
         }
@@ -367,7 +412,10 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
       reply.header("x-time-zone", tz);
     }
     // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
-    const all = await s.db.query<any>(`SELECT *${local} FROM account_audit_log WHERE ${where} ORDER BY occurred_at DESC, id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);
+    const all = await s.db.query<any>(
+      `SELECT *${local} FROM account_audit_log WHERE ${where} ORDER BY occurred_at DESC, id DESC LIMIT ${CSV_MAX_ROWS + 1}`,
+      params,
+    );
     const truncated = all.length > CSV_MAX_ROWS;
     const rows = truncated ? all.slice(0, CSV_MAX_ROWS) : all;
     // occurred_at sigue en ISO UTC (compatibilidad); con tz se agrega occurred_at_local al final.
@@ -376,14 +424,30 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
     const lines = [header.join(sep)];
     for (const raw of rows) {
       const r = toEntry(raw);
-      const cells: unknown[] = [r.id, r.occurredAt, r.action, r.actorType, r.actorId, r.actorLabel, r.targetType, r.targetId, r.ip, r.userAgent, r.data];
+      const cells: unknown[] = [
+        r.id,
+        r.occurredAt,
+        r.action,
+        r.actorType,
+        r.actorId,
+        r.actorLabel,
+        r.targetType,
+        r.targetId,
+        r.ip,
+        r.userAgent,
+        r.data,
+      ];
       if (tz) cells.push(raw.occurred_local);
       lines.push(cells.map(csvCell).join(sep));
     }
     if (truncated) {
       const last = rows[rows.length - 1];
       lines.push(
-        ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Para el resto, acotá las fechas o continuá la exportación con los mismos filtros y beforeId=${last.id}.`]
+        [
+          "",
+          "",
+          `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Para el resto, acotá las fechas o continuá la exportación con los mismos filtros y beforeId=${last.id}.`,
+        ]
           .map(csvCell)
           .join(sep),
       );

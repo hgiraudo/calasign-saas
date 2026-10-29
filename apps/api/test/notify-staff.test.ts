@@ -32,8 +32,17 @@ describe("avisos al equipo (propietarios y administradores)", () => {
     // La dirección rechazada va en el medio: antes, la primera recibía el aviso una vez por cada reintento.
     for (const [i, email] of ["ana@x.com", "rechazada@x.com", "zoe@x.com"].entries()) {
       const u = uuidv7();
-      await db.query(`INSERT INTO users (id, email, name, password_hash, created_at) VALUES ($1,$2,$3,'x', now() + make_interval(secs => $4))`, [u, email, email, i]);
-      await db.query(`INSERT INTO memberships (tenant_id, user_id, role, created_at) VALUES ($1,$2,'owner', now() + make_interval(secs => $3))`, [tenant, u, i]);
+      await db.query(`INSERT INTO users (id, email, name, password_hash, created_at) VALUES ($1,$2,$3,'x', now() + make_interval(secs => $4))`, [
+        u,
+        email,
+        email,
+        i,
+      ]);
+      await db.query(`INSERT INTO memberships (tenant_id, user_id, role, created_at) VALUES ($1,$2,'owner', now() + make_interval(secs => $3))`, [
+        tenant,
+        u,
+        i,
+      ]);
     }
     const env = uuidv7();
     await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Contrato', 'declined')`, [env, tenant]);

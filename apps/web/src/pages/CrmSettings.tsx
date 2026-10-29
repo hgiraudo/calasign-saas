@@ -130,7 +130,10 @@ export function CrmSettingsPage() {
   const startOAuth = (p: CrmProvider) =>
     act(async () => {
       const extra = p === "zoho" ? { region: zohoRegion, product: zohoProduct } : {};
-      const r = await api<{ authorizeUrl: string }>(`/v1/crm/oauth/${p}/start`, { method: "POST", body: { name: names[p] || t(`p.${p}`), ...extra } });
+      const r = await api<{ authorizeUrl: string }>(`/v1/crm/oauth/${p}/start`, {
+        method: "POST",
+        body: { name: names[p] || t(`p.${p}`), ...extra },
+      });
       window.location.href = r.authorizeUrl;
     });
   // Doble clic en "Conectar" mandaba dos POST y quedaban dos conexiones iguales (cada una con su sincronización).
@@ -176,71 +179,75 @@ export function CrmSettingsPage() {
               {tc("common.needsViewAll")}
             </div>
           ) : (
-          <div className="settings-grid">
-            {prov.items.map((pv) => (
-              <div key={pv.provider} className="card pad stack">
-                <div className="row-between">
-                  <strong>{t(`p.${pv.provider}`)}</strong>
-                  <span className="badge badge-draft">{t(`kind.${pv.kind}`)}</span>
-                </div>
-                <label className="field">
-                  <span>{t("name")}</span>
-                  <input value={names[pv.provider] ?? ""} placeholder={t(`p.${pv.provider}`)} onChange={(e) => setNames((c) => ({ ...c, [pv.provider]: e.target.value }))} />
-                </label>
-                {pv.provider === "zoho" && pv.oauthConfigured && (
-                  <div className="row-wrap">
-                    <label className="field grow">
-                      <span>{t("zoho.product")}</span>
-                      <select value={zohoProduct} onChange={(e) => setZohoProduct(e.target.value as ZohoProduct)}>
-                        {ZOHO_PRODUCTS.map((x) => (
-                          <option key={x} value={x}>
-                            {t(`zoho.product.${x}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field grow">
-                      <span>{t("zoho.region")}</span>
-                      <select value={zohoRegion} onChange={(e) => setZohoRegion(e.target.value as ZohoRegion)}>
-                        {ZOHO_REGIONS.map((x) => (
-                          <option key={x} value={x}>
-                            {x === "ca" ? "zohocloud.ca" : `zoho.${x}`}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+            <div className="settings-grid">
+              {prov.items.map((pv) => (
+                <div key={pv.provider} className="card pad stack">
+                  <div className="row-between">
+                    <strong>{t(`p.${pv.provider}`)}</strong>
+                    <span className="badge badge-draft">{t(`kind.${pv.kind}`)}</span>
                   </div>
-                )}
-                {OAUTH_PROVIDERS.includes(pv.provider) &&
-                  (pv.oauthConfigured ? (
-                    <button type="button" className="btn btn-primary" onClick={() => startOAuth(pv.provider)}>
-                      {t("connectOAuth")}
-                    </button>
-                  ) : (
-                    <span className="badge badge-voided">{t("notConfigured")}</span>
-                  ))}
-                {pv.tokenSupported && (
-                  <form className="stack" onSubmit={(e) => connectToken(e, pv.provider)}>
-                    {TOKEN_FIELDS[pv.provider].map((f) => (
-                      <label key={f.key} className="field">
-                        <span>{t(f.label)}</span>
-                        <input
-                          required
-                          type={f.secret ? "password" : f.type ?? "text"}
-                          autoComplete={f.secret ? "new-password" : "off"}
-                          value={tokenForm[pv.provider]?.[f.key] ?? ""}
-                          onChange={(e) => setTok(pv.provider, f.key, e.target.value)}
-                        />
+                  <label className="field">
+                    <span>{t("name")}</span>
+                    <input
+                      value={names[pv.provider] ?? ""}
+                      placeholder={t(`p.${pv.provider}`)}
+                      onChange={(e) => setNames((c) => ({ ...c, [pv.provider]: e.target.value }))}
+                    />
+                  </label>
+                  {pv.provider === "zoho" && pv.oauthConfigured && (
+                    <div className="row-wrap">
+                      <label className="field grow">
+                        <span>{t("zoho.product")}</span>
+                        <select value={zohoProduct} onChange={(e) => setZohoProduct(e.target.value as ZohoProduct)}>
+                          {ZOHO_PRODUCTS.map((x) => (
+                            <option key={x} value={x}>
+                              {t(`zoho.product.${x}`)}
+                            </option>
+                          ))}
+                        </select>
                       </label>
+                      <label className="field grow">
+                        <span>{t("zoho.region")}</span>
+                        <select value={zohoRegion} onChange={(e) => setZohoRegion(e.target.value as ZohoRegion)}>
+                          {ZOHO_REGIONS.map((x) => (
+                            <option key={x} value={x}>
+                              {x === "ca" ? "zohocloud.ca" : `zoho.${x}`}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+                  {OAUTH_PROVIDERS.includes(pv.provider) &&
+                    (pv.oauthConfigured ? (
+                      <button type="button" className="btn btn-primary" onClick={() => startOAuth(pv.provider)}>
+                        {t("connectOAuth")}
+                      </button>
+                    ) : (
+                      <span className="badge badge-voided">{t("notConfigured")}</span>
                     ))}
-                    <button className="btn" disabled={connecting !== null}>
-                      {t("connectToken")}
-                    </button>
-                  </form>
-                )}
-              </div>
-            ))}
-          </div>
+                  {pv.tokenSupported && (
+                    <form className="stack" onSubmit={(e) => connectToken(e, pv.provider)}>
+                      {TOKEN_FIELDS[pv.provider].map((f) => (
+                        <label key={f.key} className="field">
+                          <span>{t(f.label)}</span>
+                          <input
+                            required
+                            type={f.secret ? "password" : (f.type ?? "text")}
+                            autoComplete={f.secret ? "new-password" : "off"}
+                            value={tokenForm[pv.provider]?.[f.key] ?? ""}
+                            onChange={(e) => setTok(pv.provider, f.key, e.target.value)}
+                          />
+                        </label>
+                      ))}
+                      <button className="btn" disabled={connecting !== null}>
+                        {t("connectToken")}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
           <details className="card pad" style={{ marginTop: 12 }}>
             <summary className="small">{t("info.redirects")}</summary>
@@ -283,26 +290,34 @@ export function CrmSettingsPage() {
                 </div>
               )}
               {canEdit && (
-              <div className="row-wrap">
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() =>
-                    act(async () => {
-                      const r = await api<{ ok: boolean; error: string | null }>(`/v1/crm/connections/${c.id}/test`, { method: "POST" });
-                      if (!r.ok) throw new Error(r.error ?? "error");
-                    }, t("testOk"))
-                  }
-                >
-                  {t("test")}
-                </button>
-                <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/crm/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
-                  {c.active ? t("deactivate") : t("activate")}
-                </button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/connections/${c.id}`, { method: "DELETE" }))}>
-                  {t("delete")}
-                </button>
-              </div>
+                <div className="row-wrap">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() =>
+                      act(async () => {
+                        const r = await api<{ ok: boolean; error: string | null }>(`/v1/crm/connections/${c.id}/test`, { method: "POST" });
+                        if (!r.ok) throw new Error(r.error ?? "error");
+                      }, t("testOk"))
+                    }
+                  >
+                    {t("test")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => act(() => api(`/v1/crm/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}
+                  >
+                    {c.active ? t("deactivate") : t("activate")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => confirmAction() && act(() => api(`/v1/crm/connections/${c.id}`, { method: "DELETE" }))}
+                  >
+                    {t("delete")}
+                  </button>
+                </div>
               )}
             </div>
           ))
@@ -360,7 +375,11 @@ export function CrmSettingsPage() {
                     <button type="button" className="btn btn-sm" onClick={() => setEditing(m)}>
                       {t("edit")}
                     </button>
-                    <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/mappings/${m.id}`, { method: "DELETE" }))}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={() => confirmAction() && act(() => api(`/v1/crm/mappings/${m.id}`, { method: "DELETE" }))}
+                    >
                       {t("delete")}
                     </button>
                   </>
@@ -371,7 +390,9 @@ export function CrmSettingsPage() {
         )}
       </Section>
 
-      {maps && maps.some((m) => m.trigger !== "on_completion") && <SendFromRecord mappings={maps.filter((m) => m.trigger !== "on_completion" && m.active)} onDone={() => load()} />}
+      {maps && maps.some((m) => m.trigger !== "on_completion") && (
+        <SendFromRecord mappings={maps.filter((m) => m.trigger !== "on_completion" && m.active)} onDone={() => load()} />
+      )}
 
       <Section title={t("runs")}>
         {!runs ? (
@@ -391,10 +412,18 @@ export function CrmSettingsPage() {
                       <div className="small muted">
                         {r.connectionName ?? ""} {r.objectId ? `· ${r.objectType} ${r.objectId}` : ""}
                       </div>
-                      {r.error && <div className="small" style={{ color: "var(--danger, #b42318)" }}>{r.error}</div>}
+                      {r.error && (
+                        <div className="small" style={{ color: "var(--danger, #b42318)" }}>
+                          {r.error}
+                        </div>
+                      )}
                     </td>
                     <td>
-                      <span className={`badge ${r.status === "succeeded" ? "badge-completed" : r.status === "failed" ? "badge-declined" : "badge-sent"}`}>{t(`run.status.${r.status}`)}</span>
+                      <span
+                        className={`badge ${r.status === "succeeded" ? "badge-completed" : r.status === "failed" ? "badge-declined" : "badge-sent"}`}
+                      >
+                        {t(`run.status.${r.status}`)}
+                      </span>
                       <div className="small muted">{t("run.attempts", { n: r.attempts })}</div>
                     </td>
                     <td className="row-wrap">
@@ -577,7 +606,8 @@ function MappingEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId]);
 
-  const setRole = (i: number, patch: Partial<RoleRow> & Record<string, unknown>) => setRoles((rs) => rs.map((r, j) => (j === i ? ({ ...r, ...patch } as RoleRow) : r)));
+  const setRole = (i: number, patch: Partial<RoleRow> & Record<string, unknown>) =>
+    setRoles((rs) => rs.map((r, j) => (j === i ? ({ ...r, ...patch } as RoleRow) : r)));
   const changeSource = (i: number, source: RoleRow["source"]) =>
     setRoles((rs) =>
       rs.map((r, j) => {
@@ -601,10 +631,18 @@ function MappingEditor({
       roles: isErp ? [] : roles.map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== "" && v !== null))),
       prefill: isErp ? [] : prefill.filter((p) => p.field && p.property),
       // Se conservan los valores de los otros estados (enviado, rechazado, …), que solo se configuran por API.
-      writeBack: { statusProperty: statusProperty || null, statusValues: statusValuesFor(mapping?.writeBack.statusValues, completedValue), attachPdf },
+      writeBack: {
+        statusProperty: statusProperty || null,
+        statusValues: statusValuesFor(mapping?.writeBack.statusValues, completedValue),
+        attachPdf,
+      },
       trigger,
       triggerConfig:
-        trigger === "webhook" ? { property: tProp || null, value: tVal || null } : trigger === "on_completion" ? { matchBy: "recipient_id_document", templateId: onlyTemplate || null } : {},
+        trigger === "webhook"
+          ? { property: tProp || null, value: tVal || null }
+          : trigger === "on_completion"
+            ? { matchBy: "recipient_id_document", templateId: onlyTemplate || null }
+            : {},
       send,
       active,
     };
@@ -753,10 +791,15 @@ function MappingEditor({
                   <>
                     <label className="field grow">
                       <span>{t("m.contactRole")}</span>
-                      <input value={r.contactRole ?? ""} disabled={Boolean(r.primary)} onChange={(e) => setRole(i, { contactRole: e.target.value })} />
+                      <input
+                        value={r.contactRole ?? ""}
+                        disabled={Boolean(r.primary)}
+                        onChange={(e) => setRole(i, { contactRole: e.target.value })}
+                      />
                     </label>
                     <label className="check">
-                      <input type="checkbox" checked={Boolean(r.primary)} onChange={(e) => setRole(i, { primary: e.target.checked })} /> {t("m.primary")}
+                      <input type="checkbox" checked={Boolean(r.primary)} onChange={(e) => setRole(i, { primary: e.target.checked })} />{" "}
+                      {t("m.primary")}
                     </label>
                   </>
                 )}
@@ -796,7 +839,15 @@ function MappingEditor({
                       <input
                         type="checkbox"
                         checked={r.channels.includes(ch)}
-                        onChange={(e) => setRole(i, { channels: e.target.checked ? [...r.channels, ch] : r.channels.filter((x) => x !== ch).length ? r.channels.filter((x) => x !== ch) : r.channels })}
+                        onChange={(e) =>
+                          setRole(i, {
+                            channels: e.target.checked
+                              ? [...r.channels, ch]
+                              : r.channels.filter((x) => x !== ch).length
+                                ? r.channels.filter((x) => x !== ch)
+                                : r.channels,
+                          })
+                        }
                       />{" "}
                       {ch}
                     </label>
@@ -809,7 +860,13 @@ function MappingEditor({
             </div>
           ))}
           <div>
-            <button type="button" className="btn btn-sm" onClick={() => setRoles((rs) => [...rs, { role: roleNames[rs.length] ?? "", source: "contact", index: rs.length, channels: ["email"] } as RoleRow])}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                setRoles((rs) => [...rs, { role: roleNames[rs.length] ?? "", source: "contact", index: rs.length, channels: ["email"] } as RoleRow])
+              }
+            >
               {t("m.addRole")}
             </button>
           </div>
@@ -819,11 +876,18 @@ function MappingEditor({
             <div key={i} className="row-wrap">
               <label className="field grow">
                 <span>{t("m.field")}</span>
-                <input list="crm-field-labels" value={p.field} onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, field: e.target.value } : x)))} />
+                <input
+                  list="crm-field-labels"
+                  value={p.field}
+                  onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, field: e.target.value } : x)))}
+                />
               </label>
               <label className="field grow">
                 <span>{t("m.property")}</span>
-                <input value={p.property} onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, property: e.target.value } : x)))} />
+                <input
+                  value={p.property}
+                  onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, property: e.target.value } : x)))}
+                />
               </label>
               <button type="button" className="btn btn-sm btn-danger" onClick={() => setPrefill((ps) => ps.filter((_, j) => j !== i))}>
                 {t("m.remove")}

@@ -99,10 +99,7 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const editable = useMemo(
-    () => detail.recipients.filter((r) => !["delegated", "reassigned"].includes(r.status)),
-    [detail.recipients],
-  );
+  const editable = useMemo(() => detail.recipients.filter((r) => !["delegated", "reassigned"].includes(r.status)), [detail.recipients]);
   const [contacts, setContacts] = useState<ContactDraft[]>(() =>
     editable.map((r) => ({
       id: r.id,
@@ -144,7 +141,9 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
           email: c.email.trim() !== (c.original.email ?? "") ? c.email.trim() : "",
           phone: c.phone.trim() !== (c.original.phone ?? "") ? c.phone.trim() : "",
         })),
-      ...added.filter((a) => a.name.trim()).map((a, i) => ({ name: a.name.trim() || x("correct.newName") + ` ${i + 1}`, nameEmpty: false, email: a.email.trim(), phone: "" })),
+      ...added
+        .filter((a) => a.name.trim())
+        .map((a, i) => ({ name: a.name.trim() || x("correct.newName") + ` ${i + 1}`, nameEmpty: false, email: a.email.trim(), phone: "" })),
     ];
     for (const r of rows) {
       const problem = r.nameEmpty
@@ -281,7 +280,12 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
         </fieldset>
         {added.map((a, i) => (
           <div key={a.id} className="correction-row correction-new">
-            <input aria-label={x("correct.newName")} placeholder={x("correct.newName")} value={a.name} onChange={(e) => setNew(i, { name: e.target.value })} />
+            <input
+              aria-label={x("correct.newName")}
+              placeholder={x("correct.newName")}
+              value={a.name}
+              onChange={(e) => setNew(i, { name: e.target.value })}
+            />
             <input
               aria-label={x("correct.newEmail")}
               placeholder={x("correct.newEmail")}

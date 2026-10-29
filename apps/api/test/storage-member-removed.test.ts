@@ -18,8 +18,8 @@ vi.mock("../src/notifications/channels", async (orig) => ({
   }),
 }));
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -54,7 +54,11 @@ beforeAll(async () => {
     await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1,$2,$3,'scrypt$x')`, [id, `${k}@org.test`, k.toUpperCase()]);
     await db.query(`INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4)`, [tenant, id, r, r === "custom" ? role : null]);
     const token = util.randomToken();
-    await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at) VALUES ($1,$2,$3, now() + interval '1 day')`, [util.sha256Hex(token), id, tenant]);
+    await db.query(`INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at) VALUES ($1,$2,$3, now() + interval '1 day')`, [
+      util.sha256Hex(token),
+      id,
+      tenant,
+    ]);
     sessions[k] = token;
   }
   blobs = createBlobStore();
@@ -68,7 +72,10 @@ afterAll(async () => {
 
 async function conn(provider: string, createdBy: string, config: Record<string, unknown> = {}, label: string | null = null) {
   const id = util.uuidv7();
-  const creds = provider === "s3" ? { accessKeyId: "AK", secretAccessKey: "S" } : { access_token: "at", refresh_token: `rt-${id.slice(-4)}`, expires_at: Date.now() + 3_600_000 };
+  const creds =
+    provider === "s3"
+      ? { accessKeyId: "AK", secretAccessKey: "S" }
+      : { access_token: "at", refresh_token: `rt-${id.slice(-4)}`, expires_at: Date.now() + 3_600_000 };
   await db.query(
     `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, created_by, account_label) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [id, tenant, provider, `${provider}-${id.slice(-4)}`, JSON.stringify(config), util.encrypt(JSON.stringify(creds)), createdBy, label],
@@ -89,7 +96,10 @@ describe("almacenamiento de una persona que deja la organización", () => {
     expect(await connRow(box)).toMatchObject({ active: false, deactivated_reason: "creator_removed" });
     expect(await connRow(s3)).toMatchObject({ active: true, deactivated_reason: null });
     expect(await connRow(mine)).toMatchObject({ active: true, deactivated_reason: null });
-    const audit = await db.query<any>(`SELECT target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'storage.deactivated_member_removed' ORDER BY target_id`, [tenant]);
+    const audit = await db.query<any>(
+      `SELECT target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'storage.deactivated_member_removed' ORDER BY target_id`,
+      [tenant],
+    );
     expect(audit.map((a) => a.target_id).sort()).toEqual([drive, box].sort());
 
     // El aviso va por la cola (outbox de la baja).
@@ -105,11 +115,20 @@ describe("almacenamiento de una persona que deja la organización", () => {
     // La lista muestra quién la conectó y por qué está desactivada.
     const list = (await app.inject({ method: "GET", url: "/v1/storage/connections", cookies: { cs_session: sessions.owner } })).json().items;
     const d = list.find((x: any) => x.id === drive);
-    expect(d).toMatchObject({ active: false, deactivatedReason: "creator_removed", createdBy: { id: users.beto, name: "BETO", email: "beto@org.test", member: false } });
+    expect(d).toMatchObject({
+      active: false,
+      deactivatedReason: "creator_removed",
+      createdBy: { id: users.beto, name: "BETO", email: "beto@org.test", member: false },
+    });
     expect(list.find((x: any) => x.id === mine).createdBy).toMatchObject({ email: "owner@org.test", member: true });
 
     // No se reactiva: hay que volver a conectarla.
-    const re = await app.inject({ method: "PATCH", url: `/v1/storage/connections/${drive}`, cookies: { cs_session: sessions.owner }, payload: { active: true } });
+    const re = await app.inject({
+      method: "PATCH",
+      url: `/v1/storage/connections/${drive}`,
+      cookies: { cs_session: sessions.owner },
+      payload: { active: true },
+    });
     expect(re.statusCode).toBe(409);
     expect(re.json().error.code).toBe("storage_reconnect_required");
   });
@@ -127,7 +146,9 @@ describe("almacenamiento de una persona que deja la organización", () => {
     // Si el proveedor falla, la desconexión igual se hace.
     const other = await conn("gdrive", users.owner, {}, "otro@gmail.test");
     globalThis.fetch = (async () => new Response("no", { status: 500 })) as typeof fetch;
-    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${other}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+    expect(
+      (await app.inject({ method: "DELETE", url: `/v1/storage/connections/${other}`, cookies: { cs_session: sessions.owner } })).statusCode,
+    ).toBe(204);
     expect(await connRow(other)).toBeNull();
   });
 
@@ -146,7 +167,9 @@ describe("almacenamiento de una persona que deja la organización", () => {
       calls.push(String(u));
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
-    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${a}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${a}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(
+      204,
+    );
     expect(calls).toEqual([]);
     expect(await connRow(a)).toBeNull();
 
@@ -155,13 +178,18 @@ describe("almacenamiento de una persona que deja la organización", () => {
     const idToken = `h.${Buffer.from(JSON.stringify({ email: "compartida@gmail.test" })).toString("base64url")}.s`;
     globalThis.fetch = (async (u: any) => {
       calls.push(String(u));
-      if (String(u).includes("/token")) return new Response(JSON.stringify({ access_token: "na", refresh_token: "nr", expires_in: 3600, id_token: idToken }), { status: 200 });
+      if (String(u).includes("/token"))
+        return new Response(JSON.stringify({ access_token: "na", refresh_token: "nr", expires_in: 3600, id_token: idToken }), { status: 200 });
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
     const st = util.encrypt(JSON.stringify({ t: tenant, u: users.owner, p: "gdrive", n: "x".repeat(10_000), f: "", exp: Date.now() + 60_000 }));
     await db.query(`ALTER TABLE storage_connections ADD CONSTRAINT test_name_len CHECK (length(name) < 1000) NOT VALID`);
     try {
-      const r = await app.inject({ method: "GET", url: `/v1/storage/oauth/gdrive/callback?code=c&state=${encodeURIComponent(st)}`, cookies: { cs_session: sessions.owner } });
+      const r = await app.inject({
+        method: "GET",
+        url: `/v1/storage/oauth/gdrive/callback?code=c&state=${encodeURIComponent(st)}`,
+        cookies: { cs_session: sessions.owner },
+      });
       expect(r.headers.location).toContain("error=");
     } finally {
       await db.query(`ALTER TABLE storage_connections DROP CONSTRAINT test_name_len`);
@@ -173,7 +201,9 @@ describe("almacenamiento de una persona que deja la organización", () => {
     await db.query(`DELETE FROM storage_connections WHERE id = $1`, [elsewhere]);
     const b = await conn("gdrive", users.owner, {}, shared);
     calls.length = 0;
-    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${b}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${b}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(
+      204,
+    );
     expect(calls).toEqual(["https://oauth2.googleapis.com/revoke"]);
   });
 
@@ -187,16 +217,17 @@ describe("almacenamiento de una persona que deja la organización", () => {
     }) as typeof fetch;
     const del = async (id: string) => {
       calls.length = 0;
-      expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${id}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+      expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${id}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(
+        204,
+      );
       return calls.filter((u) => u.includes("revoke")).length > 0;
     };
     // Sin etiqueta en otra organización: no impide revocar.
     const elsewhere = util.uuidv7();
-    await db.query(`INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc) VALUES ($1,$2,'gdrive','Sin etiqueta','{}',$3)`, [
-      elsewhere,
-      otherTenant,
-      util.encrypt(JSON.stringify({ access_token: "x", refresh_token: "rx", expires_at: 0 })),
-    ]);
+    await db.query(
+      `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc) VALUES ($1,$2,'gdrive','Sin etiqueta','{}',$3)`,
+      [elsewhere, otherTenant, util.encrypt(JSON.stringify({ access_token: "x", refresh_token: "rx", expires_at: 0 }))],
+    );
     expect(await del(await conn("gdrive", users.owner))).toBe(true);
     // Sin etiqueta, de otra persona de la misma organización: tampoco.
     const byAna = await conn("gdrive", users.ana);
@@ -223,11 +254,16 @@ describe("almacenamiento de una persona que deja la organización", () => {
   it("Google: el callback guarda el sub del id_token", async () => {
     const idToken = `h.${Buffer.from(JSON.stringify({ email: "subby@gmail.test", sub: "1234567890" })).toString("base64url")}.s`;
     globalThis.fetch = (async (u: any) => {
-      if (String(u).includes("/token")) return new Response(JSON.stringify({ access_token: "na", refresh_token: "nr", expires_in: 3600, id_token: idToken }), { status: 200 });
+      if (String(u).includes("/token"))
+        return new Response(JSON.stringify({ access_token: "na", refresh_token: "nr", expires_in: 3600, id_token: idToken }), { status: 200 });
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
     const st = util.encrypt(JSON.stringify({ t: tenant, u: users.owner, p: "gdrive", n: "Con sub", f: "", exp: Date.now() + 60_000 }));
-    const r = await app.inject({ method: "GET", url: `/v1/storage/oauth/gdrive/callback?code=c&state=${encodeURIComponent(st)}`, cookies: { cs_session: sessions.owner } });
+    const r = await app.inject({
+      method: "GET",
+      url: `/v1/storage/oauth/gdrive/callback?code=c&state=${encodeURIComponent(st)}`,
+      cookies: { cs_session: sessions.owner },
+    });
     expect(r.headers.location).toContain("connected=gdrive");
     const row = await db.one<any>(`SELECT account_sub, account_label FROM storage_connections WHERE tenant_id = $1 AND name = 'Con sub'`, [tenant]);
     expect(row).toEqual({ account_sub: "1234567890", account_label: "subby@gmail.test" });
@@ -263,7 +299,12 @@ describe("regresiones de la ronda 142", () => {
       return orig(sql, params);
     };
     try {
-      const r = await app.inject({ method: "PATCH", url: `/v1/storage/connections/${c}`, cookies: { cs_session: sessions.owner }, payload: { active: true } });
+      const r = await app.inject({
+        method: "PATCH",
+        url: `/v1/storage/connections/${c}`,
+        cookies: { cs_session: sessions.owner },
+        payload: { active: true },
+      });
       expect(r.statusCode).toBe(409);
       expect(r.json().error.code).toBe("storage_reconnect_required");
     } finally {
@@ -271,7 +312,12 @@ describe("regresiones de la ronda 142", () => {
     }
     expect(await connRow(c)).toMatchObject({ active: false, deactivated_reason: "creator_removed" });
     // Otros cambios (nombre) sobre una desactivada sí se guardan.
-    const n = await app.inject({ method: "PATCH", url: `/v1/storage/connections/${c}`, cookies: { cs_session: sessions.owner }, payload: { name: "Renombrada" } });
+    const n = await app.inject({
+      method: "PATCH",
+      url: `/v1/storage/connections/${c}`,
+      cookies: { cs_session: sessions.owner },
+      payload: { name: "Renombrada" },
+    });
     expect(n.statusCode).toBe(200);
   });
 
@@ -289,7 +335,9 @@ describe("regresiones de la ronda 142", () => {
     });
     const job = { id: 9_142_001 };
     try {
-      await expect(notifyStorageMemberRemoved(db, { tenantId: tenant, userId: users.beto, connectionIds: [c] }, job)).rejects.toThrow(/no se pudo avisar/);
+      await expect(notifyStorageMemberRemoved(db, { tenantId: tenant, userId: users.beto, connectionIds: [c] }, job)).rejects.toThrow(
+        /no se pudo avisar/,
+      );
       expect(sent.map((m) => m.to)).toEqual(["owner@org.test"]);
     } finally {
       deliver.mockImplementation(base);
@@ -326,7 +374,8 @@ describe("regresiones de la ronda 142", () => {
         calls.push({ url, method: init.method ?? "GET", body: typeof init.body === "string" ? init.body : undefined });
         if (url.includes(`/drive/v3/files/${name}?`)) return new Response("{}", { status });
         if (url.includes("/drive/v3/files?q=")) return new Response(JSON.stringify({ files: [] }), { status: 200 });
-        if ((init.method ?? "GET") === "POST" && url.includes("/drive/v3/files?")) return new Response(JSON.stringify({ id: "nueva-carpeta" }), { status: 200 });
+        if ((init.method ?? "GET") === "POST" && url.includes("/drive/v3/files?"))
+          return new Response(JSON.stringify({ id: "nueva-carpeta" }), { status: 200 });
         return new Response(JSON.stringify({ id: "x" }), { status: 200 });
       }) as typeof fetch;
       const r = await app.inject({ method: "POST", url: `/v1/storage/connections/${c}/test`, cookies: { cs_session: sessions.owner } });
@@ -359,13 +408,15 @@ describe("exportación: reclamo y carpeta", () => {
     const env = util.uuidv7();
     const key = `tenants/${tenant}/envelopes/${env}/${file}.pdf`;
     await blobs.put(key, new TextEncoder().encode("%PDF-x"), "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',6,$4)`, [
-      file,
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',6,$4)`,
+      [file, tenant, key, "b".repeat(64)],
+    );
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id) VALUES ($1,$2,'S','completed', now(), $3)`, [
+      env,
       tenant,
-      key,
-      "b".repeat(64),
+      file,
     ]);
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id) VALUES ($1,$2,'S','completed', now(), $3)`, [env, tenant, file]);
     const ex = util.uuidv7();
     await db.query(`INSERT INTO storage_exports (id, tenant_id, connection_id, envelope_id) VALUES ($1,$2,$3,$4)`, [ex, tenant, c, env]);
     const claimed = () => db.one<any>(`SELECT claimed_until IS NOT NULL AS held, status FROM storage_exports WHERE id = $1`, [ex]);

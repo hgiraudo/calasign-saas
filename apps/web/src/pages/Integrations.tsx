@@ -1,12 +1,6 @@
 // /app/settings/integrations — webhooks y orígenes autorizados para la firma embebida.
 import { useEffect, useState, type FormEvent } from "react";
-import {
-  WEBHOOK_EVENT_TYPES,
-  type CreateWebhookResponse,
-  type EmbedSettings,
-  type WebhookDelivery,
-  type WebhookEndpoint,
-} from "@calasign/shared";
+import { WEBHOOK_EVENT_TYPES, type CreateWebhookResponse, type EmbedSettings, type WebhookDelivery, type WebhookEndpoint } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction, placeholderText, interpolate } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
@@ -100,41 +94,52 @@ function WebhooksSection() {
           {t("common.needsViewAll")}
         </div>
       ) : (
-      <form onSubmit={create} className="card pad stack">
-        <div className="row-wrap">
-          <label className="field grow">
-            <span>{tt("wh.url")}</span>
-            <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={`https://api.${placeholderText("domain")}/calasign/webhook`} />
-          </label>
-          <label className="field grow">
-            <span>{tt("wh.description")}</span>
-            <input maxLength={200} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={placeholderText("integration")} />
-          </label>
-        </div>
-        <fieldset className="field">
-          <span>{tt("wh.events")}</span>
-          <div className="chips">
-            <label className="check">
-              <input type="checkbox" checked={events.length === 0} onChange={() => setEvents([])} /> {tt("wh.allEvents")}
+        <form onSubmit={create} className="card pad stack">
+          <div className="row-wrap">
+            <label className="field grow">
+              <span>{tt("wh.url")}</span>
+              <input
+                type="url"
+                required
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder={`https://api.${placeholderText("domain")}/calasign/webhook`}
+              />
             </label>
-            {WEBHOOK_EVENT_TYPES.map((ev) => (
-              <label key={ev} className="check">
-                <input
-                  type="checkbox"
-                  checked={events.includes(ev)}
-                  onChange={(e) => setEvents((cur) => (e.target.checked ? [...cur, ev] : cur.filter((x) => x !== ev)))}
-                />{" "}
-                <code>{ev}</code>
-              </label>
-            ))}
+            <label className="field grow">
+              <span>{tt("wh.description")}</span>
+              <input
+                maxLength={200}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder={placeholderText("integration")}
+              />
+            </label>
           </div>
-        </fieldset>
-        <div className="row-end">
-          <button className="btn btn-primary" disabled={busy || !url.trim() || !inPlan}>
-            {tt("wh.create")}
-          </button>
-        </div>
-      </form>
+          <fieldset className="field">
+            <span>{tt("wh.events")}</span>
+            <div className="chips">
+              <label className="check">
+                <input type="checkbox" checked={events.length === 0} onChange={() => setEvents([])} /> {tt("wh.allEvents")}
+              </label>
+              {WEBHOOK_EVENT_TYPES.map((ev) => (
+                <label key={ev} className="check">
+                  <input
+                    type="checkbox"
+                    checked={events.includes(ev)}
+                    onChange={(e) => setEvents((cur) => (e.target.checked ? [...cur, ev] : cur.filter((x) => x !== ev)))}
+                  />{" "}
+                  <code>{ev}</code>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="row-end">
+            <button className="btn btn-primary" disabled={busy || !url.trim() || !inPlan}>
+              {tt("wh.create")}
+            </button>
+          </div>
+        </form>
       )}
 
       {secret && (
@@ -186,7 +191,12 @@ function WebhooksSection() {
             <div className="row-wrap">
               {canEdit && (
                 <>
-                  <button type="button" className="btn btn-sm" disabled={!inPlan} onClick={() => act(() => api(`/v1/webhooks/${w.id}/test`, { method: "POST" }).then(() => setOpen(w.id)))}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={!inPlan}
+                    onClick={() => act(() => api(`/v1/webhooks/${w.id}/test`, { method: "POST" }).then(() => setOpen(w.id)))}
+                  >
                     {tt("wh.test")}
                   </button>
                   <button
@@ -204,7 +214,11 @@ function WebhooksSection() {
               </button>
               <span className="grow" />
               {canEdit && (
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/webhooks/${w.id}`, { method: "DELETE" }))}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  onClick={() => confirmAction() && act(() => api(`/v1/webhooks/${w.id}`, { method: "DELETE" }))}
+                >
                   {tt("wh.delete")}
                 </button>
               )}
@@ -268,7 +282,7 @@ function Deliveries({ webhookId, canRetry }: { webhookId: string; canRetry: bool
               </td>
               <td className="small">
                 <span className={`badge ${badge(d.status)}`}>{tt(`wh.status.${d.status}` as "wh.status.pending")}</span>{" "}
-                {d.lastStatusCode ? `HTTP ${d.lastStatusCode}` : d.lastError ?? ""}
+                {d.lastStatusCode ? `HTTP ${d.lastStatusCode}` : (d.lastError ?? "")}
                 {d.status === "pending" && d.nextRetryAt && (
                   <div className="muted">
                     {tt("wh.nextRetry")}: {formatDateTime(d.nextRetryAt, locale)}
@@ -352,7 +366,13 @@ function EmbedSection() {
         <form onSubmit={save} className="card pad stack">
           <label className="field">
             <span>{tt("embed.origins")}</span>
-            <textarea rows={4} value={text ?? ""} readOnly={!canEdit} onChange={(e) => setText(e.target.value)} placeholder={`https://app.${placeholderText("domain")}`} />
+            <textarea
+              rows={4}
+              value={text ?? ""}
+              readOnly={!canEdit}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={`https://app.${placeholderText("domain")}`}
+            />
           </label>
           {discarded.length > 0 && <p className="muted small">{interpolate(tt("embed.discarded"), { list: discarded.join(", ") })}</p>}
           {canEdit ? (

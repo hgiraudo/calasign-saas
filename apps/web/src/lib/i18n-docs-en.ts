@@ -50,7 +50,8 @@ export const docsEn: Record<DocsKey, string> = {
     "The CalaSign REST API lets you send documents for signature, track every signature in real time and download the sealed PDF with its evidence, all from your own system. It's the same API the CalaSign web app uses: anything you can do in the app can be automated.",
   "intro.build.h": "What you can build",
   "intro.build.send.t": "Send for signature from your system",
-  "intro.build.send.d": "Create an envelope with one or more PDFs, add signers by email, WhatsApp or Telegram, and send it with a couple of HTTP requests.",
+  "intro.build.send.d":
+    "Create an envelope with one or more PDFs, add signers by email, WhatsApp or Telegram, and send it with a couple of HTTP requests.",
   "intro.build.embed.t": "Signing inside your app",
   "intro.build.embed.d": "Show the signing ceremony in an iframe in your application, without the signer ever leaving your product.",
   "intro.build.webhooks.t": "React to every event",
@@ -70,7 +71,7 @@ export const docsEn: Record<DocsKey, string> = {
   "intro.base.mcp": "MCP server (AI agents)",
   "intro.base.oauth": "OAuth 2.0",
   "intro.base.conventions":
-    "- JSON bodies (UTF-8) with `Content-Type: application/json`; PDFs are uploaded as `multipart/form-data`.\n- UUID identifiers, ISO 8601 dates in UTC (`2026-03-01T14:30:00.000Z`).\n- Authentication with `Authorization: Bearer <API key or access token>` (see [Authentication](/developers/authentication)).\n- Errors always have the same shape: `{ \"error\": { \"code\", \"message\", \"details\" } }` (see [Errors](/developers/errors)).\n\nA first request to test your credential: it returns your organization.",
+    '- JSON bodies (UTF-8) with `Content-Type: application/json`; PDFs are uploaded as `multipart/form-data`.\n- UUID identifiers, ISO 8601 dates in UTC (`2026-03-01T14:30:00.000Z`).\n- Authentication with `Authorization: Bearer <API key or access token>` (see [Authentication](/developers/authentication)).\n- Errors always have the same shape: `{ "error": { "code", "message", "details" } }` (see [Errors](/developers/errors)).\n\nA first request to test your credential: it returns your organization.',
   "intro.env.h": "Environments and testing",
   "intro.env.p":
     "**{{BASE}}** is the development and test environment. Create a free account, generate an API key and test at no cost: new organizations in this environment have every feature enabled (API, webhooks, bulk send, simulated payments, simulated identity verification).\n\nAPI keys in this environment start with `cs_test_`; production keys start with `cs_live_`. Each environment has its own accounts, credentials and data: nothing is shared between them.",
@@ -158,7 +159,7 @@ export const docsEn: Record<DocsKey, string> = {
   "auth.cmp.code": "An app that acts on behalf of users in other organizations (marketplace, AI agents).",
   "auth.keys.h": "API keys",
   "auth.keys.p":
-    "Create them in **Settings → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) or with `POST /v1/api-keys` from a session. The full secret is shown **only once**; after that you only see its prefix (the first 12 characters) and the last-used date.\n\n- Format: `cs_test_…` in the test environment and `cs_live_…` in production.\n- Each key belongs to the organization and has a **role** (`admin`, `member` or a custom role) that defines what it can do; nobody can create a key with more permissions than their own. To create webhooks or integrations (triggers, storage, CRM) the key also needs `envelopes:view_all`, like the `admin` role.\n- Envelopes created with a key are recorded as created via the API (`createdVia: \"api\"`) and the evidence names the key as the actor.",
+    'Create them in **Settings → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) or with `POST /v1/api-keys` from a session. The full secret is shown **only once**; after that you only see its prefix (the first 12 characters) and the last-used date.\n\n- Format: `cs_test_…` in the test environment and `cs_live_…` in production.\n- Each key belongs to the organization and has a **role** (`admin`, `member` or a custom role) that defines what it can do; nobody can create a key with more permissions than their own. To create webhooks or integrations (triggers, storage, CRM) the key also needs `envelopes:view_all`, like the `admin` role.\n- Envelopes created with a key are recorded as created via the API (`createdVia: "api"`) and the evidence names the key as the actor.',
   "auth.keys.rotate.h": "Rotation and revocation",
   "auth.keys.rotate.p":
     "Keys don't expire. To rotate one: create a new key, deploy it to your system, check in the list that the old one is no longer used (*last used*) and revoke it with **Revoke** or `DELETE /v1/api-keys/{id}`. Revocation is immediate: the next request with that key gets `401 unauthorized`.",
@@ -166,12 +167,14 @@ export const docsEn: Record<DocsKey, string> = {
     "An API key grants access to the whole organization according to its role. Never put it in a mobile app, in browser JavaScript or in a repository. If a key leaks, revoke it right away.",
   "auth.oauth.h": "OAuth 2.0",
   "auth.oauth.p":
-    "Register an application in **Settings → OAuth apps** ([`/app/settings/oauth-apps`](/app/settings/oauth-apps)) or with `POST /v1/oauth/apps`. You get a `client_id` (`csapp_…`) and, if the app is **confidential**, a `client_secret` (`cssec_…`, shown once; it can be rotated). A **public** app (desktop, mobile, SPA) has no secret and can only use authorization code with PKCE.\n\nTokens are opaque: the `csat_…` access token is valid for **1 hour**, the `csrt_…` refresh token for **30 days** and the authorization code for **10 minutes**. Errors from `/oauth/*` follow RFC 6749: `{ \"error\": \"invalid_grant\", \"error_description\": \"…\" }`.",
+    'Register an application in **Settings → OAuth apps** ([`/app/settings/oauth-apps`](/app/settings/oauth-apps)) or with `POST /v1/oauth/apps`. You get a `client_id` (`csapp_…`) and, if the app is **confidential**, a `client_secret` (`cssec_…`, shown once; it can be rotated). A **public** app (desktop, mobile, SPA) has no secret and can only use authorization code with PKCE.\n\nTokens are opaque: the `csat_…` access token is valid for **1 hour**, the `csrt_…` refresh token for **30 days** and the authorization code for **10 minutes**. Errors from `/oauth/*` follow RFC 6749: `{ "error": "invalid_grant", "error_description": "…" }`.',
   "auth.ep.endpoint": "Endpoint",
   "auth.ep.use": "Purpose",
   "auth.ep.authorize": "Consent screen in the browser (authorization code + PKCE).",
-  "auth.ep.token": "Issue tokens: `authorization_code`, `client_credentials` and `refresh_token`. Body is `application/x-www-form-urlencoded` (JSON is also accepted).",
-  "auth.ep.revoke": "Revoke a token (RFC 7009). Revoking a refresh token revokes the whole authorization. An unknown token or one from another app also returns 200.",
+  "auth.ep.token":
+    "Issue tokens: `authorization_code`, `client_credentials` and `refresh_token`. Body is `application/x-www-form-urlencoded` (JSON is also accepted).",
+  "auth.ep.revoke":
+    "Revoke a token (RFC 7009). Revoking a refresh token revokes the whole authorization. An unknown token or one from another app also returns 200.",
   "auth.ep.introspect": "Check whether a token is active (RFC 7662). Confidential clients only, and only tokens from the same app.",
   "auth.ep.register": "Dynamic client registration (RFC 7591), designed for AI agents and MCP clients.",
   "auth.code.h": "Authorization code + PKCE",
@@ -208,7 +211,7 @@ export const docsEn: Record<DocsKey, string> = {
     "MCP clients send the `resource` parameter with the MCP server URL (`{{MCP_URL}}`) to `/oauth/authorize` and `/oauth/token`, to request a token meant for that resource. CalaSign accepts it in both steps; you don't need to send it if you call the REST API directly.",
   "auth.discovery.h": "Discovery",
   "auth.discovery.p":
-    "Standard metadata lets a client configure OAuth from nothing but the MCP server URL. When a request to `/mcp` arrives without a credential, the `401` response carries `WWW-Authenticate: Bearer resource_metadata=\"…\"` pointing to these documents.",
+    'Standard metadata lets a client configure OAuth from nothing but the MCP server URL. When a request to `/mcp` arrives without a credential, the `401` response carries `WWW-Authenticate: Bearer resource_metadata="…"` pointing to these documents.',
   "auth.disc.prm": "Protected resource metadata (RFC 9728): resource, authorization server and scopes.",
   "auth.disc.as": "Authorization server metadata (RFC 8414): endpoints, grants, authentication methods and PKCE.",
   // ───────── Concepts ─────────
@@ -245,7 +248,8 @@ export const docsEn: Record<DocsKey, string> = {
   "concepts.rstatus.signed": "Signed (or approved, for an `approver`).",
   "concepts.rstatus.declined": "Declined; the envelope moves to `declined`.",
   "concepts.rstatus.completed": "Copy recipient (`cc`) who has already received the final document.",
-  "concepts.rstatus.delegated": "Delegated signing to someone else (if the envelope allows it with `allowDelegation`). `replacedBy` points to the new recipient.",
+  "concepts.rstatus.delegated":
+    "Delegated signing to someone else (if the envelope allows it with `allowDelegation`). `replacedBy` points to the new recipient.",
   "concepts.rstatus.reassigned": "The sender replaced them with someone else. `replacedBy` points to the new recipient.",
   "concepts.channels.h": "Notification channels",
   "concepts.channels.p":
@@ -310,7 +314,7 @@ export const docsEn: Record<DocsKey, string> = {
     "This endpoint accepts `Idempotency-Key`: send a unique key per envelope and, if you retry after a timeout or a 5xx with the same key and the same body, you get the envelope already created instead of creating (and sending) another one.",
   "g.tpl.prefill.h": "Prefilling fields",
   "g.tpl.prefill.p":
-    "`prefill` is an object `{ \"key\": \"value\" }` where the key is the `id` of a template field or its **label** (`label`, case-insensitive, ignoring surrounding spaces). By label, every field with that label that accepts a value is filled in (text, number, dropdown, company or title; editable and without a formula). A key that doesn't match any field returns `400 unknown_prefill`. Fields marked `readOnly` in the template are locked for the signer.",
+    '`prefill` is an object `{ "key": "value" }` where the key is the `id` of a template field or its **label** (`label`, case-insensitive, ignoring surrounding spaces). By label, every field with that label that accepts a value is filled in (text, number, dropdown, company or title; editable and without a formula). A key that doesn\'t match any field returns `400 unknown_prefill`. Fields marked `readOnly` in the template are locked for the signer.',
   // ───────── Guide: embedded signing ─────────
   "g.embed.title": "Embedded signing",
   "g.embed.lead":
@@ -339,7 +343,7 @@ export const docsEn: Record<DocsKey, string> = {
   "g.embed.ev.closed":
     "The envelope ended without this person signing or declining: it was voided, expired, declined by another recipient, or was already completed. Includes `status` with the envelope status (`voided`, `expired`, `declined` or `completed`). It does not redirect to the `returnUrl`.",
   "g.embed.events.p":
-    "Each message is `{ source: \"calasign\", type, envelopeId, recipientId }` (plus `status` on `closed`) and is sent only once per type. Treat browser events as a UI signal: the business confirmation is the [webhooks](/developers/webhooks), which are signed.",
+    'Each message is `{ source: "calasign", type, envelopeId, recipientId }` (plus `status` on `closed`) and is sent only once per type. Treat browser events as a UI signal: the business confirmation is the [webhooks](/developers/webhooks), which are signed.',
   "g.embed.security":
     "With embedded signing, **your application** is what authenticates the person: the evidence records that the session was opened by your integration (“authenticated by the integrator”). Only request the URL for the signed-in person who corresponds to that recipient.",
   // ───────── Guide: anchors ─────────
@@ -356,7 +360,8 @@ export const docsEn: Record<DocsKey, string> = {
   "g.anchor.o.size": "Field size in PDF points (1 pt = 1/72 inch). Required.",
   "g.anchor.o.offset": "Offset in points from the top-left corner of the matched text. Negative = up or to the left.",
   "g.anchor.o.case": "Case-sensitive matching.",
-  "g.anchor.o.ignore": "If `false` and the text isn't found, the request fails with `400 anchor_not_found`. With `true` the field simply isn't created.",
+  "g.anchor.o.ignore":
+    "If `false` and the text isn't found, the request fails with `400 anchor_not_found`. With `true` the field simply isn't created.",
   "g.anchor.o.alldocs": "all",
   "g.anchor.o.doc": "Search only in that document.",
   "g.anchor.tips.h": "Tips",
@@ -372,7 +377,8 @@ export const docsEn: Record<DocsKey, string> = {
   "g.bulk.validate":
     "Before sending you can validate without creating anything using `POST /v1/bulk-sends/validate` (same body): it returns `{ total, valid, invalid, errors: [{ row, line, errors }], columns }` (`row` is the data-row number, 1 for the first one after the header; `line`, only with CSV, is the file line where it starts, counting the header and blank lines). On creation, if there are invalid rows the response is `422 rows_invalid` with the same details, unless you send `skipInvalid: true`: then the valid rows are sent and the others are marked as failed. Validation also warns, without rejecting, about duplicate rows (`duplicates`: same recipients and prefill as an earlier one) and how many envelopes are left in this month's quota (`quotaRemaining`): if the valid rows don't fit in the quota, creating the send returns `402 plan_limit` without creating anything. Repeated columns or an unclosed quote return `422 invalid_csv`.",
   "g.bulk.json.h": "With JSON rows",
-  "g.bulk.json.p": "Instead of `csv` you can send `rows` (one or the other). Each row accepts recipients by role, `prefill`, its own `subject` and `metadata`, which is stored on the envelope and comes back to you in webhooks.",
+  "g.bulk.json.p":
+    "Instead of `csv` you can send `rows` (one or the other). Each row accepts recipients by role, `prefill`, its own `subject` and `metadata`, which is stored on the envelope and comes back to you in webhooks.",
   "g.bulk.track.h": "Tracking",
   "g.bulk.track.p":
     "The response is the bulk send with its status (`queued`, `running`, `completed`, `cancelled`) and counters (`total`, `sent`, `failed`, `retryable`, `pending`). Query `GET /v1/bulk-sends/{id}`, get per-row details with `GET /v1/bulk-sends/{id}/items` (filterable by `status`) or download `results.csv` (with a `line` column: the line in the source CSV). `POST /v1/bulk-sends/{id}/cancel` stops the rows that haven't been processed yet. If the monthly quota runs out during the send, the remaining rows are marked as failed; `POST /v1/bulk-sends/{id}/retry-failed` requeues rows that failed because of the quota, the template or an internal error (rows with invalid data must be fixed in a new send). Each envelope created fires its own webhooks.",
@@ -418,7 +424,8 @@ export const docsEn: Record<DocsKey, string> = {
     "- `matchIdDocument`: the certificate must match the signer's `idDocumentNumber` (CPF, national ID, DNI…). Defaults to `false`. If requested, the recipient must have an `idDocumentNumber` (otherwise 400 `missing_id_document` on save). On envelopes created from a template (web forms, bulk sends, CRM, connectors) and on replacements, if the document is missing the check is skipped and recorded in the evidence (`idDocumentMatch: skipped_missing_id_document`); it requires the chain to reach a trusted root.\n- `allowedIssuers`: accepted parts of the issuer name (for example `ICP-Brasil`, `RENIEC`). Empty = any.\n- `requireQualified`: require a CA from the platform's trust store.\n\nValidity period, key usage (`digitalSignature` or `nonRepudiation`) and not being a CA certificate are also checked. Rejected attempts are recorded in the evidence.",
   // ───────── Guide: identity ─────────
   "g.idv.title": "Authentication and identity verification",
-  "g.idv.lead": "By default, having the personal link is enough to sign. You can require more: a one-time code or an identity verification with an ID document and a selfie.",
+  "g.idv.lead":
+    "By default, having the personal link is enough to sign. You can require more: a one-time code or an identity verification with an ID document and a selfie.",
   "g.idv.auth.h": "One-time code",
   "g.idv.auth.p":
     "The recipient's `authMethod`: `link` (default), `otp_email` (requires `email`), `otp_sms` or `otp_whatsapp` (require `phone`) or `in_person` (signs on the device of a host from your organization, configured with `inPerson`). With OTP, the person must enter a 6-digit code before seeing the document, and the method is recorded in the completion certificate.",
@@ -447,13 +454,16 @@ export const docsEn: Record<DocsKey, string> = {
   "g.crm.providers.h": "Providers",
   "g.crm.col.provider": "Provider",
   "g.crm.col.does": "What it does",
-  "g.crm.hubspot": "Send for signature from a Deal (associated contacts + properties → template), manually or via webhook when a property changes. On completion it updates a status property and attaches the PDF to the deal.",
-  "g.crm.salesforce": "Send from an Opportunity (contact roles + fields). Updates a status field and publishes the PDF as a ContentVersion on the opportunity.",
+  "g.crm.hubspot":
+    "Send for signature from a Deal (associated contacts + properties → template), manually or via webhook when a property changes. On completion it updates a status property and attaches the PDF to the deal.",
+  "g.crm.salesforce":
+    "Send from an Opportunity (contact roles + fields). Updates a status field and publishes the PDF as a ContentVersion on the opportunity.",
   "g.crm.zoho":
     "OAuth in any Zoho data center (com, eu, in, com.au, jp, ca…). Send for signature from a **Deal** (primary contact and contact roles) or a **Contact**; in Bigin, from a Pipeline. Updates a status field (e.g. `CalaSign_Status`) and attaches the signed PDF to the record, with a note carrying the hash and the envelope link. A “Send for signature with CalaSign” button on Deals comes with the [Deluge function and extension guide](/integrations/connectors/zoho-crm/calasign-zoho-crm.zip).",
   "g.crm.siigo": "Colombia: finds the customer by a signer's ID number and adds the signed document reference to it.",
   "g.crm.alegra": "Finds the contact by ID number and attaches the PDF; an invoice can also be linked.",
-  "g.crm.pipedrive": "OAuth with the company's API domain. Send from a Deal (primary person and participants + fields, including custom fields by key or name) or from a Person. Writes the status to a field of the record (text or single option) and, on completion, uploads the signed PDF to the deal or Person and adds a note with the SHA-256 and the link.",
+  "g.crm.pipedrive":
+    "OAuth with the company's API domain. Send from a Deal (primary person and participants + fields, including custom fields by key or name) or from a Person. Writes the status to a field of the record (text or single option) and, on completion, uploads the signed PDF to the deal or Person and adds a note with the SHA-256 and the link.",
   "g.crm.pipedrive.h": "Pipedrive",
   "g.crm.pipedrive.p":
     "1. **Settings → CRM and ERP → Pipedrive → Connect with OAuth**: authorize the Pipedrive company; CalaSign stores its API domain.\n2. In Pipedrive, create a custom deal field (or person field, for Person mappings) for the status (e.g. \"CalaSign status\", text or single option with the values you will write).\n3. Create a mapping: type `deal` (or `contact` for a Person), template, recipients (*primary contact* = the deal's person; *contact 1, 2…* = participants), prefill (`value`, `title`, `org_id.name`, or a custom field by its 40-character key or by name) and the status property.\n4. Send with `POST /v1/crm/mappings/{id}/send` (`objectId` = deal or Person id; `companyId` is optional: if you send it, it must be the connection's company, otherwise 409 `company_mismatch`) or from Pipedrive with the **Send for signature with CalaSign** action of the Marketplace app ([zip with the action and the guide](/integrations/connectors/pipedrive/calasign-pipedrive.zip)).",
@@ -461,7 +471,7 @@ export const docsEn: Record<DocsKey, string> = {
     "Brazil. OAuth through the RD Station App Store (CRM API v2). Send from a Deal (negociação: its contacts in order + fields, including custom fields by slug or name). Writes the status to a custom field (text or option) and, on completion, uploads the signed PDF to the deal's files with a note containing the hash and link.",
   "g.crm.rdstation.h": "RD Station CRM",
   "g.crm.rdstation.p":
-    "1. **Settings → CRM and ERP → RD Station CRM → Connect with OAuth**: authorize the RD Station account.\n2. In RD Station CRM, create a custom deal field for the status (e.g. \"CalaSign status\", text or option with the values you will write).\n3. Create a mapping: type `deal`, template, recipients (*primary contact* = the deal's first contact; *contact 1, 2…* = the following ones), prefill (`name`, `one_time_price`, `recurrence_price`, or a custom field by slug or name) and the status field.\n4. Send with `POST /v1/crm/mappings/{id}/send` (`objectId` = the deal id, 24 characters).",
+    '1. **Settings → CRM and ERP → RD Station CRM → Connect with OAuth**: authorize the RD Station account.\n2. In RD Station CRM, create a custom deal field for the status (e.g. "CalaSign status", text or option with the values you will write).\n3. Create a mapping: type `deal`, template, recipients (*primary contact* = the deal\'s first contact; *contact 1, 2…* = the following ones), prefill (`name`, `one_time_price`, `recurrence_price`, or a custom field by slug or name) and the status field.\n4. Send with `POST /v1/crm/mappings/{id}/send` (`objectId` = the deal id, 24 characters).',
   "g.crm.kommo":
     "OAuth per account (Kommo subdomain). Send from a Lead (main contact and other contacts + fields, including custom fields by name, code or id). Writes the status to a lead field (text or list) and, on completion, attaches the signed PDF to the lead (Files API) with a note containing the hash and link.",
   "g.crm.kommo.h": "Kommo",
@@ -500,7 +510,8 @@ export const docsEn: Record<DocsKey, string> = {
   "wh.col.when": "When it's sent",
   "wh.ev.envelope.sent": "The envelope was sent (via the API, the web app, a bulk send, a web form or a CRM).",
   "wh.ev.envelope.completed": "Everyone signed and the sealed PDF is ready to download. `data.envelope.signedSha256` contains its hash.",
-  "wh.ev.envelope.declined": "The envelope ended because someone declined. Arrives together with `recipient.declined`; `data.reason` contains the reason.",
+  "wh.ev.envelope.declined":
+    "The envelope ended because someone declined. Arrives together with `recipient.declined`; `data.reason` contains the reason.",
   "wh.ev.envelope.voided": "The sender voided the envelope. `data.reason` contains the reason.",
   "wh.ev.envelope.expired": "`expiresAt` passed before everyone signed.",
   "wh.ev.recipient.viewed": "A recipient opened the document. `data.recipientId` says who.",
@@ -514,15 +525,17 @@ export const docsEn: Record<DocsKey, string> = {
   "wh.payload.headers": "Headers",
   "wh.payload.body": "Body",
   "wh.col.field": "Field",
-  "wh.f.id": "Unique event id. It's the same across all your endpoints, in retries and in `GET /v1/events`: use it to avoid processing an event twice.",
+  "wh.f.id":
+    "Unique event id. It's the same across all your endpoints, in retries and in `GET /v1/events`: use it to avoid processing an event twice.",
   "wh.f.type": "Event type.",
   "wh.f.createdAt": "When the event occurred (the same instant as `occurredAt` in `GET /v1/events`).",
-  "wh.f.envelope": "Envelope state when the delivery was built, seconds after the event: it may reflect later changes (e.g. a `recipient.signed` that already shows the envelope `completed`). For the moment of the event, use `createdAt` and `type`. `null` in `webhook.test`.",
+  "wh.f.envelope":
+    "Envelope state when the delivery was built, seconds after the event: it may reflect later changes (e.g. a `recipient.signed` that already shows the envelope `completed`). For the moment of the event, use `createdAt` and `type`. `null` in `webhook.test`.",
   "wh.f.recipientId": "Recipient that triggered the event (`viewed`, `signed`, `approved`, `declined`), when applicable.",
   "wh.f.reason": "Reason for the decline or void, when applicable.",
   "wh.verify.h": "Verify the signature",
   "wh.verify.p":
-    "The `CalaSign-Signature` header has the form `t=<unix>,v1=<hex>`, where `v1` is `HMAC-SHA256(secret, \"<t>.<body>\")` in hex. While you rotate the secret, the header carries one `v1` per active secret (`t=<unix>,v1=<new>,v1=<old>`). To verify:\n\n1. Split the header on commas and read `t` and every `v1`.\n2. Compute the HMAC with your secret over the text `t`, a dot and the **raw body**, byte for byte as it arrived (not re-serialized JSON).\n3. Compare it in constant time with each `v1`: accept the delivery if any of them matches.\n4. Reject deliveries whose `t` is more than 5 minutes old to prevent replays.",
+    'The `CalaSign-Signature` header has the form `t=<unix>,v1=<hex>`, where `v1` is `HMAC-SHA256(secret, "<t>.<body>")` in hex. While you rotate the secret, the header carries one `v1` per active secret (`t=<unix>,v1=<new>,v1=<old>`). To verify:\n\n1. Split the header on commas and read `t` and every `v1`.\n2. Compute the HMAC with your secret over the text `t`, a dot and the **raw body**, byte for byte as it arrived (not re-serialized JSON).\n3. Compare it in constant time with each `v1`: accept the delivery if any of them matches.\n4. Reject deliveries whose `t` is more than 5 minutes old to prevent replays.',
   "wh.verify.warn":
     "The most common mistake is verifying the already-parsed body: any difference in whitespace or key order breaks the signature. Configure your framework to give you the raw body on this route (`express.raw`, `request.get_data()`, unparsed `request.body`).",
   "wh.c.raw": "RAW body, exactly as it arrived",
@@ -543,18 +556,21 @@ export const docsEn: Record<DocsKey, string> = {
   "wh.test.p":
     "Send a `webhook.test` event to an endpoint to check connectivity and signature verification. During development you can expose your local server with a tunnel (ngrok, Cloudflare Tunnel) or use a request inspection service. The test also requires webhooks in the plan (`402 plan_limit`).",
   "wh.test.deliveries.h": "Delivery history",
-  "wh.test.deliveries.p": "Each endpoint's recent deliveries, with their status (`pending`, `succeeded`, `failed`), attempts, last HTTP status code and error.",
+  "wh.test.deliveries.p":
+    "Each endpoint's recent deliveries, with their status (`pending`, `succeeded`, `failed`), attempts, last HTTP status code and error.",
   // ───────── Errors, idempotency, pagination, limits ─────────
   "err.title": "Errors, idempotency and limits",
-  "err.lead": "How the API responds when something goes wrong, how to retry without duplicating, how to page through long lists and how many requests you can make.",
+  "err.lead":
+    "How the API responds when something goes wrong, how to retry without duplicating, how to page through long lists and how many requests you can make.",
   "err.format.h": "Error format",
   "err.format.p":
     "Every `/v1` error response has the same format: a stable English `code` for your code, a human-readable `message` and, sometimes, `details` with structured information. Code against `code` and the HTTP status, never against `message`.",
   "err.format.lang":
-    "`message` values are in Spanish and their wording may change. OAuth endpoints (`/oauth/*`) use the RFC 6749 format instead: `{ \"error\": \"invalid_grant\", \"error_description\": \"…\" }`.",
+    '`message` values are in Spanish and their wording may change. OAuth endpoints (`/oauth/*`) use the RFC 6749 format instead: `{ "error": "invalid_grant", "error_description": "…" }`.',
   "err.codes.h": "Common codes",
   "err.col.meaning": "What it means and what to do",
-  "err.c.validation": "The body doesn't match the schema. `details[]` contains the `path` and `message` of each problem. Don't retry without fixing it.",
+  "err.c.validation":
+    "The body doesn't match the schema. `details[]` contains the `path` and `message` of each problem. Don't retry without fixing it.",
   "err.c.invalidId": "An id in the path isn't a valid UUID.",
   "err.c.bad":
     "Other request errors, with a specific `code`: invalid cursor, anchor text not found, field outside the page, a file that isn't a PDF (`not_pdf`, the same code on every upload path), text with disallowed characters such as the null character (`invalid_text`), more than 30 documents or 1000 pages in a draft or template when adding one (`too_many_documents`, `too_many_pages`)…",
@@ -565,11 +581,13 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.unauthorized": "The credential is missing, invalid, expired or revoked.",
   "err.c.plan":
     "The organization hit a plan limit or the feature isn't included. `details` contains `plan`, the limit or feature, `suggestedPlan` and `upgradeUrl`. Reads are never blocked by plan.",
-  "err.c.forbidden": "The credential's role lacks the permission (`details.permission`) or the OAuth token is missing a scope (`details.requiredScope`).",
+  "err.c.forbidden":
+    "The credential's role lacks the permission (`details.permission`) or the OAuth token is missing a scope (`details.requiredScope`).",
   "err.c.forbiddenOther":
     "`two_factor_setup_required`: the organization requires two-step verification and the user hasn't enabled it yet (enable it and retry). `ai_notice_required`: an administrator has to accept the current AI data-processing notice (Settings → AI). `bad_origin`: a request with a session cookie from an origin other than the CalaSign web app (doesn't apply with `Authorization`).",
   "err.c.notFound": "The resource doesn't exist or belongs to another organization.",
-  "err.c.conflict": "The resource's state doesn't allow the operation: for example, modifying an envelope that's no longer a draft or voiding a finished one.",
+  "err.c.conflict":
+    "The resource's state doesn't allow the operation: for example, modifying an envelope that's no longer a draft or voiding a finished one.",
   "err.c.idem": "You reused an `Idempotency-Key` with a different body, or the original request is still being processed (retry in a few seconds).",
   "err.c.versionChanged":
     "Concurrent editing control: you sent `X-Expected-Updated-At` with the `updatedAt` you read when modifying a draft (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) or a template (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), or when sending, voiding or reminding it (`POST …/send`, `POST …/void`, `POST …/remind`), and someone changed it in the meantime. `details.updatedAt` has the current value: reload, review and retry. Without the header nothing is checked. In a negotiation it means there's a new version.",
@@ -578,15 +596,18 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.purged":
     "The envelope's originals were deleted by the organization's retention policy (counted from when the envelope ended: completed, voided, declined or expired). `410` when downloading the original, creating a template from the envelope or using AI; `409` when cloning it. The signed PDF and the evidence are kept. In the agreements repository, `GET /v1/agreements/{id}/file` returns `410 purged` if the file was already deleted.",
   "err.c.tooLarge":
-    "The file exceeds the maximum size (`file_too_large`, the same code on every upload path, also when several documents together exceed the per-request total or the envelope's or template's 100 MB: `details.limit` is `\"file\"` or `\"total\"`) or the envelope JSON in `POST /v1/envelopes`, without the documents' base64, is too large (`payload_too_large`).",
+    'The file exceeds the maximum size (`file_too_large`, the same code on every upload path, also when several documents together exceed the per-request total or the envelope\'s or template\'s 100 MB: `details.limit` is `"file"` or `"total"`) or the envelope JSON in `POST /v1/envelopes`, without the documents\' base64, is too large (`payload_too_large`).',
   "err.c.wrongCell":
     "The organization's data lives in another CalaSign cell (region). `details.cell` is the cell and `details.baseUrl` the URL of the API that serves it (also in the `Location` header, with the same path). The request wasn't processed: repeat it against `details.baseUrl` and use that URL from then on. The SDKs do it for you (once).",
-  "err.c.unprocessable": "The request is valid but can't be processed with that data (missing template roles, invalid rows, PDF too heavy to search for anchors).",
-  "err.c.rate": "You exceeded the rate limit (code `rate_limited`; earlier API versions sent `bad_request`). Wait as long as the `retry-after` header says (in seconds) and retry.",
+  "err.c.unprocessable":
+    "The request is valid but can't be processed with that data (missing template roles, invalid rows, PDF too heavy to search for anchors).",
+  "err.c.rate":
+    "You exceeded the rate limit (code `rate_limited`; earlier API versions sent `bad_request`). Wait as long as the `retry-after` header says (in seconds) and retry.",
   "err.c.rateBiz":
     "Business cap with its own code (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). There's no `retry-after`: don't retry it in a loop; tell the user or try much later.",
   "err.c.internal": "Our error. It's safe to retry with increasing backoff; if you use `Idempotency-Key`, nothing gets duplicated.",
-  "err.c.upstream": "An external service failed: the timestamp authority (`tsa_unavailable`) or the AI provider (`ai_unavailable`). Retry in a few minutes.",
+  "err.c.upstream":
+    "An external service failed: the timestamp authority (`tsa_unavailable`) or the AI provider (`ai_unavailable`). Retry in a few minutes.",
   "err.c.unavailable":
     "Temporary unavailability: document storage (`storage_unavailable`), PDF reader busy (`pdf_reader_busy`), too many PDFs being processed at once (`pdf_busy`, with `Retry-After`) or AI provider overloaded (`ai_rate_limited`). The request wasn't processed: retry with increasing backoff. `ai_unavailable` with `503` means the server has no AI provider configured.",
   "err.c.byok":
@@ -691,13 +712,18 @@ export const docsEn: Record<DocsKey, string> = {
   "mcp.tool.get_envelope": "Envelope details: documents, recipients and their status.",
   "mcp.tool.get_signing_status": "Who signed, who's pending, who declined, and the latest evidence events.",
   "mcp.tool.list_templates": "Available templates with their roles (for creating envelopes from a template).",
-  "mcp.tool.create_envelope_from_template": "Creates a **draft** envelope from a template, with one person per role and optional field values. With `send: true` it creates and sends it in a single call, in two steps: first it returns a preview with a `confirmToken` and, once the person approves, the call is repeated with that token. The same `requestId` (7 days) or, without one, a retry with the same arguments within ~10 minutes returns the envelope already created, with its current status and `replayed: true`. Accepts `locale`.",
+  "mcp.tool.create_envelope_from_template":
+    "Creates a **draft** envelope from a template, with one person per role and optional field values. With `send: true` it creates and sends it in a single call, in two steps: first it returns a preview with a `confirmToken` and, once the person approves, the call is repeated with that token. The same `requestId` (7 days) or, without one, a retry with the same arguments within ~10 minutes returns the envelope already created, with its current status and `replayed: true`. Accepts `locale`.",
   "mcp.tool.send_envelope": "Sends a draft: signers get their invitations.",
   "mcp.tool.void_envelope": "Voids an in-progress envelope with a reason; signers are notified.",
-  "mcp.tool.download_signed_pdf": "Returns a temporary URL (15 minutes, up to 3 downloads and only while the agent's credential remains valid) to download the sealed PDF of a completed envelope, with its SHA-256.",
-  "mcp.tool.create_envelope": "Creates a **draft** envelope from a PDF (base64 or an https URL), with its recipients. With `send: true` it creates and sends it in a single call, with the same preview and `confirmToken`. The same `requestId` (7 days) or, without one, a retry with the same arguments within ~10 minutes returns the envelope already created, with its current status and `replayed: true`. Accepts `locale`.",
-  "mcp.tool.remind_recipients": "Resends the invitation to pending signers in the current routing step, in two steps: a preview with a `confirmToken` and, once the person approves, the same call with that token.",
-  "mcp.tool.get_account": "Account details: organization, user or credential and plan; this month's usage only if the credential can see all envelopes or manage billing (otherwise `usage: null`).",
+  "mcp.tool.download_signed_pdf":
+    "Returns a temporary URL (15 minutes, up to 3 downloads and only while the agent's credential remains valid) to download the sealed PDF of a completed envelope, with its SHA-256.",
+  "mcp.tool.create_envelope":
+    "Creates a **draft** envelope from a PDF (base64 or an https URL), with its recipients. With `send: true` it creates and sends it in a single call, with the same preview and `confirmToken`. The same `requestId` (7 days) or, without one, a retry with the same arguments within ~10 minutes returns the envelope already created, with its current status and `replayed: true`. Accepts `locale`.",
+  "mcp.tool.remind_recipients":
+    "Resends the invitation to pending signers in the current routing step, in two steps: a preview with a `confirmToken` and, once the person approves, the same call with that token.",
+  "mcp.tool.get_account":
+    "Account details: organization, user or credential and plan; this month's usage only if the credential can see all envelopes or manage billing (otherwise `usage: null`).",
   "mcp.safety.h": "Security model",
   "mcp.safety.p":
     "- **Explicit two-step confirmation.** Without a `confirmToken`, tools with outward effects (send, void, remind) do nothing: they return a preview (subject, recipients) and a `confirmToken` signed by the server, valid for 5 minutes and bound to that action, that envelope, the version that was shown and the agent's credential. Only with that token do they act; if the envelope changed after the preview, it is rejected and a new one is needed. The server instructions ask the model to show the preview to the person and wait for approval.\n- **Drafts first.** Creating an envelope doesn't send it, except with `send: true`, which goes through the same preview and approval as sending. Retries with the same arguments don't create duplicate envelopes.\n- **Narrow permissions.** The agent can never do more than its credential. With OAuth, the person sees and approves the scopes; you can revoke access at any time from **Settings → OAuth apps** (connected apps).\n- **Evidence.** Every action is recorded as “AI agent (<client name>) — <credential>” in the envelope's evidence chain and in the completion certificate.\n- **Temporary downloads.** The signed PDF is delivered via a link that expires after 15 minutes (up to 3 downloads), not as content in the conversation; if you revoke the agent's credential, its links stop working.\n- **Untrusted content.** A subject line, a recipient's name or a decline reason may contain malicious instructions. The server returns that third-party text wrapped as `{\"untrusted\": …}` and tells the model it is data, never an instruction. Still, ask your agent not to take actions based on document content without confirming with the person.",
@@ -707,7 +733,8 @@ export const docsEn: Record<DocsKey, string> = {
   "mcp.inspector.c.ui": "Web UI (http://localhost:6274) with the connection preloaded",
   "mcp.inspector.c.cli": "Command-line mode: list tools",
   "mcp.sdk.h": "From your own agent",
-  "mcp.sdk.p": "With the official MCP SDK for TypeScript (`@modelcontextprotocol/sdk`). There are equivalent SDKs for Python, Java, C#, Go and other languages.",
+  "mcp.sdk.p":
+    "With the official MCP SDK for TypeScript (`@modelcontextprotocol/sdk`). There are equivalent SDKs for Python, Java, C#, Go and other languages.",
   "mcp.sdk.c.approve": "…show the summary to the person and, if they approve:",
   // ───────── Claude ─────────
   "claude.title": "Claude",
@@ -720,7 +747,8 @@ export const docsEn: Record<DocsKey, string> = {
   "claude.connector.s2": "Enter a name (CalaSign) and paste the server URL:",
   "claude.connector.s3":
     "For authentication, keep OAuth sign-in. If you're asked to choose the OAuth client, choose **Register automatically**. Click **Add** and then **Connect**.",
-  "claude.connector.s4": "The CalaSign consent screen opens: sign in, review the permissions and approve. In each chat, enable the connector from the **+ → Connectors** button.",
+  "claude.connector.s4":
+    "The CalaSign consent screen opens: sign in, review the permissions and approve. In each chat, enable the connector from the **+ → Connectors** button.",
   "claude.connector.team":
     "**Team and Enterprise:** first an organization owner adds it in **Organization settings → Connectors → Add → Custom**. Then each person finds it in **Customize → Connectors** with the *Custom* label, clicks **Connect** and signs in with their own CalaSign account.",
   "claude.connector.key":
@@ -730,14 +758,14 @@ export const docsEn: Record<DocsKey, string> = {
     "If you work in Claude Desktop with an API key (for example, a service account), the `.mcpb` extension is the fastest option: it installs with a double-click and stores the key in the operating system's secure store.",
   "claude.desktop.s1": "Download `calasign.mcpb` and double-click it (or drag it into **Settings → Extensions** in Claude Desktop).",
   "claude.desktop.s2": "On the install screen, review the permissions and paste your CalaSign API key when asked.",
-  "claude.desktop.s3": "Click **Install** and enable it. If your organization has disabled extensions, the section doesn't appear: use the connector.",
+  "claude.desktop.s3":
+    "Click **Install** and enable it. If your organization has disabled extensions, the section doesn't appear: use the connector.",
   "claude.code.h": "Claude Code",
   "claude.code.p":
     "Add the server with one command. With OAuth, the first time run `/mcp` inside Claude Code and follow the sign-in in the browser (or `claude mcp login calasign` from the terminal). `--scope user` makes it available in all your projects; `--scope project` saves it in `.mcp.json` to share with your team.",
   "claude.code.c.login": "inside Claude Code, to sign in:",
   "claude.plugin.h": "CalaSign plugin",
-  "claude.plugin.p":
-    "The plugin installs the MCP server and the CalaSign skill in one go. Type this inside Claude Code:",
+  "claude.plugin.p": "The plugin installs the MCP server and the CalaSign skill in one go. Type this inside Claude Code:",
   "claude.skill.h": "Agent Skill",
   "claude.skill.p":
     "The skill teaches Claude how to work with CalaSign: using templates, placing fields with anchors, asking for confirmation before sending, interpreting statuses and webhooks. Combine it with the connector or the MCP server.",
@@ -778,8 +806,7 @@ export const docsEn: Record<DocsKey, string> = {
     "The `google-genai` SDK for Python accepts an MCP session as a tool (experimental feature). This example uses the Streamable HTTP client from the `mcp` 2.x SDK; with `mcp` 1.x, the equivalent is `streamablehttp_client(url, headers={…})`.",
   // ───────── Office ─────────
   "office.title": "Word and Outlook add-in",
-  "office.lead":
-    "Send for signature without leaving Microsoft 365: the document you're writing in Word or a PDF you received by email in Outlook.",
+  "office.lead": "Send for signature without leaving Microsoft 365: the document you're writing in Word or a PDF you received by email in Outlook.",
   "office.what.h": "What it does",
   "office.what.p":
     "- **Word:** sends the document you have open for signature: you choose the recipients from the side panel and CalaSign creates and sends the envelope.\n- **Outlook:** while reading an email, you choose an attached PDF and send it for signature without downloading it.\n- In both cases you sign in with your CalaSign account, and everything stays in your organization like any other envelope.",

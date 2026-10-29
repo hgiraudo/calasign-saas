@@ -303,8 +303,13 @@ export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<stri
     // Zoho limita los pedidos de token con HTTP 400 { error: "Access Denied", "too many requests" }: es transitorio (el
     // trabajo se reintenta), no una conexión revocada que haya que volver a conectar.
     const throttled = res.status === 429 || /too many requests/i.test(String(body.error_description ?? ""));
-    const invalid = !throttled && (["invalid_grant", "invalid_code", "invalid_client"].includes(body.error) || res.status === 400 || res.status === 401);
-    throw new CrmError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? body.message ?? body.hint ?? body.detail ?? ""}`.trim(), res.status, invalid);
+    const invalid =
+      !throttled && (["invalid_grant", "invalid_code", "invalid_client"].includes(body.error) || res.status === 400 || res.status === 401);
+    throw new CrmError(
+      `token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? body.message ?? body.hint ?? body.detail ?? ""}`.trim(),
+      res.status,
+      invalid,
+    );
   }
   return body;
 }
@@ -378,7 +383,11 @@ async function refreshOAuth(c: CrmConn) {
   // Zoho: el refresh token solo vale en el centro de datos de la cuenta.
   // Kommo: el refresh va al subdominio de la cuenta y también lleva redirect_uri.
   const tokenUrl =
-    p === "zoho" ? `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token` : p === "kommo" ? kommoTokenUrl(String(c.cfg.baseDomain ?? "")) : undefined;
+    p === "zoho"
+      ? `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token`
+      : p === "kommo"
+        ? kommoTokenUrl(String(c.cfg.baseDomain ?? ""))
+        : undefined;
   const extra: Record<string, string> = p === "kommo" ? { redirect_uri: crmRedirectUri("kommo") } : {};
   const used = c.creds.refresh_token;
   let b: any;
@@ -388,7 +397,8 @@ async function refreshOAuth(c: CrmConn) {
     // Kommo, RD Station y Pipedrive rotan el refresh token: si dos trabajos de la misma conexión renuevan a la vez, el
     // segundo recibe invalid_grant, que es "permanente" (sin reintento y "hay que volver a conectarla") aunque la
     // conexión esté bien. Si otro ya guardó credenciales nuevas, se usan esas (como en connectors/providers.ts).
-    if (err instanceof CrmError && err.authFailed && (await c.reload().catch(() => false)) && c.creds.refresh_token && c.creds.refresh_token !== used) return;
+    if (err instanceof CrmError && err.authFailed && (await c.reload().catch(() => false)) && c.creds.refresh_token && c.creds.refresh_token !== used)
+      return;
     throw err;
   }
   c.creds = {
@@ -470,7 +480,12 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
     body = JSON.stringify(r.json);
   } else if (r.form) body = r.form;
   else if (r.raw) body = new Blob([Buffer.from(r.raw)]);
-  const res = await fetch(`${r.base ?? baseFor(c)}${r.path}`, { method: r.method ?? (body ? "POST" : "GET"), headers, body, signal: AbortSignal.timeout(20_000) });
+  const res = await fetch(`${r.base ?? baseFor(c)}${r.path}`, {
+    method: r.method ?? (body ? "POST" : "GET"),
+    headers,
+    body,
+    signal: AbortSignal.timeout(20_000),
+  });
   if (res.status === 401 && !retried) {
     // Token vencido o revocado: se intenta renovar una vez (OAuth con refresh, o login de Siigo).
     if (c.provider === "siigo") {
@@ -498,8 +513,22 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
   if (!res.ok) {
     const zohoItem = data?.data?.[0]; // Zoho: { data: [{ code, message, details }] }
     // RD Station: { errors: [{ detail }] }; Kommo: { title, detail } (problem+json).
-    const msg = typeof data === "object" && data ? data.message ?? data[0]?.message ?? data.errors?.[0]?.detail ?? data.detail ?? (zohoItem ? `${zohoItem.code ?? ""} ${zohoItem.message ?? ""} ${JSON.stringify(zohoItem.details ?? {})}`.trim() : null) ?? data.error_description ?? data.error ?? JSON.stringify(data).slice(0, 200) : String(data).slice(0, 200);
-    throw new CrmError(`${c.provider} ${r.method ?? "GET"} ${redactPath(r.path)}: HTTP ${res.status} ${msg}`, res.status, res.status === 401 || res.status === 403);
+    const msg =
+      typeof data === "object" && data
+        ? (data.message ??
+          data[0]?.message ??
+          data.errors?.[0]?.detail ??
+          data.detail ??
+          (zohoItem ? `${zohoItem.code ?? ""} ${zohoItem.message ?? ""} ${JSON.stringify(zohoItem.details ?? {})}`.trim() : null) ??
+          data.error_description ??
+          data.error ??
+          JSON.stringify(data).slice(0, 200))
+        : String(data).slice(0, 200);
+    throw new CrmError(
+      `${c.provider} ${r.method ?? "GET"} ${redactPath(r.path)}: HTTP ${res.status} ${msg}`,
+      res.status,
+      res.status === 401 || res.status === 403,
+    );
   }
   return data;
 }
@@ -592,7 +621,8 @@ function zohoWriteResult(r: any, what: string): any {
 }
 
 const zohoContact = (x: any, role: string | null, primary: boolean): CrmRecord["contacts"][number] => {
-  const name = str(x.Full_Name) ?? ([x.First_Name, x.Last_Name].filter(Boolean).join(" ").trim() || str(x.Email) || str(x.name) || `Contacto ${x.id}`);
+  const name =
+    str(x.Full_Name) ?? ([x.First_Name, x.Last_Name].filter(Boolean).join(" ").trim() || str(x.Email) || str(x.name) || `Contacto ${x.id}`);
   return { id: String(x.id), name, email: str(x.Email), phone: str(x.Mobile ?? x.Phone), role, primary };
 };
 
@@ -614,7 +644,9 @@ async function zohoRecord(c: CrmConn, objectType: CrmObjectType, id: string): Pr
   // Zoho CRM: roles de contacto del negocio (Contact_Roles). Bigin no los tiene.
   if (product !== "bigin") {
     try {
-      const roles = await crmFetch(c, { path: `/Deals/${encodeURIComponent(id)}/Contact_Roles?fields=Full_Name,First_Name,Last_Name,Email,Phone,Mobile` });
+      const roles = await crmFetch(c, {
+        path: `/Deals/${encodeURIComponent(id)}/Contact_Roles?fields=Full_Name,First_Name,Last_Name,Email,Phone,Mobile`,
+      });
       for (const x of roles?.data ?? []) {
         const role = str(x.Contact_Role?.name ?? x.Contact_Role);
         const existing = contacts.find((k) => k.id === String(x.id));
@@ -643,7 +675,11 @@ async function zohoAttach(c: CrmConn, objectType: CrmObjectType, id: string, a: 
       await crmFetch(c, {
         method: "POST",
         path: "/Notes",
-        json: { data: [{ Note_Title: `CalaSign: ${a.subject}`.slice(0, 120), Note_Content: note, Parent_Id: { module: { api_name: mod }, id: String(id) } }] },
+        json: {
+          data: [
+            { Note_Title: `CalaSign: ${a.subject}`.slice(0, 120), Note_Content: note, Parent_Id: { module: { api_name: mod }, id: String(id) } },
+          ],
+        },
       }),
       "nota",
     );
@@ -702,12 +738,17 @@ export async function fetchRecord(c: CrmConn, objectType: CrmObjectType, id: str
 /** Escribe el estado del sobre en una propiedad del registro. */
 export async function writeStatus(c: CrmConn, objectType: CrmObjectType, id: string, property: string, value: string) {
   const enc = encodeURIComponent(id);
-  if (c.provider === "hubspot") return crmFetch(c, { method: "PATCH", path: `/crm/v3/objects/deals/${enc}`, json: { properties: { [property]: value } } });
-  if (c.provider === "salesforce") return crmFetch(c, { method: "PATCH", path: `/services/data/${SF_API_VERSION}/sobjects/Opportunity/${enc}`, json: { [property]: value } });
+  if (c.provider === "hubspot")
+    return crmFetch(c, { method: "PATCH", path: `/crm/v3/objects/deals/${enc}`, json: { properties: { [property]: value } } });
+  if (c.provider === "salesforce")
+    return crmFetch(c, { method: "PATCH", path: `/services/data/${SF_API_VERSION}/sobjects/Opportunity/${enc}`, json: { [property]: value } });
   if (c.provider === "zoho") {
     const mod = zohoModule(c.cfg.product, objectType);
     // trigger: [] evita que la actualización dispare reglas de flujo y blueprints del CRM por un cambio de CalaSign.
-    return zohoWriteResult(await crmFetch(c, { method: "PUT", path: `/${mod}/${enc}`, json: { data: [{ [property]: value }], trigger: [] } }), "estado");
+    return zohoWriteResult(
+      await crmFetch(c, { method: "PUT", path: `/${mod}/${enc}`, json: { data: [{ [property]: value }], trigger: [] } }),
+      "estado",
+    );
   }
   if (c.provider === "pipedrive") return pipedriveWriteStatus(c, objectType, id, property, value);
   if (c.provider === "rdstation") return rdstationWriteStatus(c, objectType, id, property, value);
@@ -778,7 +819,13 @@ export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: st
     const created = await crmFetch(c, {
       method: "POST",
       path: `/services/data/${SF_API_VERSION}/sobjects/ContentVersion`,
-      json: { Title: a.subject.slice(0, 255), PathOnClient: a.fileName, VersionData: Buffer.from(a.pdf).toString("base64"), FirstPublishLocationId: id, Description: note.slice(0, 1000) },
+      json: {
+        Title: a.subject.slice(0, 255),
+        PathOnClient: a.fileName,
+        VersionData: Buffer.from(a.pdf).toString("base64"),
+        FirstPublishLocationId: id,
+        Description: note.slice(0, 1000),
+      },
     });
     return `ContentVersion:${created.id}`;
   }
@@ -807,7 +854,7 @@ export async function findByIdentification(c: CrmConn, objectType: CrmObjectType
   }
   if (c.provider === "alegra" && objectType === "contact") {
     const r = await crmFetch(c, { path: `/contacts?identification=${q}` });
-    const list = Array.isArray(r) ? r : r?.data ?? [];
+    const list = Array.isArray(r) ? r : (r?.data ?? []);
     return list[0]?.id ? String(list[0].id) : null;
   }
   throw new CrmError(`${c.provider} no admite buscar ${objectType} por identificación`);

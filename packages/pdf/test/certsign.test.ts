@@ -46,7 +46,22 @@ async function basePdf() {
       locale: "es",
       documents: [{ name: "a.pdf", pageCount: 1, sha256: "a".repeat(64) }],
       recipients: [
-        { name: "José", role: "signer", email: null, phone: null, idDocument: null, channels: ["email"], authMethod: "link", sentAt: null, viewedAt: null, consentedAt: null, signedAt: null, ip: null, userAgent: null, certificateSignature: true },
+        {
+          name: "José",
+          role: "signer",
+          email: null,
+          phone: null,
+          idDocument: null,
+          channels: ["email"],
+          authMethod: "link",
+          sentAt: null,
+          viewedAt: null,
+          consentedAt: null,
+          signedAt: null,
+          ip: null,
+          userAgent: null,
+          certificateSignature: true,
+        },
       ],
       events: [],
       chainHead: "c".repeat(64),
@@ -110,7 +125,7 @@ describe("controles del certificado", () => {
     expect(ca.errors.join(" ")).toMatch(/autoridad certificante|firmar/);
     const expired = await checkSigningCertificate(chainOf(id), { now: new Date(Date.now() + 5 * 365 * 86400_000) });
     expect(expired.errors.join(" ")).toMatch(/vencido/);
- 
+
     // Documento correcto pero cadena sin ancla de confianza: la identidad no queda probada.
     const untrustedId = await checkSigningCertificate(chainOf(id), { idDocumentNumber: "12345678", trustAnchors: [] });
     expect(untrustedId.ok).toBe(false);
@@ -125,11 +140,17 @@ describe("firma en dos pasos", () => {
       const b = await pki.issue(`Firmante B ${key}`, { key: "rsa", serialNumber: "PNOPE-22222222" });
       let pdf = await basePdf();
       for (const [i, id] of [a, b].entries()) {
-        const prep = await prepareExternalSignature(pdf, chainOf(id), { fieldName: `Firma${i + 1}`, reason: "Firma con certificado digital", name: `Firmante ${i}` });
+        const prep = await prepareExternalSignature(pdf, chainOf(id), {
+          fieldName: `Firma${i + 1}`,
+          reason: "Firma con certificado digital",
+          name: `Firmante ${i}`,
+        });
         expect(prep.digestToSign.length).toBe(32);
         const sig = signLikeDevice(id, prep.signedAttrsDer, prep.signatureAlgorithm === "ECDSA");
         // Una firma ajena (otro documento) se rechaza.
-        await expect(completeExternalSignature(prep, chainOf(id), signLikeDevice(id, new Uint8Array([1, 2, 3]), prep.signatureAlgorithm === "ECDSA"))).rejects.toThrow(/no corresponde/);
+        await expect(
+          completeExternalSignature(prep, chainOf(id), signLikeDevice(id, new Uint8Array([1, 2, 3]), prep.signatureAlgorithm === "ECDSA")),
+        ).rejects.toThrow(/no corresponde/);
         pdf = await completeExternalSignature(prep, chainOf(id), sig, { tsaUrl: `${server.url}/tsr` });
       }
       const report = await validatePdf(pdf, { trustAnchors: [pki.root.certDer] });

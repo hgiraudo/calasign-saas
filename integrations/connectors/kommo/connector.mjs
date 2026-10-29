@@ -4,7 +4,8 @@
 export const meta = {
   id: "kommo",
   name: "Kommo",
-  description: "Kommo Marketplace: widget «Enviar a firmar con CalaSign» en los Leads, sobre el conector nativo (OAuth, estado en un campo del lead, PDF firmado y nota).",
+  description:
+    "Kommo Marketplace: widget «Enviar a firmar con CalaSign» en los Leads, sobre el conector nativo (OAuth, estado en un campo del lead, PDF firmado y nota).",
 };
 
 // El widget se sube a Kommo como un zip con manifest.json en la raíz (más script.js, i18n/ e images/).
@@ -32,6 +33,12 @@ export async function build(ctx) {
   ];
   return {
     files,
-    artifacts: [{ name: "calasign-kommo-widget.zip", entries: [...widget, ...images], description: "Kommo: widget «Enviar a firmar con CalaSign» (zip para subir a la integración)" }],
+    artifacts: [
+      {
+        name: "calasign-kommo-widget.zip",
+        entries: [...widget, ...images],
+        description: "Kommo: widget «Enviar a firmar con CalaSign» (zip para subir a la integración)",
+      },
+    ],
   };
 }

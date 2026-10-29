@@ -92,7 +92,9 @@ function certFingerprint(pem: string | null): string | null {
 /** Configuración SSO auditable (sin secretos: el client secret queda fuera; del certificado, solo la huella). */
 async function ssoAuditSnapshot(db: Db, tenantId: string) {
   const c = await loadConfig(db, tenantId);
-  const domains = (await db.query<{ domain: string }>(`SELECT domain FROM sso_domains WHERE tenant_id = $1 ORDER BY domain`, [tenantId])).map((d) => d.domain);
+  const domains = (await db.query<{ domain: string }>(`SELECT domain FROM sso_domains WHERE tenant_id = $1 ORDER BY domain`, [tenantId])).map(
+    (d) => d.domain,
+  );
   return {
     values: {
       enabled: Boolean(c?.enabled),
@@ -119,7 +121,9 @@ async function ssoAuditSnapshot(db: Db, tenantId: string) {
 async function toSettings(db: Db, tenantId: string): Promise<SsoSettings> {
   const t = await db.one<any>(`SELECT slug FROM tenants WHERE id = $1`, [tenantId]);
   const c = await loadConfig(db, tenantId);
-  const domains = (await db.query<{ domain: string }>(`SELECT domain FROM sso_domains WHERE tenant_id = $1 ORDER BY domain`, [tenantId])).map((d) => d.domain);
+  const domains = (await db.query<{ domain: string }>(`SELECT domain FROM sso_domains WHERE tenant_id = $1 ORDER BY domain`, [tenantId])).map(
+    (d) => d.domain,
+  );
   return {
     enabled: Boolean(c?.enabled),
     protocol: c?.protocol ?? "oidc",
@@ -138,7 +142,12 @@ async function toSettings(db: Db, tenantId: string): Promise<SsoSettings> {
         }
       : null,
     saml: c?.saml_entry_point
-      ? { entryPoint: c.saml_entry_point, idpIssuer: c.saml_idp_issuer ?? "", idpCertFingerprint: certFingerprint(c.saml_idp_cert), emailAttribute: c.saml_email_attribute }
+      ? {
+          entryPoint: c.saml_entry_point,
+          idpIssuer: c.saml_idp_issuer ?? "",
+          idpCertFingerprint: certFingerprint(c.saml_idp_cert),
+          emailAttribute: c.saml_email_attribute,
+        }
       : null,
     serviceProvider: spUrls(t.slug),
   };
@@ -221,7 +230,13 @@ const jwksCache = new Map<string, { keys: JsonWebKey[]; at: number }>();
  * redirecciones y con tope de tamaño) y el error no reproduce el cuerpo de la respuesta.
  */
 async function getJson(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) {
-  const res = await safeRequest(url, { method: init?.method ?? "GET", headers: init?.headers, body: init?.body, timeoutMs: 10_000, maxBytes: 1024 * 1024 });
+  const res = await safeRequest(url, {
+    method: init?.method ?? "GET",
+    headers: init?.headers,
+    body: init?.body,
+    timeoutMs: 10_000,
+    maxBytes: 1024 * 1024,
+  });
   let body: any;
   try {
     body = JSON.parse(res.body.toString("utf8"));
@@ -241,7 +256,8 @@ export async function oidcDiscovery(issuer: string): Promise<any> {
   if (hit && Date.now() - hit.at < 3600_000) return hit.doc;
   const doc = await getJson(`${key}/.well-known/openid-configuration`);
   if (String(doc.issuer ?? "").replace(/\/$/, "") !== key) throw new Error("el issuer del documento de descubrimiento no coincide");
-  for (const k of ["authorization_endpoint", "token_endpoint", "jwks_uri"]) if (!allowedUrl(doc[k] ?? "")) throw new Error(`descubrimiento sin ${k} válido`);
+  for (const k of ["authorization_endpoint", "token_endpoint", "jwks_uri"])
+    if (!allowedUrl(doc[k] ?? "")) throw new Error(`descubrimiento sin ${k} válido`);
   discoveryCache.set(key, { doc, at: Date.now() });
   return doc;
 }
@@ -433,11 +449,22 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
   }
 
   /** Une la identidad del IdP con un usuario (alta JIT si corresponde) y abre la sesión. */
-  async function completeLogin(req: FastifyRequest, reply: FastifyReply, tenantId: string, c: SsoRow, email: string, name: string | null, protocol: string) {
+  async function completeLogin(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    tenantId: string,
+    c: SsoRow,
+    email: string,
+    name: string | null,
+    protocol: string,
+  ) {
     const { ip, userAgent } = clientInfo(req);
     email = email.trim().toLowerCase();
     if (!EMAIL_RE.test(email)) throw new AppError(400, "sso_no_email", "El proveedor de identidad no envió un correo válido");
-    const domainRows = await s.db.query<{ domain: string; verified_at: string | null }>(`SELECT domain, verified_at FROM sso_domains WHERE tenant_id = $1`, [tenantId]);
+    const domainRows = await s.db.query<{ domain: string; verified_at: string | null }>(
+      `SELECT domain, verified_at FROM sso_domains WHERE tenant_id = $1`,
+      [tenantId],
+    );
     const emailDomain = email.split("@")[1];
     if (domainRows.length && !domainRows.some((d) => d.domain === emailDomain)) {
       throw new AppError(403, "sso_domain_mismatch", "El correo no pertenece a los dominios de la organización");
@@ -449,17 +476,42 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     let user = await s.db.one<any>(`SELECT id, name FROM users WHERE lower(email) = $1`, [email]);
     let member = user ? await s.db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, user.id]) : null;
     if (!member && !domainVerified) {
-      await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "domain_not_verified" } });
-      throw new AppError(403, "sso_domain_not_verified", "Para dar de alta usuarios por SSO, el dominio del correo tiene que estar verificado en la organización");
+      await recordAudit(s.db, {
+        tenantId,
+        action: "auth.sso_denied",
+        actor: { type: "anonymous", label: email },
+        ip,
+        userAgent,
+        data: { protocol, reason: "domain_not_verified" },
+      });
+      throw new AppError(
+        403,
+        "sso_domain_not_verified",
+        "Para dar de alta usuarios por SSO, el dominio del correo tiene que estar verificado en la organización",
+      );
     }
     if (!member) {
       if (!c.jit_enabled) {
-        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "not_member" } });
+        await recordAudit(s.db, {
+          tenantId,
+          action: "auth.sso_denied",
+          actor: { type: "anonymous", label: email },
+          ip,
+          userAgent,
+          data: { protocol, reason: "not_member" },
+        });
         throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
       }
       // Desactivado o borrado por SCIM: el alta automática por SSO no lo vuelve a sumar (lo decide el proveedor de identidad).
       if (user && (await scimBlocksJit(s.db, tenantId, user.id))) {
-        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "scim_deactivated" } });
+        await recordAudit(s.db, {
+          tenantId,
+          action: "auth.sso_denied",
+          actor: { type: "anonymous", label: email },
+          ip,
+          userAgent,
+          data: { protocol, reason: "scim_deactivated" },
+        });
         throw new AppError(
           403,
           "sso_scim_deactivated",
@@ -478,7 +530,11 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         if (plan.users !== null && (await usersCount(t, tenantId, email)) >= plan.users) return { overLimit: plan };
         if (!user) {
           const id = uuidv7();
-          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
+          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [
+            id,
+            email,
+            name?.trim() || email.split("@")[0],
+          ]);
           user = { id, name };
         }
         // Una cuenta YA existente se vincula tal cual: su 2FA y sus sesiones (de ésta y de otras organizaciones) no se
@@ -489,13 +545,35 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         return { joined: await provisionMembership(t, tenantId, user.id, email, c.jit_role) };
       });
       if ("removed" in outcome) {
-        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "removed_by_admin" } });
-        throw new AppError(403, "sso_member_removed", "Un administrador te quitó de esta organización. Para volver a entrar, pedile que te invite de nuevo.");
+        await recordAudit(s.db, {
+          tenantId,
+          action: "auth.sso_denied",
+          actor: { type: "anonymous", label: email },
+          ip,
+          userAgent,
+          data: { protocol, reason: "removed_by_admin" },
+        });
+        throw new AppError(
+          403,
+          "sso_member_removed",
+          "Un administrador te quitó de esta organización. Para volver a entrar, pedile que te invite de nuevo.",
+        );
       }
       if ("overLimit" in outcome && outcome.overLimit) {
         const overLimit = outcome.overLimit;
-        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "plan_limit", max: overLimit.users } });
-        throw new AppError(402, "sso_plan_limit", `El plan ${overLimit.name} permite hasta ${overLimit.users} usuario(s): pedí al administrador que amplíe el plan`);
+        await recordAudit(s.db, {
+          tenantId,
+          action: "auth.sso_denied",
+          actor: { type: "anonymous", label: email },
+          ip,
+          userAgent,
+          data: { protocol, reason: "plan_limit", max: overLimit.users },
+        });
+        throw new AppError(
+          402,
+          "sso_plan_limit",
+          `El plan ${overLimit.name} permite hasta ${overLimit.users} usuario(s): pedí al administrador que amplíe el plan`,
+        );
       }
       member = { role: outcome.joined.role };
       await recordAudit(s.db, {
@@ -515,7 +593,14 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       });
     }
     await createSsoSession(reply, req, user!.id, tenantId, c);
-    await recordAudit(s.db, { tenantId, action: "auth.login_sso", actor: { type: "user", id: user!.id, label: email }, ip, userAgent, data: { protocol } });
+    await recordAudit(s.db, {
+      tenantId,
+      action: "auth.login_sso",
+      actor: { type: "user", id: user!.id, label: email },
+      ip,
+      userAgent,
+      data: { protocol },
+    });
   }
 
   /**
@@ -555,7 +640,8 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     const input = SsoSettingsInput.parse(req.body);
     const cur = await loadConfig(s.db, a.tenantId);
     if (input.oidc && !allowedUrl(input.oidc.issuer)) throw badRequest("invalid_issuer", "El issuer tiene que ser https");
-    if (input.saml && !allowedUrl(input.saml.entryPoint)) throw badRequest("invalid_entry_point", "La URL de inicio de sesión del IdP tiene que ser https");
+    if (input.saml && !allowedUrl(input.saml.entryPoint))
+      throw badRequest("invalid_entry_point", "La URL de inicio de sesión del IdP tiene que ser https");
     let cert: string | null = cur?.saml_idp_cert ?? null;
     if (input.saml?.idpCert) {
       try {
@@ -565,12 +651,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       }
     }
     if (input.enabled && input.protocol === "saml" && !cert) throw badRequest("certificate_required", "Falta el certificado de firma del IdP");
-    const secretEnc = input.oidc?.clientSecret ? encrypt(input.oidc.clientSecret) : cur?.oidc_client_secret_enc ?? null;
+    const secretEnc = input.oidc?.clientSecret ? encrypt(input.oidc.clientSecret) : (cur?.oidc_client_secret_enc ?? null);
     if (input.enabled && input.protocol === "oidc" && !secretEnc) throw badRequest("client_secret_required", "Falta el client secret de OIDC");
     if (input.enabled && input.protocol === "oidc") {
       // Sin el bloque oidc (p. ej. al cambiar solo enforce o JIT) se conservan issuer y client id guardados.
       const issuer = input.oidc?.issuer ?? cur?.oidc_issuer;
-      if (!issuer || !(input.oidc?.clientId ?? cur?.oidc_client_id)) throw badRequest("oidc_config_required", "Falta la configuración OIDC (issuer y client id)");
+      if (!issuer || !(input.oidc?.clientId ?? cur?.oidc_client_id))
+        throw badRequest("oidc_config_required", "Falta la configuración OIDC (issuer y client id)");
       try {
         await oidcDiscovery(issuer);
       } catch (err) {
@@ -607,17 +694,23 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           input.saml?.entryPoint ?? cur?.saml_entry_point ?? null,
           input.saml?.idpIssuer ?? cur?.saml_idp_issuer ?? null,
           cert,
-          input.saml ? input.saml.emailAttribute ?? null : cur?.saml_email_attribute ?? null,
+          input.saml ? (input.saml.emailAttribute ?? null) : (cur?.saml_email_attribute ?? null),
           // Omitida: se conserva la guardada, salvo que cambie el issuer: la confianza era en el IdP anterior (p. ej. la
           // que 0079 dio a las conexiones existentes) y un IdP nuevo arranca sin ella (false) hasta que se pida.
-          input.oidc?.trustUnverifiedEmail ?? (oidcIssuerChanged ? false : cur?.oidc_trust_unverified_email ?? false),
+          input.oidc?.trustUnverifiedEmail ?? (oidcIssuerChanged ? false : (cur?.oidc_trust_unverified_email ?? false)),
           input.sessionTtlHours ?? cur?.session_ttl_hours ?? SSO_SESSION_TTL_DEFAULT_HOURS,
         ],
       );
       // Al deshabilitar el SSO o cambiar de IdP se cierran las sesiones (y los tokens OAuth) que abrió el IdP anterior:
       // si no, cambiar un IdP comprometido o mal configurado dejaba vigentes hasta 14 días las sesiones que había abierto.
-      const idp = (p: string, issuer: string | null, clientId: string | null, entryPoint: string | null, samlIssuer: string | null, samlCert: string | null) =>
-        p === "oidc" ? `oidc|${issuer}|${clientId}` : `saml|${entryPoint}|${samlIssuer}|${samlCert}`;
+      const idp = (
+        p: string,
+        issuer: string | null,
+        clientId: string | null,
+        entryPoint: string | null,
+        samlIssuer: string | null,
+        samlCert: string | null,
+      ) => (p === "oidc" ? `oidc|${issuer}|${clientId}` : `saml|${entryPoint}|${samlIssuer}|${samlCert}`);
       const idpChanged =
         cur != null &&
         idp(cur.protocol, cur.oidc_issuer, cur.oidc_client_id, cur.saml_entry_point, cur.saml_idp_issuer, cur.saml_idp_cert) !==
@@ -632,7 +725,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       if (cur?.enabled && (!input.enabled || idpChanged)) {
         await t.query(`DELETE FROM sessions WHERE auth_method = 'sso' AND sso_tenant_id = $1`, [a.tenantId]);
         await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND revoked_at IS NULL`, [a.tenantId]);
-        await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND used_at IS NULL`, [a.tenantId]);
+        await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND used_at IS NULL`, [
+          a.tenantId,
+        ]);
       }
       // Duración más corta: las sesiones SSO ya abiertas no pasan del nuevo tope (contado desde que se abrieron).
       if (input.sessionTtlHours != null && input.sessionTtlHours < ssoSessionTtlHours(cur)) {
@@ -760,14 +855,28 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       const methods: string[] = doc.token_endpoint_auth_methods_supported ?? ["client_secret_basic"];
       const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" };
       if (methods.includes("client_secret_post") && !methods.includes("client_secret_basic")) form.set("client_secret", secret);
-      else headers.Authorization = `Basic ${Buffer.from(`${encodeURIComponent(c.oidc_client_id!)}:${encodeURIComponent(secret)}`).toString("base64")}`;
+      else
+        headers.Authorization = `Basic ${Buffer.from(`${encodeURIComponent(c.oidc_client_id!)}:${encodeURIComponent(secret)}`).toString("base64")}`;
       const tok = await getJson(doc.token_endpoint, { method: "POST", headers, body: form.toString() });
       if (!tok.id_token) throw new Error("el IdP no devolvió id_token");
-      const claims = await validateIdToken(tok.id_token, { issuer: c.oidc_issuer!, clientId: c.oidc_client_id!, nonce: st.nonce, jwksUri: doc.jwks_uri });
+      const claims = await validateIdToken(tok.id_token, {
+        issuer: c.oidc_issuer!,
+        clientId: c.oidc_client_id!,
+        nonce: st.nonce,
+        jwksUri: doc.jwks_uri,
+      });
       if (!oidcEmailVerified(claims, Boolean(c.oidc_trust_unverified_email))) {
         throw new AppError(403, "sso_email_unverified", "El correo no está verificado en el proveedor de identidad");
       }
-      await completeLogin(req, reply, t.id, c, String(claims.email ?? ""), claims.name ?? ([claims.given_name, claims.family_name].filter(Boolean).join(" ") || null), "oidc");
+      await completeLogin(
+        req,
+        reply,
+        t.id,
+        c,
+        String(claims.email ?? ""),
+        claims.name ?? ([claims.given_name, claims.family_name].filter(Boolean).join(" ") || null),
+        "oidc",
+      );
       return reply.redirect(st.redirect_path || "/app", 302);
     } catch (err) {
       req.log.warn({ err: String((err as Error).message ?? err), tenant: t?.slug }, "SSO OIDC rechazado");
@@ -781,8 +890,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     const c = await loadConfig(s.db, t.id);
     const sp = spUrls(t.slug);
     // El certificado del IdP no hace falta para generar la metadata del SP; se usa uno ficticio si no hay.
-    const saml = new SAML({ issuer: sp.samlEntityId, callbackUrl: sp.samlAcsUrl, idpCert: c?.saml_idp_cert ?? "-", wantAssertionsSigned: true,
-      identifierFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" });
+    const saml = new SAML({
+      issuer: sp.samlEntityId,
+      callbackUrl: sp.samlAcsUrl,
+      idpCert: c?.saml_idp_cert ?? "-",
+      wantAssertionsSigned: true,
+      identifierFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+    });
     reply.header("content-type", "application/samlmetadata+xml; charset=utf-8");
     return saml.generateServiceProviderMetadata(null, null);
   });
@@ -804,18 +918,32 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         const st = await consumeState(body.RelayState, "saml");
         if (!st || st.tenant_id !== t.id) return failRedirect(reply, "sso_state_invalid");
         try {
-          const { profile } = await samlFor(s.db, t.slug, c).validatePostResponseAsync({ SAMLResponse: body.SAMLResponse ?? "", RelayState: body.RelayState });
+          const { profile } = await samlFor(s.db, t.slug, c).validatePostResponseAsync({
+            SAMLResponse: body.SAMLResponse ?? "",
+            RelayState: body.RelayState,
+          });
           if (!profile) throw new Error("respuesta SAML sin perfil");
           // Anti-replay: cada Assertion se usa una sola vez (además del InResponseTo de un solo uso).
           const assertion = samlAssertionInfo(profile as any);
           if (!assertion.id) throw new AppError(400, "sso_invalid_response", "La aserción SAML no tiene ID");
           if (!(await rememberSamlAssertion(s.db, t.id, assertion.id, assertion.notOnOrAfter))) {
-            await recordAudit(s.db, { tenantId: t.id, action: "auth.sso_denied", actor: { type: "anonymous", label: null }, ...clientInfo(req), data: { protocol: "saml", reason: "assertion_replay" } });
+            await recordAudit(s.db, {
+              tenantId: t.id,
+              action: "auth.sso_denied",
+              actor: { type: "anonymous", label: null },
+              ...clientInfo(req),
+              data: { protocol: "saml", reason: "assertion_replay" },
+            });
             throw new AppError(400, "sso_assertion_replay", "Esta respuesta SAML ya se usó");
           }
           const attr = c.saml_email_attribute ? profile[c.saml_email_attribute] : null;
           const email = String(
-            (Array.isArray(attr) ? attr[0] : attr) ?? profile.email ?? profile.mail ?? profile["urn:oid:0.9.2342.19200300.100.1.3"] ?? profile.nameID ?? "",
+            (Array.isArray(attr) ? attr[0] : attr) ??
+              profile.email ??
+              profile.mail ??
+              profile["urn:oid:0.9.2342.19200300.100.1.3"] ??
+              profile.nameID ??
+              "",
           );
           const nameAttr = profile["displayName"] ?? profile["http://schemas.microsoft.com/identity/claims/displayname"] ?? null;
           await completeLogin(req, reply, t.id, c, email, typeof nameAttr === "string" ? nameAttr : null, "saml");

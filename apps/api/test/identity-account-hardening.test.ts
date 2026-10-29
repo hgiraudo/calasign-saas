@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-identity-hardening-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let util: typeof import("../src/lib/util");
@@ -27,7 +27,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = await newTenant();
   await db.query(`INSERT INTO sso_domains (domain, tenant_id, verification_token, verified_at) VALUES ('empresa.test', $1, 'tok', now())`, [tenant]);
-  await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim_test',$3)`, [util.uuidv7(), tenant, util.sha256Hex(SCIM)]);
+  await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim_test',$3)`, [
+    util.uuidv7(),
+    tenant,
+    util.sha256Hex(SCIM),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -49,7 +53,8 @@ async function newUser(email: string, opts: { tenantId?: string; role?: string; 
     email,
     opts.proven ? new Date().toISOString() : null,
   ]);
-  if (opts.tenantId) await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3)`, [opts.tenantId, id, opts.role ?? "member"]);
+  if (opts.tenantId)
+    await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3)`, [opts.tenantId, id, opts.role ?? "member"]);
   if (opts.totp) {
     await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now(), totp_recovery_hashes = '{h}' WHERE id = $1`, [id]);
   }
@@ -70,7 +75,12 @@ const totpOn = async (userId: string) => Boolean((await db.one<any>(`SELECT totp
 describe("SCIM DELETE", () => {
   it("conserva la fila (inactiva y borrada), oculta al usuario (404) y el JIT por SSO no lo vuelve a sumar", async () => {
     const { scimBlocksJit } = await import("../src/modules/identity/sso");
-    const created = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "borrada@empresa.test", externalId: "ext-1" } });
+    const created = await app.inject({
+      method: "POST",
+      url: "/scim/v2/Users",
+      headers: scimHeaders,
+      payload: { userName: "borrada@empresa.test", externalId: "ext-1" },
+    });
     expect(created.statusCode).toBe(201);
     const id = created.json().id as string;
     expect(await scimBlocksJit(db, tenant, id)).toBe(false);
@@ -85,7 +95,11 @@ describe("SCIM DELETE", () => {
     // RFC 7644 §3.6: un recurso borrado no se devuelve.
     expect((await app.inject({ method: "GET", url: `/scim/v2/Users/${id}`, headers: scimHeaders })).statusCode).toBe(404);
     expect((await app.inject({ method: "DELETE", url: `/scim/v2/Users/${id}`, headers: scimHeaders })).statusCode).toBe(404);
-    const list = await app.inject({ method: "GET", url: `/scim/v2/Users?filter=${encodeURIComponent('userName eq "borrada@empresa.test"')}`, headers: scimHeaders });
+    const list = await app.inject({
+      method: "GET",
+      url: `/scim/v2/Users?filter=${encodeURIComponent('userName eq "borrada@empresa.test"')}`,
+      headers: scimHeaders,
+    });
     expect(list.json().totalResults).toBe(0);
 
     // El bloqueo del JIT mira la fila conservada.
@@ -95,13 +109,21 @@ describe("SCIM DELETE", () => {
     const again = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "borrada@empresa.test" } });
     expect(again.statusCode).toBe(201);
     expect(again.json().id).toBe(id);
-    expect(await db.one<any>(`SELECT active, deleted_at FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenant, id])).toMatchObject({ active: true, deleted_at: null });
+    expect(await db.one<any>(`SELECT active, deleted_at FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenant, id])).toMatchObject({
+      active: true,
+      deleted_at: null,
+    });
     expect(await scimBlocksJit(db, tenant, id)).toBe(false);
   });
 
   it("también bloquea el JIT a un usuario desactivado (active = false)", async () => {
     const { scimBlocksJit } = await import("../src/modules/identity/sso");
-    const created = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "inactiva@empresa.test", active: false } });
+    const created = await app.inject({
+      method: "POST",
+      url: "/scim/v2/Users",
+      headers: scimHeaders,
+      payload: { userName: "inactiva@empresa.test", active: false },
+    });
     expect(created.statusCode).toBe(201);
     expect(await scimBlocksJit(db, tenant, created.json().id)).toBe(true);
   });
@@ -110,7 +132,10 @@ describe("SCIM DELETE", () => {
 describe("restablecer la contraseña", () => {
   async function resetToken(userId: string) {
     const token = util.randomToken();
-    await db.query(`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '30 minutes')`, [util.sha256Hex(token), userId]);
+    await db.query(`INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '30 minutes')`, [
+      util.sha256Hex(token),
+      userId,
+    ]);
     return token;
   }
 
@@ -120,15 +145,34 @@ describe("restablecer la contraseña", () => {
     const u = await newUser(email, { tenantId: t1, role: "owner", totp: true });
     await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'admin')`, [t2, u]);
     const key = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'k','cs_test',$3,$4)`, [key, t1, util.sha256Hex(util.randomToken()), u]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'k','cs_test',$3,$4)`, [
+      key,
+      t1,
+      util.sha256Hex(util.randomToken()),
+      u,
+    ]);
     const otherKey = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1,$2,'ajena','cs_test',$3)`, [otherKey, t1, util.sha256Hex(util.randomToken())]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1,$2,'ajena','cs_test',$3)`, [
+      otherKey,
+      t1,
+      util.sha256Hex(util.randomToken()),
+    ]);
     const scim = util.uuidv7();
-    await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,'s','cs_scim',$3,$4)`, [scim, t2, util.sha256Hex(util.randomToken()), u]);
+    await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,'s','cs_scim',$3,$4)`, [
+      scim,
+      t2,
+      util.sha256Hex(util.randomToken()),
+      u,
+    ]);
     // App de servicio (client_credentials) creada por la persona, con su API key interna.
     const svcKey = util.uuidv7();
     const svcApp = util.uuidv7();
-    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'svc','cs_svc',$3,$4)`, [svcKey, t2, util.sha256Hex(util.randomToken()), u]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'svc','cs_svc',$3,$4)`, [
+      svcKey,
+      t2,
+      util.sha256Hex(util.randomToken()),
+      u,
+    ]);
     await db.query(
       `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, name, grant_types, scopes, service_api_key_id, created_by)
        VALUES ($1,$2,$3,$4,'svc','{client_credentials}','{envelopes:read}',$5,$6)`,
@@ -147,7 +191,11 @@ describe("restablecer la contraseña", () => {
 
   it("por defecto no revoca nada: lista las credenciales activas por organización y audita en cada una", async () => {
     const x = await setup("reset@empresa.test");
-    const r = await app.inject({ method: "POST", url: "/v1/auth/password/reset", payload: { token: await resetToken(x.u), password: "una-clave-nueva-larga" } });
+    const r = await app.inject({
+      method: "POST",
+      url: "/v1/auth/password/reset",
+      payload: { token: await resetToken(x.u), password: "una-clave-nueva-larga" },
+    });
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body).toMatchObject({ ok: true, revokedCredentials: null });
@@ -197,7 +245,12 @@ describe("restablecer la contraseña", () => {
       const x = await setup(`reset-ex-${revoke}@empresa.test`);
       const ex = await newTenant();
       const exKey = util.uuidv7();
-      await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'k','cs_test',$3,$4)`, [exKey, ex, util.sha256Hex(util.randomToken()), x.u]);
+      await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'k','cs_test',$3,$4)`, [
+        exKey,
+        ex,
+        util.sha256Hex(util.randomToken()),
+        x.u,
+      ]);
       const r = await app.inject({
         method: "POST",
         url: "/v1/auth/password/reset",
@@ -222,7 +275,11 @@ describe("SCIM: revocar el último token libera el bloqueo del JIT", () => {
     const tok1 = util.uuidv7();
     const tok2 = util.uuidv7();
     for (const id of [tok1, tok2]) {
-      await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim',$3)`, [id, t1, util.sha256Hex(util.randomToken())]);
+      await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim',$3)`, [
+        id,
+        t1,
+        util.sha256Hex(util.randomToken()),
+      ]);
     }
     const off = await newUser("desactivada-scim@empresa.test");
     const on = await newUser("activa-scim@empresa.test", { tenantId: t1 });
@@ -294,20 +351,41 @@ describe("SSO", () => {
       `INSERT INTO oauth_clients (id, tenant_id, client_id, name, redirect_uris, grant_types, scopes) VALUES ($1,$2,$3,'app','{https://app.test/cb}','{authorization_code}','{envelopes:read,offline_access}')`,
       [client, t1, clientId],
     );
-    const tok = await issueTokens(db, { clientId: client, tenantId: t1, userId: u, serviceApiKeyId: null, scopes: ["envelopes:read", "offline_access"], withRefresh: true, authMethod: "sso", ssoTenantId: t1 });
+    const tok = await issueTokens(db, {
+      clientId: client,
+      tenantId: t1,
+      userId: u,
+      serviceApiKeyId: null,
+      scopes: ["envelopes:read", "offline_access"],
+      withRefresh: true,
+      authMethod: "sso",
+      ssoTenantId: t1,
+    });
     const rows = await db.query<any>(`SELECT kind, created_at, expires_at, family_id FROM oauth_tokens WHERE client_id = $1`, [client]);
     const refresh = rows.find((r) => r.kind === "refresh");
     // El refresh vence con la sesión SSO (2 h), no a los 30 días.
     expect(new Date(refresh.expires_at).getTime() - new Date(refresh.created_at).getTime()).toBeLessThanOrEqual(2 * 3600_000 + 1000);
     expect(tok.expires_in).toBeLessThanOrEqual(3600);
-    expect((await ssoFamilyDeadline(db, refresh.family_id, t1))!.getTime()).toBeLessThanOrEqual(new Date(refresh.created_at).getTime() + 2 * 3600_000 + 1);
+    expect((await ssoFamilyDeadline(db, refresh.family_id, t1))!.getTime()).toBeLessThanOrEqual(
+      new Date(refresh.created_at).getTime() + 2 * 3600_000 + 1,
+    );
 
     // Con contraseña: sin tope.
-    const pw = await issueTokens(db, { clientId: client, tenantId: t1, userId: u, serviceApiKeyId: null, scopes: ["envelopes:read", "offline_access"], withRefresh: true, authMethod: "password" });
+    const pw = await issueTokens(db, {
+      clientId: client,
+      tenantId: t1,
+      userId: u,
+      serviceApiKeyId: null,
+      scopes: ["envelopes:read", "offline_access"],
+      withRefresh: true,
+      authMethod: "password",
+    });
     expect(pw.expires_in).toBe(3600);
 
     // La familia empezó hace más que la duración: el refresh se rechaza aunque el token todavía no haya vencido.
-    await db.query(`UPDATE oauth_tokens SET created_at = now() - interval '3 hours', expires_at = now() + interval '1 day' WHERE family_id = $1`, [refresh.family_id]);
+    await db.query(`UPDATE oauth_tokens SET created_at = now() - interval '3 hours', expires_at = now() + interval '1 day' WHERE family_id = $1`, [
+      refresh.family_id,
+    ]);
     const r = await app.inject({
       method: "POST",
       url: "/oauth/token",
@@ -346,7 +424,12 @@ describe("SSO", () => {
       code_challenge_method: "S256",
     };
     const decide = async () => {
-      const d = await app.inject({ method: "POST", url: "/v1/oauth/authorize/decision", cookies: { cs_session: cookie }, payload: { ...authorize, approve: true } });
+      const d = await app.inject({
+        method: "POST",
+        url: "/v1/oauth/authorize/decision",
+        cookies: { cs_session: cookie },
+        payload: { ...authorize, approve: true },
+      });
       expect(d.statusCode).toBe(200);
       return new URL(d.json().redirectTo).searchParams.get("code")!;
     };
@@ -355,7 +438,13 @@ describe("SSO", () => {
         method: "POST",
         url: "/oauth/token",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: "https://app.test/cb", code_verifier: verifier, client_id: clientId }).toString(),
+        payload: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://app.test/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+        }).toString(),
       });
     const sess = await db.one<any>(`SELECT expires_at FROM sessions WHERE token_hash = $1`, [util.sha256Hex(cookie)]);
     const code = await decide();
@@ -376,13 +465,17 @@ describe("SSO", () => {
       payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tok.json().refresh_token, client_id: clientId }).toString(),
     });
     expect(rot.statusCode).toBe(200);
-    const after = await db.query<any>(`SELECT expires_at FROM oauth_tokens WHERE code_hash = $1 AND kind = 'refresh' AND used_at IS NULL`, [util.sha256Hex(code)]);
+    const after = await db.query<any>(`SELECT expires_at FROM oauth_tokens WHERE code_hash = $1 AND kind = 'refresh' AND used_at IS NULL`, [
+      util.sha256Hex(code),
+    ]);
     expect(after).toHaveLength(1);
     expect(new Date(after[0].expires_at).getTime()).toBeLessThanOrEqual(new Date(sess.expires_at).getTime());
 
     // La sesión ya venció cuando se canjea el código: no se emiten tokens.
     const late = await decide();
-    await db.query(`UPDATE oauth_authorization_codes SET sso_session_expires_at = now() - interval '1 second' WHERE code_hash = $1`, [util.sha256Hex(late)]);
+    await db.query(`UPDATE oauth_authorization_codes SET sso_session_expires_at = now() - interval '1 second' WHERE code_hash = $1`, [
+      util.sha256Hex(late),
+    ]);
     const r = await exchange(late);
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toBe("invalid_grant");
@@ -397,7 +490,8 @@ describe("SSO", () => {
       `INSERT INTO sso_configs (tenant_id, enabled, protocol, oidc_issuer, oidc_client_id, oidc_trust_unverified_email) VALUES ($1, false, 'oidc', 'https://login.microsoftonline.com/x/v2.0', 'abc', true)`,
       [t1],
     );
-    const put = (oidc: Record<string, unknown>) => app.inject({ method: "PUT", url: "/v1/settings/sso", cookies: { cs_session: cookie }, payload: { enabled: false, protocol: "oidc", oidc } });
+    const put = (oidc: Record<string, unknown>) =>
+      app.inject({ method: "PUT", url: "/v1/settings/sso", cookies: { cs_session: cookie }, payload: { enabled: false, protocol: "oidc", oidc } });
     // Mismo issuer, sin mandarla: se conserva.
     const same = await put({ issuer: "https://login.microsoftonline.com/x/v2.0", clientId: "abc" });
     expect(same.statusCode).toBe(200);
@@ -415,22 +509,35 @@ describe("SSO", () => {
     const { readFileSync } = await import("node:fs");
     const t1 = await newTenant();
     const t2 = await newTenant();
-    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, oidc_issuer, session_ttl_hours) VALUES ($1, true, 'oidc', 'https://login.microsoftonline.com/x/v2.0', 8)`, [t1]);
-    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, saml_entry_point) VALUES ($1, true, 'saml', 'https://idp.test/sso')`, [t2]);
+    await db.query(
+      `INSERT INTO sso_configs (tenant_id, enabled, protocol, oidc_issuer, session_ttl_hours) VALUES ($1, true, 'oidc', 'https://login.microsoftonline.com/x/v2.0', 8)`,
+      [t1],
+    );
+    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, saml_entry_point) VALUES ($1, true, 'saml', 'https://idp.test/sso')`, [
+      t2,
+    ]);
     const u = await newUser("mig-0079@empresa.test", { tenantId: t1, proven: true });
     await newSession(u, t1, "sso");
     const pwSession = await newSession(u, t1, "password");
     const sql = readFileSync(new URL("../migrations/0079_identity_sso_compat.sql", import.meta.url), "utf8");
-    for (const stmt of sql.split(/;\s*$/m).map((x) => x.trim()).filter((x) => x && !/^(--[^\n]*\n?)*$/.test(x))) await db.query(stmt);
-    expect((await db.one<any>(`SELECT oidc_trust_unverified_email FROM sso_configs WHERE tenant_id = $1`, [t1]))!.oidc_trust_unverified_email).toBe(true);
-    expect((await db.one<any>(`SELECT oidc_trust_unverified_email FROM sso_configs WHERE tenant_id = $1`, [t2]))!.oidc_trust_unverified_email).toBe(false);
+    for (const stmt of sql
+      .split(/;\s*$/m)
+      .map((x) => x.trim())
+      .filter((x) => x && !/^(--[^\n]*\n?)*$/.test(x)))
+      await db.query(stmt);
+    expect((await db.one<any>(`SELECT oidc_trust_unverified_email FROM sso_configs WHERE tenant_id = $1`, [t1]))!.oidc_trust_unverified_email).toBe(
+      true,
+    );
+    expect((await db.one<any>(`SELECT oidc_trust_unverified_email FROM sso_configs WHERE tenant_id = $1`, [t2]))!.oidc_trust_unverified_email).toBe(
+      false,
+    );
     const sso = await db.one<any>(`SELECT created_at, expires_at FROM sessions WHERE user_id = $1 AND auth_method = 'sso'`, [u]);
     expect(new Date(sso.expires_at).getTime() - new Date(sso.created_at).getTime()).toBeLessThanOrEqual(8 * 3600_000);
     const pwRow = await db.one<any>(`SELECT created_at, expires_at FROM sessions WHERE token_hash = $1`, [util.sha256Hex(pwSession)]);
     expect(new Date(pwRow.expires_at).getTime() - new Date(pwRow.created_at).getTime()).toBeGreaterThan(13 * 86400_000);
   });
 
-  it("OIDC email_verified: solo true o \"true\"; si falta, según la opción de la conexión; false nunca", async () => {
+  it('OIDC email_verified: solo true o "true"; si falta, según la opción de la conexión; false nunca', async () => {
     const { oidcEmailVerified } = await import("../src/modules/identity/sso");
     expect(oidcEmailVerified({ email_verified: true }, false)).toBe(true);
     expect(oidcEmailVerified({ email_verified: "true" }, false)).toBe(true);
@@ -490,10 +597,20 @@ describe("SSO", () => {
     const s = await db.one<any>(`SELECT created_at, expires_at FROM sessions WHERE user_id = $1`, [member]);
     expect(new Date(s.expires_at).getTime() - new Date(s.created_at).getTime()).toBeLessThanOrEqual(8 * 3600_000);
     // Omitidos: se conservan.
-    const r2 = await app.inject({ method: "PUT", url: "/v1/settings/sso", cookies: { cs_session: cookie }, payload: { enabled: false, protocol: "oidc" } });
+    const r2 = await app.inject({
+      method: "PUT",
+      url: "/v1/settings/sso",
+      cookies: { cs_session: cookie },
+      payload: { enabled: false, protocol: "oidc" },
+    });
     expect(r2.json()).toMatchObject({ sessionTtlHours: 8, oidc: { trustUnverifiedEmail: true } });
     // Fuera de rango: 400.
-    const bad = await app.inject({ method: "PUT", url: "/v1/settings/sso", cookies: { cs_session: cookie }, payload: { enabled: false, protocol: "oidc", sessionTtlHours: 400 } });
+    const bad = await app.inject({
+      method: "PUT",
+      url: "/v1/settings/sso",
+      cookies: { cs_session: cookie },
+      payload: { enabled: false, protocol: "oidc", sessionTtlHours: 400 },
+    });
     expect(bad.statusCode).toBe(400);
   });
 });

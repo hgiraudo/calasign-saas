@@ -12,8 +12,8 @@ process.env.VERIFF_API_KEY = "veriff_test_key";
 process.env.VERIFF_SHARED_SECRET = "veriff_test_secret";
 process.env.VERIFF_BASE_URL = "https://veriff.test";
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant = "";
@@ -32,7 +32,11 @@ beforeAll(async () => {
   await migrate(db);
   tenant = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name, embed_frame_ancestors) VALUES ($1, $2, 'T', $3)`, [tenant, `t-${tenant.slice(-8)}`, [ORIGIN]]);
-  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [
+    uuidv7(),
+    tenant,
+    sha256Hex(KEY),
+  ]);
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
 }, 120_000);
@@ -82,7 +86,14 @@ async function redeem(envelope: string, recipient: string, frameAncestors: strin
   expect(su.statusCode).toBe(201);
   const code = String(su.json().url).split("/embed/")[1];
   const ex = await app.inject({ method: "GET", url: `/embed/${code}` });
-  return { ex, location: String(ex.headers.location ?? ""), session: String(ex.headers.location ?? "").split("/s/")[1]?.split("?")[0] ?? "" };
+  return {
+    ex,
+    location: String(ex.headers.location ?? ""),
+    session:
+      String(ex.headers.location ?? "")
+        .split("/s/")[1]
+        ?.split("?")[0] ?? "",
+  };
 }
 
 const signing = (token: string, path = "", method: "GET" | "POST" = "GET", payload?: unknown, headers: Record<string, string> = {}) =>
@@ -107,7 +118,9 @@ describe("canje embebido → token de sesión", () => {
     expect(maxH).toBeGreaterThan(7.9);
     expect(maxH).toBeLessThanOrEqual(8);
     // La evidencia del inicio de la sesión no lleva el token.
-    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.embedded_session_started'`, [envelope]);
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.embedded_session_started'`, [
+      envelope,
+    ]);
     expect(JSON.stringify(ev.data)).not.toContain(session);
   });
 
@@ -203,7 +216,10 @@ describe("canje embebido → token de sesión", () => {
     const { sha256Hex } = await import("../src/lib/util");
     const h = sha256Hex(session);
     // Último uso reciente: un GET (y sus hooks) no toca la fila.
-    await db.query(`UPDATE signer_session_tokens SET last_used_at = now() - interval '10 seconds', expires_at = now() + interval '1 hour' WHERE token_hash = $1`, [h]);
+    await db.query(
+      `UPDATE signer_session_tokens SET last_used_at = now() - interval '10 seconds', expires_at = now() + interval '1 hour' WHERE token_hash = $1`,
+      [h],
+    );
     const before = await db.one<any>(`SELECT last_used_at, expires_at FROM signer_session_tokens WHERE token_hash = $1`, [h]);
     expect((await signing(session)).statusCode).toBe(200);
     expect((await signing(session, "/embed")).statusCode).toBe(200);
@@ -223,7 +239,10 @@ describe("canje embebido → token de sesión", () => {
     const { session } = await redeem(envelope, recipient);
     const { sha256Hex } = await import("../src/lib/util");
     const h = sha256Hex(session);
-    await db.query(`UPDATE signer_session_tokens SET expires_at = now() + interval '1 minute', max_expires_at = now() + interval '30 minutes', last_used_at = now() - interval '5 minutes' WHERE token_hash = $1`, [h]);
+    await db.query(
+      `UPDATE signer_session_tokens SET expires_at = now() + interval '1 minute', max_expires_at = now() + interval '30 minutes', last_used_at = now() - interval '5 minutes' WHERE token_hash = $1`,
+      [h],
+    );
     expect((await signing(session)).statusCode).toBe(200);
     const slid = await db.one<any>(`SELECT expires_at, max_expires_at FROM signer_session_tokens WHERE token_hash = $1`, [h]);
     expect(new Date(slid.expires_at).getTime()).toBe(new Date(slid.max_expires_at).getTime());
@@ -369,7 +388,10 @@ describe("canje embebido → token de sesión", () => {
       const url = String(input?.url ?? input);
       if (url.startsWith("https://veriff.test/v1/sessions")) {
         callback = JSON.parse(String(init?.body ?? "{}"))?.verification?.callback ?? "";
-        return new Response(JSON.stringify({ verification: { id: "vf_1", url: "https://veriff.test/go/vf_1" } }), { status: 201, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ verification: { id: "vf_1", url: "https://veriff.test/go/vf_1" } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
       }
       return real(input, init);
     }) as typeof fetch;
@@ -406,7 +428,10 @@ describe("canje embebido → token de sesión", () => {
     globalThis.fetch = (async (input: any, init?: any) => {
       const url = String(input?.url ?? input);
       if (url.startsWith("https://veriff.test/v1/sessions"))
-        return new Response(JSON.stringify({ verification: { id: "vf_close", url: "https://veriff.test/go/vf_close" } }), { status: 201, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ verification: { id: "vf_close", url: "https://veriff.test/go/vf_close" } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
       return real(input, init);
     }) as typeof fetch;
     try {
@@ -436,7 +461,11 @@ describe("canje embebido → token de sesión", () => {
     const { envelope, recipient } = await setup();
     const { uuidv7 } = await import("../src/lib/util");
     const brand = uuidv7();
-    await db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,'Acme','acme-ret',$3)`, [brand, tenant, JSON.stringify({ productName: "FirmaPro" })]);
+    await db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,'Acme','acme-ret',$3)`, [
+      brand,
+      tenant,
+      JSON.stringify({ productName: "FirmaPro" }),
+    ]);
     await db.query(`UPDATE envelopes SET brand_id = $2 WHERE id = $1`, [envelope, brand]);
     await db.query(`UPDATE recipients SET locale = 'en' WHERE id = $1`, [recipient]);
     const payment = await mockPayment(envelope, recipient);
@@ -475,7 +504,12 @@ describe("canje embebido → token de sesión", () => {
 
   it("canje con el sobre ya completado: el token nace revocado con 15 minutos de gracia", async () => {
     const { envelope, recipient } = await setup();
-    const su = await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/signing-url`, headers: auth, payload: { frameAncestors: [ORIGIN] } });
+    const su = await app.inject({
+      method: "POST",
+      url: `/v1/envelopes/${envelope}/recipients/${recipient}/signing-url`,
+      headers: auth,
+      payload: { frameAncestors: [ORIGIN] },
+    });
     expect(su.statusCode).toBe(201);
     await db.query(`UPDATE envelopes SET status = 'completed' WHERE id = $1`, [envelope]);
     const ex = await app.inject({ method: "GET", url: `/embed/${String(su.json().url).split("/embed/")[1]}` });
@@ -541,7 +575,9 @@ describe("destinatario no embebido: la sesión del integrador no sobrevive a su 
     const ex = await app.inject({ method: "GET", url: `/embed/${String(su.json().url).split("/embed/")[1]}` });
     expect(ex.statusCode).toBe(410);
     expect(await db.one(`SELECT 1 FROM signer_session_tokens WHERE recipient_id = $1`, [recipient])).toBeFalsy();
-    expect(await db.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.embedded_session_started'`, [envelope])).toBeFalsy();
+    expect(
+      await db.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.embedded_session_started'`, [envelope]),
+    ).toBeFalsy();
   });
 
   it("embebido: la verificación no corta la sesión", async () => {
@@ -557,8 +593,12 @@ describe("destinatario no embebido: verificación iniciada desde la sesión del 
     globalThis.fetch = (async (input: any, init?: any) => {
       const url = String(input?.url ?? input);
       if (url.startsWith("https://veriff.test/v1/sessions"))
-        return new Response(JSON.stringify({ verification: { id, url: `https://veriff.test/go/${id}` } }), { status: 201, headers: { "content-type": "application/json" } });
-      if (url.startsWith("https://veriff.test/")) return new Response(JSON.stringify({ verification: null }), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ verification: { id, url: `https://veriff.test/go/${id}` } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      if (url.startsWith("https://veriff.test/"))
+        return new Response(JSON.stringify({ verification: null }), { status: 200, headers: { "content-type": "application/json" } });
       return real(input, init);
     }) as typeof fetch;
     try {
@@ -615,7 +655,9 @@ describe("destinatario no embebido: verificación iniciada desde la sesión del 
     await withVeriff("vf_mixed_1", async () => {
       expect((await signing(session, "/identity/start", "POST")).statusCode).toBe(200);
       expect((await signing(token, "/identity/start", "POST")).statusCode).toBe(200);
-      expect((await db.one<any>(`SELECT session_token_hash FROM identity_verifications WHERE recipient_id = $1`, [recipient])).session_token_hash).toBeNull();
+      expect(
+        (await db.one<any>(`SELECT session_token_hash FROM identity_verifications WHERE recipient_id = $1`, [recipient])).session_token_hash,
+      ).toBeNull();
       await approve("vf_mixed_1");
     });
     expect((await signing(session)).statusCode).toBe(404);

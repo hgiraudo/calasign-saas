@@ -29,7 +29,8 @@ export function parseP12(p12: Buffer, password: string): ParsedP12 {
     p = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(p12.toString("binary"))), false, password);
   } catch (e) {
     const msg = String((e as Error).message ?? e);
-    if (/mac|password|invalid/i.test(msg)) throw badRequest("invalid_p12_password", "No se pudo abrir el archivo: la contraseña es incorrecta o el archivo está dañado");
+    if (/mac|password|invalid/i.test(msg))
+      throw badRequest("invalid_p12_password", "No se pudo abrir el archivo: la contraseña es incorrecta o el archivo está dañado");
     throw badRequest("invalid_p12", "El archivo no es un .p12/.pfx válido");
   }
   const keyBags = [
@@ -38,7 +39,9 @@ export function parseP12(p12: Buffer, password: string): ParsedP12 {
   ];
   const key = keyBags.find((b) => b.key)?.key as forge.pki.rsa.PrivateKey | undefined;
   if (!key) throw badRequest("p12_without_key", "El archivo no contiene una clave privada RSA (solo se aceptan claves RSA)");
-  const certs = (p.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ?? []).map((b) => b.cert).filter((c): c is forge.pki.Certificate => !!c);
+  const certs = (p.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ?? [])
+    .map((b) => b.cert)
+    .filter((c): c is forge.pki.Certificate => !!c);
   if (!certs.length) throw badRequest("p12_without_cert", "El archivo no contiene certificados");
   const leafForge = certs.find((c) => (c.publicKey as forge.pki.rsa.PublicKey).n?.equals?.(key.n));
   if (!leafForge) throw badRequest("p12_key_mismatch", "Ningún certificado del archivo corresponde a la clave privada");
@@ -79,8 +82,16 @@ const aad = (ctx: CustodyContext) => Buffer.from(`${CUSTODY_PURPOSE}|${ctx.tenan
  * el AAD de AES-GCM. KMS de la plataforma: v2 con organización y certificado; v1, solo el propósito.
  * `legacyByokV2`: claves BYOK v2 escritas con el certificado también en el contexto (se siguen abriendo).
  */
-function kmsContext(version: "v1" | "v2", ctx: { tenantId: string; certificateId?: string }, byok: boolean, legacyByokV2 = false): Record<string, string> {
-  if (byok) return legacyByokV2 && version === "v2" ? { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId, certificate: ctx.certificateId ?? "" } : { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId };
+function kmsContext(
+  version: "v1" | "v2",
+  ctx: { tenantId: string; certificateId?: string },
+  byok: boolean,
+  legacyByokV2 = false,
+): Record<string, string> {
+  if (byok)
+    return legacyByokV2 && version === "v2"
+      ? { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId, certificate: ctx.certificateId ?? "" }
+      : { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId };
   if (version === "v2") return { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId, certificate: ctx.certificateId ?? "" };
   return { purpose: CUSTODY_PURPOSE };
 }
@@ -108,10 +119,16 @@ export async function sealKey(
   if (byok) {
     // BYOK: la clave de datos se envuelve con la clave KMS de la organización (contexto atado a la organización).
     try {
-      const r = await kmsForKey(byok.keyArn).encrypt({ KeyId: byok.keyArn, Plaintext: dataKey, EncryptionContext: kmsContext("v2", { ...ctx, tenantId: byok.tenantId }, true) });
+      const r = await kmsForKey(byok.keyArn).encrypt({
+        KeyId: byok.keyArn,
+        Plaintext: dataKey,
+        EncryptionContext: kmsContext("v2", { ...ctx, tenantId: byok.tenantId }, true),
+      });
       return { ciphertext, wrapped: Buffer.from(r.CiphertextBlob).toString("base64"), method: "kms-byok", keyArn: byok.keyArn };
     } catch (e) {
-      throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", { cause: String((e as Error)?.message ?? e).slice(0, 300) });
+      throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", {
+        cause: String((e as Error)?.message ?? e).slice(0, 300),
+      });
     } finally {
       dataKey.fill(0);
     }
@@ -119,7 +136,9 @@ export async function sealKey(
   try {
     if (config.evidence.custodyKmsKeyId) {
       const { m, c: client } = await kms();
-      const r = await client.send(new m.EncryptCommand({ KeyId: config.evidence.custodyKmsKeyId, Plaintext: dataKey, EncryptionContext: kmsContext("v2", ctx, false) }));
+      const r = await client.send(
+        new m.EncryptCommand({ KeyId: config.evidence.custodyKmsKeyId, Plaintext: dataKey, EncryptionContext: kmsContext("v2", ctx, false) }),
+      );
       return { ciphertext, wrapped: Buffer.from(r.CiphertextBlob!).toString("base64"), method: "kms" };
     }
     // Local: la clave de datos envuelta lleva el mismo contexto adelante (se controla al abrirla).
@@ -172,11 +191,15 @@ async function openKeyDetailed(row: SealedKeyRow): Promise<{ keyPem: string; leg
       }
       dataKey = Buffer.from(r.Plaintext);
     } catch (e) {
-      throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", { cause: String((e as Error)?.message ?? e).slice(0, 300) });
+      throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", {
+        cause: String((e as Error)?.message ?? e).slice(0, 300),
+      });
     }
   } else if (row.key_wrap_method === "kms") {
     const { m, c } = await kms();
-    const r = await c.send(new m.DecryptCommand({ CiphertextBlob: Buffer.from(row.key_wrapped, "base64"), EncryptionContext: kmsContext(version, ctx, false) }));
+    const r = await c.send(
+      new m.DecryptCommand({ CiphertextBlob: Buffer.from(row.key_wrapped, "base64"), EncryptionContext: kmsContext(version, ctx, false) }),
+    );
     dataKey = Buffer.from(r.Plaintext!);
   } else if (version === "v2") {
     const opened = decrypt(row.key_wrapped);
@@ -256,7 +279,8 @@ export const toTenantCertificate = (r: any): TenantCertificate => ({
 export async function loadTenantCertificate(db: Db, tenantId: string, id: string, usage?: "xml" | "pdf_seal") {
   const row = await db.one<any>(`SELECT * FROM tenant_certificates WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, [id, tenantId]);
   if (!row) throw notFound("Certificado");
-  if (usage && !row.usages.includes(usage)) throw badRequest("certificate_usage", `El certificado no está habilitado para ${usage === "xml" ? "firma XML" : "sello de PDF"}`);
+  if (usage && !row.usages.includes(usage))
+    throw badRequest("certificate_usage", `El certificado no está habilitado para ${usage === "xml" ? "firma XML" : "sello de PDF"}`);
   if (new Date(row.not_after) < new Date()) throw badRequest("certificate_expired", "El certificado está vencido");
   return row;
 }

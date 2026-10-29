@@ -203,9 +203,14 @@ export async function createEnvelopeFromPdf(
   if (missingRoles.length) throw new AppError(422, "missing_roles", `Faltan firmantes para: ${missingRoles.join(", ")}`, { missingRoles });
   const unknown = signers.filter((r) => !spec.marks.some((m) => roleKey(m.role) === roleKey(r.role) && m.kind === "signature"));
   if (unknown.length) {
-    throw new AppError(422, "unknown_roles", `Estos firmantes no tienen espacio de firma ({{firma:Rol}}) en el documento: ${unknown.map((u) => u.role).join(", ")}`, {
-      roles: unknown.map((u) => u.role),
-    });
+    throw new AppError(
+      422,
+      "unknown_roles",
+      `Estos firmantes no tienen espacio de firma ({{firma:Rol}}) en el documento: ${unknown.map((u) => u.role).join(", ")}`,
+      {
+        roles: unknown.map((u) => u.role),
+      },
+    );
   }
   for (const r of spec.recipients) {
     if (!r.email && !r.phone) throw new AppError(422, "recipient_contact", `${r.name}: falta correo o teléfono`);
@@ -213,7 +218,11 @@ export async function createEnvelopeFromPdf(
     // que nunca le avisaba a ese destinatario.
     const channels = r.channels ?? (r.email ? ["email"] : ["whatsapp"]);
     if (!channelHasAddress(channels, r)) {
-      throw new AppError(422, "recipient_contact", `${r.name}: ningún canal elegido (${channels.join(", ")}) tiene dirección: falta el correo o el teléfono`);
+      throw new AppError(
+        422,
+        "recipient_contact",
+        `${r.name}: ningún canal elegido (${channels.join(", ")}) tiene dirección: falta el correo o el teléfono`,
+      );
     }
   }
 
@@ -379,11 +388,19 @@ export async function clauseUsage(db: Db, tenantId: string, slug: string, except
     }
   };
   const templates = (
-    await db.query<any>(`SELECT id, name, source FROM document_templates WHERE tenant_id = $1 AND archived_at IS NULL AND source ILIKE $2 ESCAPE '\\' ORDER BY name`, [tenantId, like])
+    await db.query<any>(
+      `SELECT id, name, source FROM document_templates WHERE tenant_id = $1 AND archived_at IS NULL AND source ILIKE $2 ESCAPE '\\' ORDER BY name`,
+      [tenantId, like],
+    )
   )
     .filter((r) => cites(r.source))
     .map((r) => ({ id: r.id as string, name: r.name as string }));
-  const clauses = (await db.query<any>(`SELECT id, slug, title, body FROM clauses WHERE tenant_id = $1 AND body ILIKE $2 ESCAPE '\\' ORDER BY title`, [tenantId, like]))
+  const clauses = (
+    await db.query<any>(`SELECT id, slug, title, body FROM clauses WHERE tenant_id = $1 AND body ILIKE $2 ESCAPE '\\' ORDER BY title`, [
+      tenantId,
+      like,
+    ])
+  )
     .filter((r) => r.id !== exceptClauseId && cites(r.body))
     .map((r) => ({ id: r.id as string, slug: r.slug as string, title: r.title as string }));
   return { templates, clauses };
@@ -423,7 +440,10 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     const misses = rows.filter((r) => !analysisCache.has(keyOf(r)));
     if (misses.length) {
       const clauses = await loadClauseMap(s.db, a.tenantId);
-      const sources = await s.db.query<any>(`SELECT id, source FROM document_templates WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [a.tenantId, misses.map((r) => r.id)]);
+      const sources = await s.db.query<any>(`SELECT id, source FROM document_templates WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [
+        a.tenantId,
+        misses.map((r) => r.id),
+      ]);
       const byId = new Map(sources.map((x) => [x.id, x.source as string]));
       for (const r of misses) {
         const src = byId.get(r.id);
@@ -456,7 +476,11 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
         a.userId,
       ],
     );
-    await auditFromRequest(s.db, req, a, "document_template.created", { targetType: "document_template", targetId: (row as any).id, data: { name: input.name } });
+    await auditFromRequest(s.db, req, a, "document_template.created", {
+      targetType: "document_template",
+      targetId: (row as any).id,
+      data: { name: input.name },
+    });
     reply.code(201);
     return toTemplate(row, await loadClauseMap(s.db, a.tenantId));
   });
@@ -474,7 +498,10 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     // Control de edición concurrente (X-Expected-Updated-At), con la fila bloqueada: dos pestañas guardando a la vez ya
     // no se pisan en silencio. updated_at estrictamente creciente (dos guardados en el mismo milisegundo daban el mismo).
     const row = await s.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT * FROM document_templates WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL FOR UPDATE`, [req.params.id, a.tenantId]);
+      const cur = await t.one<any>(`SELECT * FROM document_templates WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL FOR UPDATE`, [
+        req.params.id,
+        a.tenantId,
+      ]);
       if (!cur) throw notFound("Plantilla de documento");
       assertNotStale(req.headers, cur.updated_at, STALE_DOC_MESSAGE);
       return t.one<any>(
@@ -487,7 +514,13 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
           input.description !== undefined ? input.description : cur.description,
           input.locale ?? cur.locale,
           input.source ?? cur.source,
-          input.sampleData !== undefined ? (input.sampleData ? JSON.stringify(input.sampleData) : null) : cur.sample_data ? JSON.stringify(cur.sample_data) : null,
+          input.sampleData !== undefined
+            ? input.sampleData
+              ? JSON.stringify(input.sampleData)
+              : null
+            : cur.sample_data
+              ? JSON.stringify(cur.sample_data)
+              : null,
           input.agreementMapping !== undefined
             ? input.agreementMapping
               ? JSON.stringify(input.agreementMapping)
@@ -499,7 +532,11 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
       );
     });
     // El texto de la plantilla es lo que firman los documentos que genera: quién lo cambió queda en la auditoría.
-    await auditFromRequest(s.db, req, a, "document_template.updated", { targetType: "document_template", targetId: row.id, data: { name: (row as any).name, fields: Object.keys((req.body as object) ?? {}) } });
+    await auditFromRequest(s.db, req, a, "document_template.updated", {
+      targetType: "document_template",
+      targetId: row.id,
+      data: { name: (row as any).name, fields: Object.keys((req.body as object) ?? {}) },
+    });
     return toTemplate(row, await loadClauseMap(s.db, a.tenantId));
   });
 
@@ -509,7 +546,11 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     const cur = await loadDocTemplate(s.db, a.tenantId, req.params.id);
     // Archivada (no borrada): negociaciones y workflows pueden referenciarla.
     await s.db.query(`UPDATE document_templates SET archived_at = now() WHERE id = $1`, [cur.id]);
-    await auditFromRequest(s.db, req, a, "document_template.deleted", { targetType: "document_template", targetId: cur.id, data: { name: cur.name } });
+    await auditFromRequest(s.db, req, a, "document_template.deleted", {
+      targetType: "document_template",
+      targetId: cur.id,
+      data: { name: cur.name },
+    });
     return reply.code(204).send();
   });
 
@@ -560,7 +601,10 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
       const locale = input.locale ?? tpl.locale;
       const doc = await renderDocument(s.db, a.tenantId, { source: tpl.source, data: input.data, locale, title: input.subject ?? tpl.name });
       const warnings: GenerateWarning[] = [];
-      if (doc.missingClauses.length) throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, { missingClauses: doc.missingClauses });
+      if (doc.missingClauses.length)
+        throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, {
+          missingClauses: doc.missingClauses,
+        });
       if (doc.missing.length && !input.allowMissing) {
         throw new AppError(422, "missing_variables", `Faltan datos: ${doc.missing.join(", ")}`, { missing: doc.missing });
       }
@@ -568,36 +612,38 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
       const file = await storeGeneratedPdf(s.blobs, a.tenantId, doc.pdf);
       const agreement = agreementMetaFromMapping(tpl.agreement_mapping, input.data, locale);
       // Si no se crea el sobre (p. ej. límite del plan al enviarlo), el PDF generado no lo referencia nada.
-      const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () => s.db.tx((t) =>
-        createEnvelopeFromPdf(t, a, {
-          file,
-          fileName: `${tpl.name}.pdf`,
-          subject,
-          message: input.message ?? null,
-          locale,
-          expiresAt: input.expiresAt ?? null,
-          recipients: input.recipients,
-          marks: doc.marks,
-          templateRoles: doc.templateRoles,
-          metadata: {
-            ...(input.metadata ?? {}),
-            documentTemplateId: tpl.id,
-            dataSha256: sha256Hex(JSON.stringify(input.data)),
-            // Qué versión del texto se firmó (la plantilla y las cláusulas cambian después).
-            documentProvenance: doc.provenance,
-            ...(agreement ? { agreement } : {}),
-          },
-          send: input.send,
-          onSkippedRoles: (roles) => {
-            warnings.length = 0;
-            warnings.push({
-              code: "signer_without_marks",
-              message: `El documento generado no tiene marcas para ${roles.join(", ")} (p. ej. una firma dentro de un {{#if}} que no se cumplió): no se agregaron al sobre`,
-              roles,
-            });
-          },
-        }),
-      ));
+      const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () =>
+        s.db.tx((t) =>
+          createEnvelopeFromPdf(t, a, {
+            file,
+            fileName: `${tpl.name}.pdf`,
+            subject,
+            message: input.message ?? null,
+            locale,
+            expiresAt: input.expiresAt ?? null,
+            recipients: input.recipients,
+            marks: doc.marks,
+            templateRoles: doc.templateRoles,
+            metadata: {
+              ...(input.metadata ?? {}),
+              documentTemplateId: tpl.id,
+              dataSha256: sha256Hex(JSON.stringify(input.data)),
+              // Qué versión del texto se firmó (la plantilla y las cláusulas cambian después).
+              documentProvenance: doc.provenance,
+              ...(agreement ? { agreement } : {}),
+            },
+            send: input.send,
+            onSkippedRoles: (roles) => {
+              warnings.length = 0;
+              warnings.push({
+                code: "signer_without_marks",
+                message: `El documento generado no tiene marcas para ${roles.join(", ")} (p. ej. una firma dentro de un {{#if}} que no se cumplió): no se agregaron al sobre`,
+                roles,
+              });
+            },
+          }),
+        ),
+      );
       const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
       return { status: 201, body: { envelopeId, status: env.status, missing: doc.missing, pages: doc.pageCount, warnings } };
     }),
@@ -635,7 +681,11 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
         if (/unique|duplicate/i.test(String(e))) throw conflict("duplicate_slug", "Ya existe una cláusula con ese código");
         throw e;
       });
-    await auditFromRequest(s.db, req, a, "clause.created", { targetType: "clause", targetId: (row as any).id, data: { slug: input.slug, title: input.title } });
+    await auditFromRequest(s.db, req, a, "clause.created", {
+      targetType: "clause",
+      targetId: (row as any).id,
+      data: { slug: input.slug, title: input.title },
+    });
     reply.code(201);
     return toClause(row);
   });
@@ -658,7 +708,11 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
       );
       return { cur, row };
     });
-    await auditFromRequest(s.db, req, a, "clause.updated", { targetType: "clause", targetId: cur.id, data: { slug: cur.slug, fields: Object.keys((req.body as object) ?? {}) } });
+    await auditFromRequest(s.db, req, a, "clause.updated", {
+      targetType: "clause",
+      targetId: cur.id,
+      data: { slug: cur.slug, fields: Object.keys((req.body as object) ?? {}) },
+    });
     return toClause(row);
   });
 

@@ -25,7 +25,12 @@ const { pki, server } = await startLab(port);
 const company = await pki.issue("Empresa Demo S.A. (sello de empresa)");
 const holder = await pki.issue("Firmante CSC Demo");
 const csc = await startMockCsc(
-  { username: "demo", password: "demo-pass", pin: "123456", credentials: { "cred-demo": { identity: holder, chainDer: [holder.certDer, pki.intermediate.certDer, pki.root.certDer] } } },
+  {
+    username: "demo",
+    password: "demo-pass",
+    pin: "123456",
+    credentials: { "cred-demo": { identity: holder, chainDer: [holder.certDer, pki.intermediate.certDer, pki.root.certDer] } },
+  },
   port + 1,
 );
 
@@ -46,12 +51,19 @@ for (const [file, extra] of [
 ] as const) {
   try {
     execFileSync("openssl", [
-      "pkcs12", "-export", ...extra,
-      "-inkey", resolve(dir, "company.key.pem"),
-      "-in", resolve(dir, "company.cert.pem"),
-      "-certfile", resolve(dir, "chain.pem"),
-      "-passout", `pass:${P12_PASSWORD}`,
-      "-out", resolve(dir, file),
+      "pkcs12",
+      "-export",
+      ...extra,
+      "-inkey",
+      resolve(dir, "company.key.pem"),
+      "-in",
+      resolve(dir, "company.cert.pem"),
+      "-certfile",
+      resolve(dir, "chain.pem"),
+      "-passout",
+      `pass:${P12_PASSWORD}`,
+      "-out",
+      resolve(dir, file),
     ]);
   } catch (e) {
     console.warn(`no se pudo generar ${file}: ${(e as Error).message}`);
@@ -59,7 +71,16 @@ for (const [file, extra] of [
 }
 w("company.p12.password", P12_PASSWORD);
 
-const cscConnectors = [{ id: "csc-demo", baseUrl: csc.url, auth: { type: "basic", username: "demo", password: "demo-pass" }, credentialId: "cred-demo", pin: "123456", level: "qualified" }];
+const cscConnectors = [
+  {
+    id: "csc-demo",
+    baseUrl: csc.url,
+    auth: { type: "basic", username: "demo", password: "demo-pass" },
+    credentialId: "cred-demo",
+    pin: "123456",
+    level: "qualified",
+  },
+];
 const env = [
   `SEAL_KEY_FILE=${resolve(dir, "seal.key.pem")}`,
   `SEAL_CHAIN_FILE=${resolve(dir, "seal.chain.pem")}`,

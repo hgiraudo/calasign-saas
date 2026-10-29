@@ -12,7 +12,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
 const tempDirs = [];
 process.on("exit", () => {
@@ -20,7 +19,12 @@ process.on("exit", () => {
 });
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -88,8 +92,39 @@ function companyP12() {
     };
   }
   const dir = tempDir("p12-");
-  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-days", "30", "-subj", "/CN=Empresa E2E Autofirmada/O=CalaSign E2E", "-addext", "extendedKeyUsage=emailProtection,1.3.6.1.5.5.7.3.36"], { stdio: "ignore" });
-  execFileSync("openssl", ["pkcs12", "-export", "-inkey", join(dir, "k.pem"), "-in", join(dir, "c.pem"), "-passout", "pass:e2e-pass", "-out", join(dir, "c.p12")]);
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      join(dir, "k.pem"),
+      "-out",
+      join(dir, "c.pem"),
+      "-days",
+      "30",
+      "-subj",
+      "/CN=Empresa E2E Autofirmada/O=CalaSign E2E",
+      "-addext",
+      "extendedKeyUsage=emailProtection,1.3.6.1.5.5.7.3.36",
+    ],
+    { stdio: "ignore" },
+  );
+  execFileSync("openssl", [
+    "pkcs12",
+    "-export",
+    "-inkey",
+    join(dir, "k.pem"),
+    "-in",
+    join(dir, "c.pem"),
+    "-passout",
+    "pass:e2e-pass",
+    "-out",
+    join(dir, "c.p12"),
+  ]);
   return { modern: readFileSync(join(dir, "c.p12")), legacy: null, password: "e2e-pass" };
 }
 
@@ -109,7 +144,13 @@ const UBL = `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:nam
 // ─────────────────────────────────────────────────────────────────────────────
 
 const stamp = Date.now();
-await api("POST", "/v1/auth/signup", { name: "Eva Evidencia", email: `eva+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Evidencia ${stamp}`, locale: "es" });
+await api("POST", "/v1/auth/signup", {
+  name: "Eva Evidencia",
+  email: `eva+${stamp}@example.com`,
+  password: "una-clave-segura-123",
+  organization: `Evidencia ${stamp}`,
+  locale: "es",
+});
 step(`alta de cuenta (${LAB ? "con PKI de laboratorio" : "sin PKI de laboratorio: .p12 autofirmado"})`);
 
 // Nivel PAdES
@@ -123,23 +164,44 @@ step(`nivel PAdES: auto → B-LTA (efectivo ${ev1.effectiveLevel}, TSA ${ev1.tsa
 const p12 = companyP12();
 const bad = await api("POST", "/v1/certificates", { name: "mal", p12Base64: p12.modern.toString("base64"), password: "incorrecta" }, { raw: true });
 assert(bad.status === 400, `contraseña incorrecta → 400 (fue ${bad.status})`);
-const { certificate: cert } = await api("POST", "/v1/certificates", { name: "Sello ACME", p12Base64: p12.modern.toString("base64"), password: p12.password });
+const { certificate: cert } = await api("POST", "/v1/certificates", {
+  name: "Sello ACME",
+  p12Base64: p12.modern.toString("base64"),
+  password: p12.password,
+});
 assert(!JSON.stringify(cert).match(/PRIVATE|key_ciphertext|wrapped/i), "la API no devuelve material de clave");
 assert(cert.chainLength >= (LAB ? 3 : 1) && cert.keyAlgorithm.startsWith("RSA"), `metadatos del certificado (cadena ${cert.chainLength})`);
 let legacyId = null;
 if (p12.legacy) {
-  const { certificate } = await api("POST", "/v1/certificates", { name: "Legado 3DES", p12Base64: p12.legacy.toString("base64"), password: p12.password, usages: ["xml"] });
+  const { certificate } = await api("POST", "/v1/certificates", {
+    name: "Legado 3DES",
+    p12Base64: p12.legacy.toString("base64"),
+    password: p12.password,
+    usages: ["xml"],
+  });
   legacyId = certificate.id;
 }
 const list = await api("GET", "/v1/certificates");
-assert(list.items.some((c) => c.id === cert.id), "listado");
-step(`certificado de la organización en custodia: ${cert.commonName} (${cert.keyAlgorithm}, cadena ${cert.chainLength})${legacyId ? " + .p12 legado" : ""}; contraseña incorrecta → 400`);
+assert(
+  list.items.some((c) => c.id === cert.id),
+  "listado",
+);
+step(
+  `certificado de la organización en custodia: ${cert.commonName} (${cert.keyAlgorithm}, cadena ${cert.chainLength})${legacyId ? " + .p12 legado" : ""}; contraseña incorrecta → 400`,
+);
 
 // Firma XML
 const SUNAT = `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"><ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions><cbc:UBLVersionID>2.1</cbc:UBLVersionID><cbc:ID>F001-00000123</cbc:ID><cac:Signature><cbc:ID>SignSUNAT</cbc:ID></cac:Signature><cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="PEN">1180.00</cbc:PayableAmount></cac:LegalMonetaryTotal></Invoice>`;
-for (const [profile, xml] of [["dgii-ecf", ECF], ["dian-fe", UBL], ["sunat-cpe", SUNAT], ["xades-bes", ECF], ["xades-epes", UBL]]) {
+for (const [profile, xml] of [
+  ["dgii-ecf", ECF],
+  ["dian-fe", UBL],
+  ["sunat-cpe", SUNAT],
+  ["xades-bes", ECF],
+  ["xades-epes", UBL],
+]) {
   const body = { xml, profile, certificateId: legacyId && profile === "dgii-ecf" ? legacyId : cert.id };
-  if (profile === "xades-epes") body.policy = { identifier: "https://example.com/politica.pdf", hashBase64: "dMoMvtcG5aIzgYo0tIsSQeVJBDnUnfSOfBpxXrmor0Y=" };
+  if (profile === "xades-epes")
+    body.policy = { identifier: "https://example.com/politica.pdf", hashBase64: "dMoMvtcG5aIzgYo0tIsSQeVJBDnUnfSOfBpxXrmor0Y=" };
   const r = await api("POST", "/v1/xml/sign", body);
   assert(r.verification.valid, `${profile}: verificación ${JSON.stringify(r.verification.errors)}`);
   const v = await api("POST", "/v1/xml/verify", { xml: r.signedXml });
@@ -160,8 +222,12 @@ fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.
 const doc = await api("POST", `/v1/envelopes/${envelope.id}/documents`, fd);
 const s1 = randomUUID();
 const signerName = `Firmante Evidencia ${stamp}`;
-await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, { recipients: [{ id: s1, name: signerName, email: `f+${stamp}@example.com`, channels: ["email"] }] });
-await api("PUT", `/v1/envelopes/${envelope.id}/fields`, { fields: [{ documentId: doc.id, recipientId: s1, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }] });
+await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
+  recipients: [{ id: s1, name: signerName, email: `f+${stamp}@example.com`, channels: ["email"] }],
+});
+await api("PUT", `/v1/envelopes/${envelope.id}/fields`, {
+  fields: [{ documentId: doc.id, recipientId: s1, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
+});
 const so = await api("PUT", `/v1/envelopes/${envelope.id}/seal-options`, { companySealCertificateId: cert.id, signatureLevel: "advanced" });
 assert(so.companySealCertificateId === cert.id && so.signatureLevel === "advanced", "opciones de sello");
 await api("POST", `/v1/envelopes/${envelope.id}/send`);
@@ -192,10 +258,19 @@ assert(sigs.length === 2, `dos firmas CAdES (plataforma + empresa), hubo ${sigs.
 assert(report.summary.allValid, `integridad de todas las firmas: ${JSON.stringify(report.signatures.map((s) => s.integrity))}`);
 assert(sigs[1].signer?.commonName === cert.commonName, "la segunda firma es el sello de empresa");
 if (LAB) {
-  assert(report.signatures.some((s) => s.kind === "document_timestamp" && s.coversWholeDocument), "sello de documento que cubre todo");
+  assert(
+    report.signatures.some((s) => s.kind === "document_timestamp" && s.coversWholeDocument),
+    "sello de documento que cubre todo",
+  );
   assert(report.summary.allTrusted, "cadenas de confianza hasta la raíz del laboratorio");
-  assert(sigs.every((s) => s.level === "B-LTA"), `nivel detectado B-LTA: ${sigs.map((s) => s.level)}`);
-  assert(sigs.every((s) => s.chain.entries[0].revocation.status === "good"), "revocación good desde el DSS");
+  assert(
+    sigs.every((s) => s.level === "B-LTA"),
+    `nivel detectado B-LTA: ${sigs.map((s) => s.level)}`,
+  );
+  assert(
+    sigs.every((s) => s.chain.entries[0].revocation.status === "good"),
+    "revocación good desde el DSS",
+  );
 }
 const tampered = Buffer.from(pdf);
 const idx = tampered.indexOf("(CalaSign)");
@@ -210,7 +285,9 @@ const vv = new FormData();
 vv.append("file", new Blob([pdf], { type: "application/pdf" }), "firmado.pdf");
 const verify = await api("POST", "/v1/verify", vv);
 assert(verify.match && verify.seal.timestamped === Boolean(ev1.tsaConfigured), "verificación por hash y sello de tiempo");
-step(`/v1/validate: ${report.signatures.length} firmas, válidas${LAB ? ", de confianza, B-LTA, revocación good" : ""}; alteración detectada; /v1/verify encuentra el sobre`);
+step(
+  `/v1/validate: ${report.signatures.length} firmas, válidas${LAB ? ", de confianza, B-LTA, revocación good" : ""}; alteración detectada; /v1/verify encuentra el sobre`,
+);
 
 // pdfsig y certificado de finalización
 try {
@@ -235,8 +312,14 @@ try {
 
 // Conectores de firma
 const { items: providers } = await api("GET", "/v1/signature-providers");
-assert(providers.some((p) => p.type === "platform"), "conector de plataforma");
-assert(providers.some((p) => p.id === "calasign-ca"), "placeholder de la CA de Calasign");
+assert(
+  providers.some((p) => p.type === "platform"),
+  "conector de plataforma",
+);
+assert(
+  providers.some((p) => p.id === "calasign-ca"),
+  "placeholder de la CA de Calasign",
+);
 if (LAB) {
   const csc = providers.find((p) => p.type === "csc" && p.configured && p.id !== "calasign-ca");
   assert(csc, "conector CSC configurado");

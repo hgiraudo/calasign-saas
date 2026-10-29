@@ -64,7 +64,7 @@ const displayName = (max: number) =>
     .trim()
     .min(1)
     .max(max)
-    .refine((s) => !/[<>"\r\n\\]/.test(s), "sin < > \" \\ ni saltos de línea")
+    .refine((s) => !/[<>"\r\n\\]/.test(s), 'sin < > " \\ ni saltos de línea')
     .nullable()
     .optional();
 
@@ -90,9 +90,7 @@ export const BrandThemeInput = z
   .strict();
 export type BrandThemeInput = z.infer<typeof BrandThemeInput>;
 
-export const BrandLinksInput = z
-  .object({ websiteUrl: httpsUrl, supportUrl: httpsUrl, privacyUrl: httpsUrl, termsUrl: httpsUrl })
-  .strict();
+export const BrandLinksInput = z.object({ websiteUrl: httpsUrl, supportUrl: httpsUrl, privacyUrl: httpsUrl, termsUrl: httpsUrl }).strict();
 export type BrandLinksInput = z.infer<typeof BrandLinksInput>;
 
 export const BrandEmailInput = z
@@ -119,7 +117,8 @@ export const BrandTemplateInput = z
   .strict();
 export type BrandTemplateInput = z.infer<typeof BrandTemplateInput>;
 
-const localeRecord = <T extends z.ZodTypeAny>(v: T) => z.object(Object.fromEntries(LOCALES.map((l) => [l, v.optional()])) as Record<(typeof LOCALES)[number], z.ZodOptional<T>>).strict();
+const localeRecord = <T extends z.ZodTypeAny>(v: T) =>
+  z.object(Object.fromEntries(LOCALES.map((l) => [l, v.optional()])) as Record<(typeof LOCALES)[number], z.ZodOptional<T>>).strict();
 
 export const TEXT_KEY_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
 
@@ -177,16 +176,25 @@ export const BrandConfigInput = z
     links: BrandLinksInput.optional(),
     email: BrandEmailInput.optional(),
     templates: z
-      .object(Object.fromEntries(BRAND_MESSAGE_EVENTS.map((e) => [e, localeRecord(BrandTemplateInput).optional()])) as Record<
-        BrandMessageEvent,
-        z.ZodOptional<ReturnType<typeof localeRecord<typeof BrandTemplateInput>>>
-      >)
+      .object(
+        Object.fromEntries(BRAND_MESSAGE_EVENTS.map((e) => [e, localeRecord(BrandTemplateInput).optional()])) as Record<
+          BrandMessageEvent,
+          z.ZodOptional<ReturnType<typeof localeRecord<typeof BrandTemplateInput>>>
+        >,
+      )
       .strict()
       .optional(),
     /** Textos de la interfaz por idioma: { "es": { "sign.doneTitle": "¡Listo!" } }. */
     texts: localeRecord(TextOverrides).optional(),
     sms: z
-      .object({ senderId: z.string().trim().regex(/^[A-Za-z0-9 ]{1,11}$/, "hasta 11 letras o números").nullable().optional() })
+      .object({
+        senderId: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9 ]{1,11}$/, "hasta 11 letras o números")
+          .nullable()
+          .optional(),
+      })
       .strict()
       .optional(),
   })
@@ -439,7 +447,8 @@ export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: st
   } else if (okColor(t.headerTextColor)) {
     rules.push(`.signer-bar,.topbar{color:${t.headerTextColor}}`);
   }
-  if (okColor(t.secondaryColor)) vars.push(
+  if (okColor(t.secondaryColor))
+    vars.push(
       `--teal:${t.secondaryColor}`,
       // --teal-dark es texto (enlaces, .hint) y fondo de texto blanco: al menos 4.5:1 contra blanco.
       `--teal-dark:${darkenToContrast(shade(t.secondaryColor, -0.15))}`,
@@ -455,7 +464,10 @@ export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: st
     const hover = buttonHoverBg(btn, fg, 0.12);
     // El color del texto también en hover: si ni aclarando llega a 4.5:1, el calculado contra el fondo de hover.
     const hoverFg = !okColor(t.buttonTextColor) && contrastRatio(fg, hover) < 4.5 ? contrastText(hover) : fg;
-    rules.push(`.btn-primary{background:${btn};border-color:${btn};color:${fg}}`, `.btn-primary:hover{background:${hover};border-color:${hover};color:${hoverFg}}`);
+    rules.push(
+      `.btn-primary{background:${btn};border-color:${btn};color:${fg}}`,
+      `.btn-primary:hover{background:${hover};border-color:${hover};color:${hoverFg}}`,
+    );
   } else if (okColor(t.buttonTextColor)) {
     rules.push(`.btn-primary{color:${t.buttonTextColor}}`);
   } else if (okColor(t.primaryColor)) {

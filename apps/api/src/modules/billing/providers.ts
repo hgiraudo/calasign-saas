@@ -40,7 +40,11 @@ export function stripeForm(params: Record<string, unknown>): string {
 async function stripe(path: string, params: Record<string, unknown> | null, method = "POST", idempotencyKey?: string): Promise<any> {
   const key = config.billing.stripe.secretKey;
   if (!key) throw new ProviderError("stripe", 503, "Stripe no está configurado (STRIPE_SECRET_KEY)");
-  const headers: Record<string, string> = { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded", "Stripe-Version": "2024-06-20" };
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Stripe-Version": "2024-06-20",
+  };
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const res = await fetch(`${config.billing.stripe.apiBase}${path}`, {
     method,
@@ -49,7 +53,14 @@ async function stripe(path: string, params: Record<string, unknown> | null, meth
     signal: AbortSignal.timeout(20_000),
   });
   const body: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ProviderError("stripe", res.status, body?.error?.message ?? `Stripe HTTP ${res.status}`, body?.error?.code ?? null, body?.error?.param ?? null);
+  if (!res.ok)
+    throw new ProviderError(
+      "stripe",
+      res.status,
+      body?.error?.message ?? `Stripe HTTP ${res.status}`,
+      body?.error?.code ?? null,
+      body?.error?.param ?? null,
+    );
   return body;
 }
 
@@ -70,16 +81,26 @@ export async function stripeCreatePaymentCheckout(p: {
   idempotencyKey?: string;
 }): Promise<{ id: string; url: string }> {
   // Sin payment_method_types: los medios (tarjeta, Pix en cuentas de Brasil, etc.) salen de la configuración de la cuenta.
-  const s = await stripe("/v1/checkout/sessions", {
-    mode: "payment",
-    success_url: p.successUrl,
-    cancel_url: p.cancelUrl,
-    customer_email: p.customerEmail ?? undefined,
-    client_reference_id: p.metadata.paymentId,
-    metadata: p.metadata,
-    payment_intent_data: { metadata: p.metadata, description: p.description },
-    line_items: [{ quantity: 1, price_data: { currency: p.currency.toLowerCase(), unit_amount: toMinorUnits(p.amount), product_data: { name: p.description } } }],
-  }, "POST", p.idempotencyKey);
+  const s = await stripe(
+    "/v1/checkout/sessions",
+    {
+      mode: "payment",
+      success_url: p.successUrl,
+      cancel_url: p.cancelUrl,
+      customer_email: p.customerEmail ?? undefined,
+      client_reference_id: p.metadata.paymentId,
+      metadata: p.metadata,
+      payment_intent_data: { metadata: p.metadata, description: p.description },
+      line_items: [
+        {
+          quantity: 1,
+          price_data: { currency: p.currency.toLowerCase(), unit_amount: toMinorUnits(p.amount), product_data: { name: p.description } },
+        },
+      ],
+    },
+    "POST",
+    p.idempotencyKey,
+  );
   return { id: s.id, url: s.url };
 }
 
@@ -118,7 +139,7 @@ export async function stripeCreateSubscriptionCheckout(p: {
     success_url: p.successUrl,
     cancel_url: p.cancelUrl,
     customer: p.customerId ?? undefined,
-    customer_email: p.customerId ? undefined : p.customerEmail ?? undefined,
+    customer_email: p.customerId ? undefined : (p.customerEmail ?? undefined),
     client_reference_id: p.metadata.tenantId,
     metadata: p.metadata,
     subscription_data: { metadata: p.metadata },
@@ -169,7 +190,13 @@ export async function stripeCreatePortal(customerId: string, returnUrl: string):
  * Verifica el encabezado Stripe-Signature (t=…,v1=…): HMAC-SHA256(secret, `${t}.${payload}`) y tolerancia de tiempo.
  * https://docs.stripe.com/webhooks#verify-manually
  */
-export function verifyStripeSignature(payload: string, header: string | undefined, secret: string, toleranceSec = 300, nowSec = Math.floor(Date.now() / 1000)): boolean {
+export function verifyStripeSignature(
+  payload: string,
+  header: string | undefined,
+  secret: string,
+  toleranceSec = 300,
+  nowSec = Math.floor(Date.now() / 1000),
+): boolean {
   if (!header) return false;
   const parts = header.split(",").map((x) => x.trim().split("="));
   const t = parts.find(([k]) => k === "t")?.[1];
@@ -225,7 +252,11 @@ export async function mpCreatePreference(p: {
 /** Vence una preferencia de Checkout Pro: el link deja de aceptar pagos. */
 export async function mpExpirePreference(id: string) {
   // Mercado Pago documenta las fechas con offset ("2026-10-18T05:35:00.000-03:00"): se manda "+00:00" en vez de "Z".
-  await mp(`/checkout/preferences/${encodeURIComponent(id)}`, { expires: true, expiration_date_to: new Date().toISOString().replace("Z", "+00:00") }, "PUT");
+  await mp(
+    `/checkout/preferences/${encodeURIComponent(id)}`,
+    { expires: true, expiration_date_to: new Date().toISOString().replace("Z", "+00:00") },
+    "PUT",
+  );
 }
 
 /**
@@ -281,7 +312,9 @@ export async function mpCreatePreapproval(p: {
   return { id: r.id, url: r.init_point };
 }
 
-export async function mpGetPreapproval(id: string): Promise<{ id: string; status: string; externalReference: string | null; nextPaymentDate: string | null }> {
+export async function mpGetPreapproval(
+  id: string,
+): Promise<{ id: string; status: string; externalReference: string | null; nextPaymentDate: string | null }> {
   const r = await mp(`/preapproval/${encodeURIComponent(id)}`, null, "GET");
   return { id: r.id, status: r.status, externalReference: r.external_reference ?? null, nextPaymentDate: r.next_payment_date ?? null };
 }
@@ -314,7 +347,14 @@ export function verifyMercadoPagoSignature(p: {
   nowMs?: number;
 }): boolean {
   if (!p.xSignature) return false;
-  const parts = Object.fromEntries(p.xSignature.split(",").map((x) => x.trim().split("=").map((y) => y.trim())));
+  const parts = Object.fromEntries(
+    p.xSignature.split(",").map((x) =>
+      x
+        .trim()
+        .split("=")
+        .map((y) => y.trim()),
+    ),
+  );
   const ts = parts.ts;
   const v1 = parts.v1;
   if (!ts || !v1 || !/^\d+$/.test(ts)) return false;
@@ -376,7 +416,13 @@ export async function mpSubscriptionCurrencies(): Promise<string[]> {
         // Respondió, pero con un país que no conocemos: hay que definir MP_CURRENCIES (o sumar el país). Se sigue
         // consultando cada tanto por si cambia la cuenta, pero el error se informa como de configuración.
         mpUnknownSiteId = site || "(vacío)";
-        console.error(JSON.stringify({ level: "error", msg: "Mercado Pago: site_id desconocido; definí MP_CURRENCIES con la moneda de la cuenta", siteId: mpUnknownSiteId }));
+        console.error(
+          JSON.stringify({
+            level: "error",
+            msg: "Mercado Pago: site_id desconocido; definí MP_CURRENCIES con la moneda de la cuenta",
+            siteId: mpUnknownSiteId,
+          }),
+        );
       } catch {
         // Error del momento (timeout, red, 5xx): desconocida; se vuelve a consultar en un rato.
       }
@@ -512,7 +558,12 @@ export async function subscriptionProvidersFor(
     // La moneda de Mercado Pago solo se consulta si está configurado (sin token no hay a quién preguntarle).
     const currencies = id === "mercadopago" && ready ? await mpSubscriptionCurrencies() : null;
     const misconfigured = id === "mercadopago" && ready && currencies?.length === 0 && mpCurrencyMisconfigured();
-    out.push({ id, configured: ready && (currencies === null || currencies.includes(currency)), currencies, ...(misconfigured ? { misconfigured } : {}) });
+    out.push({
+      id,
+      configured: ready && (currencies === null || currencies.includes(currency)),
+      currencies,
+      ...(misconfigured ? { misconfigured } : {}),
+    });
   }
   return out;
 }

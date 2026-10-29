@@ -8,7 +8,8 @@ import { makeTgz } from "../../lib/tar.mjs";
 export const meta = {
   id: "n8n",
   name: "n8n",
-  description: "Paquete de nodos comunitarios: CalaSign (enviar desde plantilla, enviar PDF, estado, PDF firmado, anular, recordar) y CalaSign Trigger (webhook con firma HMAC).",
+  description:
+    "Paquete de nodos comunitarios: CalaSign (enviar desde plantilla, enviar PDF, estado, PDF firmado, anular, recordar) y CalaSign Trigger (webhook con firma HMAC).",
 };
 
 const ENTRIES = [
@@ -43,14 +44,19 @@ export async function build(ctx) {
     });
     dist.push({ name: `dist/${entry.replace(/\.ts$/, ".js")}`, data: code });
   }
-  for (const d of ["nodes/CalaSign", "nodes/CalaSignTrigger", "credentials"]) dist.push({ name: `dist/${d}/calasign.svg`, data: ctx.load("nodes/calasign.svg") });
+  for (const d of ["nodes/CalaSign", "nodes/CalaSignTrigger", "credentials"])
+    dist.push({ name: `dist/${d}/calasign.svg`, data: ctx.load("nodes/calasign.svg") });
   const npmFiles = [{ name: "package.json", data: pkg }, { name: "README.md", data: ctx.load("README.md") }, ...dist];
   const sources = SOURCES.map((f) => ({ name: f, data: ctx.load(f) }));
   sources.push({ name: "nodes/quicksend.js", data: ctx.shared("quicksend.cjs") });
   return {
     files: [{ name: "README.md", data: ctx.load("README.md") }],
     artifacts: [
-      { name: `n8n-nodes-calasign-${version}.tgz`, data: makeTgz(npmFiles.map((f) => ({ name: `package/${f.name}`, data: f.data }))), description: "n8n: paquete npm de nodos comunitarios (.tgz)" },
+      {
+        name: `n8n-nodes-calasign-${version}.tgz`,
+        data: makeTgz(npmFiles.map((f) => ({ name: `package/${f.name}`, data: f.data }))),
+        description: "n8n: paquete npm de nodos comunitarios (.tgz)",
+      },
       { name: "n8n-nodes-calasign-source.zip", entries: sources, description: "n8n: fuentes del paquete (zip)" },
     ],
   };

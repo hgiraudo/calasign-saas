@@ -85,7 +85,8 @@ export function clearSessionCookie(reply: FastifyReply) {
   // La vieja también con Domain= del host y sus dominios padre: una cs_session plantada desde un subdominio con
   // Domain=<padre> no se borra con el Set-Cookie sin Domain (los atributos tienen que coincidir).
   if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE)
-    for (const domain of config.legacySessionCookieDomains) reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", domain, secure: config.cookieSecure });
+    for (const domain of config.legacySessionCookieDomains)
+      reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", domain, secure: config.cookieSecure });
 }
 
 /** Vida máxima de una sesión web con "recordarme" (y de la cookie persistente). */
@@ -144,10 +145,7 @@ export function authenticate(s: Services) {
         await enforceRoutePolicy(s.db, req, req.auth);
         return;
       }
-      const row = await s.db.one<any>(
-        `SELECT id, tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
-        [sha256Hex(key)],
-      );
+      const row = await s.db.one<any>(`SELECT id, tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`, [sha256Hex(key)]);
       if (!row) {
         forgetCredential(key);
         throw unauthorized();

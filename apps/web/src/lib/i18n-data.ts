@@ -23,7 +23,8 @@ const es = {
   "byok.change": "Probar y cambiar clave",
   "byok.test": "Probar clave",
   "byok.disable": "Dejar de usar mi clave",
-  "byok.disableConfirm": "Los documentos nuevos se van a cifrar con la clave de la plataforma. Los que ya se cifraron con tu clave la siguen necesitando: no la borres. ¿Continuar?",
+  "byok.disableConfirm":
+    "Los documentos nuevos se van a cifrar con la clave de la plataforma. Los que ya se cifraron con tu clave la siguen necesitando: no la borres. ¿Continuar?",
   "byok.checkedAt": "Última prueba: {at}",
   "byok.enabledAt": "Activa desde {at}",
   "byok.error": "Último error: {error}",
@@ -48,7 +49,8 @@ const es = {
   "archive.reason.archive_renewal": "Renovación de sello",
   "archive.renew": "Renovar sello ahora",
   "archive.renewed": "Sello de archivo renovado.",
-  "archive.tsaCannotExtend": "El sello de archivo no se puede renovar: el certificado de la autoridad de sellado de tiempo configurada vence antes que el sello actual. Hace falta configurar otra; contactá al soporte.",
+  "archive.tsaCannotExtend":
+    "El sello de archivo no se puede renovar: el certificado de la autoridad de sellado de tiempo configurada vence antes que el sello actual. Hace falta configurar otra; contactá al soporte.",
   "sso.domainStatus": "Verificación de dominios",
   "sso.domainHint": "Publicá este registro TXT en el DNS de cada dominio. Hasta verificarlo, el dominio no se usa para «Continuar con SSO».",
   "sso.verified": "Verificado",
@@ -79,7 +81,8 @@ const pt: Record<Key, string> = {
   "byok.change": "Testar e trocar a chave",
   "byok.test": "Testar chave",
   "byok.disable": "Deixar de usar minha chave",
-  "byok.disableConfirm": "Os documentos novos serão criptografados com a chave da plataforma. Os que já foram criptografados com a sua chave continuam precisando dela: não a apague. Continuar?",
+  "byok.disableConfirm":
+    "Os documentos novos serão criptografados com a chave da plataforma. Os que já foram criptografados com a sua chave continuam precisando dela: não a apague. Continuar?",
   "byok.checkedAt": "Último teste: {at}",
   "byok.enabledAt": "Ativa desde {at}",
   "byok.error": "Último erro: {error}",
@@ -104,7 +107,8 @@ const pt: Record<Key, string> = {
   "archive.reason.archive_renewal": "Renovação do selo",
   "archive.renew": "Renovar selo agora",
   "archive.renewed": "Selo de arquivo renovado.",
-  "archive.tsaCannotExtend": "O selo de arquivo não pode ser renovado: o certificado da autoridade de carimbo do tempo configurada vence antes do selo atual. É preciso configurar outra; fale com o suporte.",
+  "archive.tsaCannotExtend":
+    "O selo de arquivo não pode ser renovado: o certificado da autoridade de carimbo do tempo configurada vence antes do selo atual. É preciso configurar outra; fale com o suporte.",
   "sso.domainStatus": "Verificação de domínios",
   "sso.domainHint": "Publique este registro TXT no DNS de cada domínio. Até verificá-lo, o domínio não é usado para «Continuar com SSO».",
   "sso.verified": "Verificado",
@@ -134,7 +138,8 @@ const en: Record<Key, string> = {
   "byok.change": "Test and change key",
   "byok.test": "Test key",
   "byok.disable": "Stop using my key",
-  "byok.disableConfirm": "New documents will be encrypted with the platform key. Documents already encrypted with your key still need it: don't delete it. Continue?",
+  "byok.disableConfirm":
+    "New documents will be encrypted with the platform key. Documents already encrypted with your key still need it: don't delete it. Continue?",
   "byok.checkedAt": "Last test: {at}",
   "byok.enabledAt": "Active since {at}",
   "byok.error": "Last error: {error}",
@@ -159,7 +164,8 @@ const en: Record<Key, string> = {
   "archive.reason.archive_renewal": "Seal renewal",
   "archive.renew": "Renew seal now",
   "archive.renewed": "Archive seal renewed.",
-  "archive.tsaCannotExtend": "The archive seal can't be renewed: the certificate of the configured timestamping authority expires before the current seal. Another one has to be configured; contact support.",
+  "archive.tsaCannotExtend":
+    "The archive seal can't be renewed: the certificate of the configured timestamping authority expires before the current seal. Another one has to be configured; contact support.",
   "sso.domainStatus": "Domain verification",
   "sso.domainHint": "Publish this TXT record in each domain's DNS. Until it's verified, the domain isn't used for “Continue with SSO”.",
   "sso.verified": "Verified",

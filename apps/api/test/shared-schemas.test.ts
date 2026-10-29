@@ -3,10 +3,17 @@ import { describe, expect, it } from "vitest";
 import { AnchorFieldInput, CreateOAuthAppInput, GenerateRecipientInput, WorkflowStep } from "@calasign/shared";
 
 describe("URI de redirección de apps OAuth", () => {
-  const app = (uri: string) => CreateOAuthAppInput.safeParse({ name: "App", grantTypes: ["authorization_code"], redirectUris: [uri], scopes: ["envelopes:read"] });
+  const app = (uri: string) =>
+    CreateOAuthAppInput.safeParse({ name: "App", grantTypes: ["authorization_code"], redirectUris: [uri], scopes: ["envelopes:read"] });
 
   it("rechaza esquemas que ejecutan código o leen archivos", () => {
-    for (const uri of ["javascript:alert(document.domain)//", "JavaScript:alert(1)", "data:text/html,<script>alert(1)</script>", "vbscript:x", "file:///etc/passwd"]) {
+    for (const uri of [
+      "javascript:alert(document.domain)//",
+      "JavaScript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "vbscript:x",
+      "file:///etc/passwd",
+    ]) {
       expect(app(uri).success, uri).toBe(false);
     }
   });
@@ -60,7 +67,12 @@ describe("destinatarios sin telegramChatId (generación de documentos, workflows
         id: "0190a000-0000-7000-8000-000000000001",
         name: "Firma",
         type: "send_for_signature",
-        config: { document: "doc", envelopeKey: "env", subject: "Firmá", recipients: [{ role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}", channels }] },
+        config: {
+          document: "doc",
+          envelopeKey: "env",
+          subject: "Firmá",
+          recipients: [{ role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}", channels }],
+        },
       });
     expect(step(["telegram"]).success).toBe(false);
     expect(step(["telegram", "whatsapp"]).success).toBe(true);

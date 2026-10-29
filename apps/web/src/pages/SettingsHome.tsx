@@ -42,7 +42,13 @@ export function SettingsHomePage() {
     { to: "/app/settings/team", title: tm("nav.team"), desc: tm("settings.team") },
     { to: "/app/settings/branding", title: t("nav.branding"), desc: tm("settings.branding"), perm: "settings:manage", feature: "branding" },
     { to: "/app/settings/api-keys", title: t("nav.apiKeys"), desc: tm("settings.apiKeys"), perm: "api_keys:manage", feature: "api" },
-    { to: "/app/settings/integrations", title: tt("nav.integrations"), desc: tm("settings.integrations"), perm: "webhooks:manage", feature: "webhooks" },
+    {
+      to: "/app/settings/integrations",
+      title: tt("nav.integrations"),
+      desc: tm("settings.integrations"),
+      perm: "webhooks:manage",
+      feature: "webhooks",
+    },
     { to: "/app/settings/audit", title: tm("nav.audit"), desc: tm("settings.audit"), perm: "audit:view" },
     { to: "/app/settings/security", title: tm("nav.security"), desc: tm("settings.security") },
     { to: "/app/settings/oauth-apps", title: pl("card.oauth"), desc: pl("card.oauth.desc"), feature: "api" },
@@ -54,7 +60,17 @@ export function SettingsHomePage() {
     { to: "/app/settings/connectors", title: cn("card.title"), desc: cn("card.desc"), perm: "settings:manage" },
     { to: "/app/settings/identity", title: ti("settings.identity"), desc: ti("settings.identityDesc"), perm: "settings:manage" },
     // SSO solo lo configura el propietario (con SSO se puede entrar como cualquier miembro).
-    ...(access && access.role !== "owner" ? [] : [{ to: "/app/settings/sso", title: ti("settings.sso"), desc: ti("settings.ssoDesc"), perm: "settings:manage" as Permission, feature: "sso" as PlanFeature }]),
+    ...(access && access.role !== "owner"
+      ? []
+      : [
+          {
+            to: "/app/settings/sso",
+            title: ti("settings.sso"),
+            desc: ti("settings.ssoDesc"),
+            perm: "settings:manage" as Permission,
+            feature: "sso" as PlanFeature,
+          },
+        ]),
     { to: "/app/settings/byok", title: dt("nav.byok"), desc: dt("settings.byok"), perm: "settings:manage" },
     { to: "/app/settings/scim", title: ti("settings.scim"), desc: ti("settings.scimDesc"), perm: "members:manage", feature: "scim" },
     { to: "/app/settings/billing", title: bl("nav.billing"), desc: bl("settings.billing"), perm: "billing:manage" },
@@ -71,7 +87,11 @@ export function SettingsHomePage() {
             <Link key={s.to} to={s.to} className="card pad settings-card">
               <strong>{s.title}</strong>
               <span className="muted small">{s.desc}</span>
-              {s.feature && !hasFeature(s.feature) && <span className="badge badge-expired" style={{ alignSelf: "flex-start" }}>{t("common.notInPlanShort")}</span>}
+              {s.feature && !hasFeature(s.feature) && (
+                <span className="badge badge-expired" style={{ alignSelf: "flex-start" }}>
+                  {t("common.notInPlanShort")}
+                </span>
+              )}
             </Link>
           ))}
       </div>

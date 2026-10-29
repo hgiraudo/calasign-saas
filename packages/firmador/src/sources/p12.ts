@@ -17,7 +17,9 @@ export function openP12(bytes: Uint8Array, password: string): P12Contents {
   try {
     p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(Buffer.from(bytes).toString("binary")), false, password);
   } catch (e) {
-    throw new Error(/mac|password|invalid/i.test(String(e)) ? "Contraseña incorrecta o archivo dañado" : `No se pudo abrir el archivo: ${(e as Error).message}`);
+    throw new Error(
+      /mac|password|invalid/i.test(String(e)) ? "Contraseña incorrecta o archivo dañado" : `No se pudo abrir el archivo: ${(e as Error).message}`,
+    );
   }
   const keyBags = [
     ...(p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] ?? []),
@@ -114,7 +116,16 @@ export class P12Source implements CertSource {
   }
   async list(): Promise<CertEntry[]> {
     const c = new X509Certificate(Buffer.from(this.contents.chainDer[0]));
-    return [{ id: "0", label: this.path, subject: c.subject.replace(/\n/g, ", "), issuer: c.issuer.replace(/\n/g, ", "), notAfter: new Date(c.validTo).toISOString(), chainDer: this.contents.chainDer }];
+    return [
+      {
+        id: "0",
+        label: this.path,
+        subject: c.subject.replace(/\n/g, ", "),
+        issuer: c.issuer.replace(/\n/g, ", "),
+        notAfter: new Date(c.validTo).toISOString(),
+        chainDer: this.contents.chainDer,
+      },
+    ];
   }
   async sign(_entry: CertEntry, x: ToSign): Promise<Uint8Array> {
     return signWithKey(this.contents.key, x);

@@ -1,16 +1,6 @@
 // Arma el PDF final de un sobre: estampa los campos completados en cada documento, une todo,
 // agrega el certificado de finalización y sella con PAdES.
-import {
-  PDFArray,
-  PDFDocument,
-  PDFName,
-  PDFObjectCopier,
-  PDFPage,
-  rgb,
-  type PDFFont,
-  type PDFImage,
-  type PDFObject,
-} from "pdf-lib";
+import { PDFArray, PDFDocument, PDFName, PDFObjectCopier, PDFPage, rgb, type PDFFont, type PDFImage, type PDFObject } from "pdf-lib";
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { buildPadesCms, type CmsOptions } from "./cms";
@@ -21,7 +11,6 @@ import { assertPngSize } from "./images";
 import { findLastStartXref } from "./incremental";
 import { newByteRangePlaceholder, signPlaceholder } from "./placeholder";
 import { sanitizeForSealing, type OptionalContentState } from "./sanitize";
-
 
 export type StampFieldType =
   | "signature"
@@ -613,7 +602,8 @@ export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: num
   const approxW = words.reduce((acc, w) => acc + (w ? width(w) : 0), 0) + (words.length - 1) * width(" ");
   if (approxW * FIELD_LEGIBLE_FONT_SIZE <= maxW * 1.1) {
     const single = fitFontSize(font, text, maxW, maxSize);
-    if (single >= FIELD_LEGIBLE_FONT_SIZE && font.widthOfTextAtSize(text, single) <= maxW) return { size: single, lines: [text], wrapped: false, overflows: false };
+    if (single >= FIELD_LEGIBLE_FONT_SIZE && font.widthOfTextAtSize(text, single) <= maxW)
+      return { size: single, lines: [text], wrapped: false, overflows: false };
   }
 
   const units = wrapUnits(text);
@@ -633,7 +623,12 @@ export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: num
   // Entrar NO es monótono en el tamaño (un grupo numérico que a un tamaño entra entero en una línea, a uno menor puede
   // pegarse a la palabra anterior y desplazar el resto), así que se recorren todos los tamaños de arriba hacia abajo.
   // Los anchos se miden una vez a 1 pt (widthAt1) y el partido corta apenas sobran líneas: cada intento es aritmética.
-  for (const [splitWords, numbersWhole] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+  for (const [splitWords, numbersWhole] of [
+    [false, true],
+    [false, false],
+    [true, true],
+    [true, false],
+  ] as const) {
     const hit = largestFit(sizes, (s) => {
       const w = wrapFieldUnits(units, width, s, wrapW, splitWords, maxLinesIn(s, bh));
       return (!numbersWhole || !w.numberSplit) && !w.wordSplit && !w.tooWide && !w.tooTall && fitsBox(w.lines.length, s, bh) ? w : null;
@@ -716,7 +711,8 @@ function graphemesOf(tok: string): string[] {
 
 /** Escrituras que no separan las palabras con espacios (chino, japonés, tailandés, laosiano, jemer, birmano, tibetano):
  *  una "palabra" de esas es en realidad una frase y se parte por carácter a cualquier tamaño. */
-const NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}]/u;
+const NO_SPACE_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}]/u;
 
 /**
  * Líneas de a lo sumo `maxW` a tamaño `size`: se corta en los espacios; una unidad que no entra sola en el ancho se
@@ -862,15 +858,29 @@ async function drawCertificate(
     page.drawLine({ start: { x: M, y }, end: { x: A4.w - M, y }, thickness: 0.6, color: LINE });
     y -= 8;
   };
-  const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") : null);
+  const fmt = (iso: string | null | undefined) =>
+    iso
+      ? new Date(iso)
+          .toISOString()
+          .replace("T", " ")
+          .replace(/\.\d+Z$/, " UTC")
+      : null;
 
   // Encabezado
   page.drawRectangle({ x: 0, y: A4.h - 6, width: A4.w, height: 6, color: accent });
   if (c.branding?.logo) {
     try {
-      const logo = c.branding.logo.type === "png" ? (assertPngSize(c.branding.logo.bytes), await doc.embedPng(c.branding.logo.bytes)) : await doc.embedJpg(c.branding.logo.bytes);
+      const logo =
+        c.branding.logo.type === "png"
+          ? (assertPngSize(c.branding.logo.bytes), await doc.embedPng(c.branding.logo.bytes))
+          : await doc.embedJpg(c.branding.logo.bytes);
       const scale = Math.min(130 / logo.width, 38 / logo.height, 1);
-      page.drawImage(logo, { x: A4.w - M - logo.width * scale, y: A4.h - M - logo.height * scale + 4, width: logo.width * scale, height: logo.height * scale });
+      page.drawImage(logo, {
+        x: A4.w - M - logo.width * scale,
+        y: A4.h - M - logo.height * scale + 4,
+        width: logo.width * scale,
+        height: logo.height * scale,
+      });
     } catch {
       // Logo ilegible: el certificado sale sin logo.
     }
@@ -885,7 +895,8 @@ async function drawCertificate(
   kv(L.created, fmt(c.createdAt));
   kv(L.sent, fmt(c.sentAt));
   kv(L.completed, fmt(c.completedAt));
-  if (c.signatureLevel) kv(L.signatureLevel, c.signatureLevel === "qualified" ? L.level_qualified : c.signatureLevel === "advanced" ? L.level_advanced : L.level_simple);
+  if (c.signatureLevel)
+    kv(L.signatureLevel, c.signatureLevel === "qualified" ? L.level_qualified : c.signatureLevel === "advanced" ? L.level_advanced : L.level_simple);
   if (c.companySeal) kv(L.companySeal, c.companySeal.commonName ?? c.companySeal.name);
 
   section(L.documents);
@@ -942,7 +953,13 @@ async function drawCertificate(
     if (r.identity) {
       const idv = r.identity;
       const levelLabel = (L as Record<string, string>)[`idv_level_${idv.level}`] ?? idv.level;
-      kv(L.idv, `${idv.provider} · ${levelLabel} · ${idv.result === "verified" ? L.idv_verified : L.idv_failed}${idv.verifiedAt ? ` · ${fmt(idv.verifiedAt)}` : ""}`, ix, 150, valueRight);
+      kv(
+        L.idv,
+        `${idv.provider} · ${levelLabel} · ${idv.result === "verified" ? L.idv_verified : L.idv_failed}${idv.verifiedAt ? ` · ${fmt(idv.verifiedAt)}` : ""}`,
+        ix,
+        150,
+        valueRight,
+      );
       kv(L.idv_document, idv.document, ix, 150, valueRight);
       const matches: string[] = [];
       if (idv.nameScore != null) matches.push(`${L.idv_name} ${Math.round(idv.nameScore * 100)} %`);
@@ -963,7 +980,12 @@ async function drawCertificate(
       const bx = A4.w - M - boxW;
       const byTop = topPage === page ? Math.min(top, y + 200) : top;
       topPage.drawRectangle({ x: bx - 4, y: byTop - boxH - 8, width: boxW + 8, height: boxH + 8, borderColor: LINE, borderWidth: 0.6 });
-      topPage.drawImage(img, { x: bx + (boxW - img.width * scale) / 2, y: byTop - boxH - 4 + (boxH - img.height * scale) / 2, width: img.width * scale, height: img.height * scale });
+      topPage.drawImage(img, {
+        x: bx + (boxW - img.width * scale) / 2,
+        y: byTop - boxH - 4 + (boxH - img.height * scale) / 2,
+        width: img.width * scale,
+        height: img.height * scale,
+      });
     }
     y -= 8;
   }
@@ -972,9 +994,12 @@ async function drawCertificate(
   const cols = [M, M + 28, M + 168, M + 300];
   const header = () => {
     ensure(14);
-    [["#", cols[0]], [L.when, cols[1]], [L.event, cols[2]], [`${L.actor} / ${L.ip}`, cols[3]]].forEach(([s, x]) =>
-      page.drawText(safeText(fonts.bold, String(s)), { x: Number(x), y: y - 8, size: 7.5, font: fonts.bold, color: MUTED }),
-    );
+    [
+      ["#", cols[0]],
+      [L.when, cols[1]],
+      [L.event, cols[2]],
+      [`${L.actor} / ${L.ip}`, cols[3]],
+    ].forEach(([s, x]) => page.drawText(safeText(fonts.bold, String(s)), { x: Number(x), y: y - 8, size: 7.5, font: fonts.bold, color: MUTED }));
     y -= 13;
   };
   header();
@@ -992,7 +1017,13 @@ async function drawCertificate(
     page.drawText(fmt(e.occurredAt) ?? "", { x: cols[1], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
     // Tipos largos (recipient.embedded_session_started) se achican para no pisar la columna de actor / IP.
     const typeText = safeText(fonts.regular, e.type);
-    page.drawText(typeText, { x: cols[2], y: y - 8, size: fitFontSize(fonts.regular, typeText, cols[3] - cols[2] - 4, 7.5), font: fonts.regular, color: INK });
+    page.drawText(typeText, {
+      x: cols[2],
+      y: y - 8,
+      size: fitFontSize(fonts.regular, typeText, cols[3] - cols[2] - 4, 7.5),
+      font: fonts.regular,
+      color: INK,
+    });
     actorLines.forEach((line, i) => page.drawText(line, { x: cols[3], y: y - 8 - i * 10.5, size: 7.5, font: fonts.regular, color: INK }));
     y -= rowH;
   }

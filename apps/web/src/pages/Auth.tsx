@@ -110,13 +110,7 @@ export function LoginPage() {
         </label>
         <label className="field">
           <span>{t("auth.password")}</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
         <label className="row-wrap" style={{ gap: 8 }}>
           <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
@@ -193,14 +187,7 @@ export function SignupPage() {
         </label>
         <label className="field">
           <span>{t("auth.password")}</span>
-          <input
-            type="password"
-            required
-            minLength={10}
-            autoComplete="new-password"
-            value={form.password}
-            onChange={set("password")}
-          />
+          <input type="password" required minLength={10} autoComplete="new-password" value={form.password} onChange={set("password")} />
           <small className="muted">{t("auth.passwordHint")}</small>
         </label>
         <CellPicker value={cell} onChange={setCell} />

@@ -100,14 +100,15 @@ describe("renovación de sellos de archivo", () => {
     const key = `tenants/${tenant}/envelopes/${env}/${file}-signed.pdf`;
     await blobs.put(key, lta, "application/pdf");
     await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1,$2,'T')`, [tenant, `t-${tenant.slice(-6)}`]);
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
-      file,
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`,
+      [file, tenant, key, lta.length, sha256Hex(lta)],
+    );
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id) VALUES ($1,$2,'S','completed', now(), $3)`, [
+      env,
       tenant,
-      key,
-      lta.length,
-      sha256Hex(lta),
+      file,
     ]);
-    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id) VALUES ($1,$2,'S','completed', now(), $3)`, [env, tenant, file]);
 
     // El certificado de la TSA de laboratorio vence en ~2 años: con un umbral de 1 día no se renueva…
     const quiet = await archiveSweep({ db, blobs, log }, { days: 1, force: true });
@@ -147,7 +148,10 @@ describe("renovación de sellos de archivo", () => {
     const { resetArchiveSweepClock } = await import("../src/modules/data/archive");
     // El intervalo se mide desde la última renovación exitosa (archive_renewed_at), no desde el último chequeo.
     expect((await db.one<any>(`SELECT archive_renewed_at IS NOT NULL AS ok FROM envelopes WHERE id = $1`, [env])).ok).toBe(true);
-    await db.query(`UPDATE envelopes SET archive_renewed_at = now() - interval '31 days', archive_checked_at = now() - interval '31 days', archive_error = NULL WHERE id = $1`, [env]);
+    await db.query(
+      `UPDATE envelopes SET archive_renewed_at = now() - interval '31 days', archive_checked_at = now() - interval '31 days', archive_error = NULL WHERE id = $1`,
+      [env],
+    );
     resetArchiveSweepClock();
     const sameTsa = await archiveSweep({ db, blobs, log }, { days: 2000 });
     expect(sameTsa).toMatchObject({ renewed: 0, failed: 0, notExtendable: 1 });
@@ -166,13 +170,10 @@ describe("renovación de sellos de archivo", () => {
     const btFile = uuidv7();
     const btKey = `tenants/${tenant}/envelopes/${bt}/${btFile}-signed.pdf`;
     await blobs.put(btKey, sealed, "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
-      btFile,
-      tenant,
-      btKey,
-      sealed.length,
-      sha256Hex(sealed),
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`,
+      [btFile, tenant, btKey, sealed.length, sha256Hex(sealed)],
+    );
     await db.query(
       `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id, archive_checked_at, archive_error)
        VALUES ($1,$2,'S','completed', now(), $3, now(), 'LTV pendiente')`,
@@ -190,13 +191,10 @@ describe("renovación de sellos de archivo", () => {
     const chFile = uuidv7();
     const chKey = `tenants/${tenant}/envelopes/${ch}/${chFile}-signed.pdf`;
     await blobs.put(chKey, lta, "application/pdf");
-    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
-      chFile,
-      tenant,
-      chKey,
-      lta.length,
-      sha256Hex(lta),
-    ]);
+    await db.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`,
+      [chFile, tenant, chKey, lta.length, sha256Hex(lta)],
+    );
     await db.query(
       `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id, archive_valid_until, archive_checked_at)
        VALUES ($1,$2,'S','completed', now(), $3, now() + interval '10 days', now())`,

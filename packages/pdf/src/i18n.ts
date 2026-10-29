@@ -62,7 +62,8 @@ const L = {
     paymentReference: "Referencia",
     paidAt: "Fecha de pago",
     certSignature: "Firma con certificado",
-    certSignatureNote: "Firma con su certificado digital. Titular, emisor, número de serie, vigencia y fecha de firma figuran en la firma digital del PDF (posterior a este certificado).",
+    certSignatureNote:
+      "Firma con su certificado digital. Titular, emisor, número de serie, vigencia y fecha de firma figuran en la firma digital del PDF (posterior a este certificado).",
     attachment: "Adjunto",
     uploadedBy: "subido por",
     appended: "agregado al final del documento",
@@ -145,7 +146,8 @@ const L = {
     paymentReference: "Referência",
     paidAt: "Data do pagamento",
     certSignature: "Assinatura com certificado",
-    certSignatureNote: "Assina com seu certificado digital. Titular, emissor, número de série, validade e data da assinatura constam na assinatura digital do PDF (posterior a este certificado).",
+    certSignatureNote:
+      "Assina com seu certificado digital. Titular, emissor, número de série, validade e data da assinatura constam na assinatura digital do PDF (posterior a este certificado).",
     attachment: "Anexo",
     uploadedBy: "enviado por",
     appended: "incluído ao final do documento",
@@ -228,7 +230,8 @@ const L = {
     paymentReference: "Reference",
     paidAt: "Payment date",
     certSignature: "Certificate signature",
-    certSignatureNote: "Signs with their digital certificate. Holder, issuer, serial number, validity and signing time are embedded in the PDF digital signature (added after this certificate).",
+    certSignatureNote:
+      "Signs with their digital certificate. Holder, issuer, serial number, validity and signing time are embedded in the PDF digital signature (added after this certificate).",
     attachment: "Attachment",
     uploadedBy: "uploaded by",
     appended: "appended to the document",
@@ -263,10 +266,12 @@ export function labels(locale: string, productName?: string | null): CertLabels 
   if (productName === undefined || productName === null) return base;
   const name = productName.trim();
   const fix = (s: string) =>
-    name
-      ? s.replace(/CalaSign/g, name)
-      : s
-          .replace(/ (mediante|por meio da|with) CalaSign/g, "")
-          .replace(/^CalaSign · /, "");
-  return { ...base, statement: fix(base.statement), statementNoTimestamp: fix(base.statementNoTimestamp), statementNeutral: fix(base.statementNeutral), pageFooter: fix(base.pageFooter) };
+    name ? s.replace(/CalaSign/g, name) : s.replace(/ (mediante|por meio da|with) CalaSign/g, "").replace(/^CalaSign · /, "");
+  return {
+    ...base,
+    statement: fix(base.statement),
+    statementNoTimestamp: fix(base.statementNoTimestamp),
+    statementNeutral: fix(base.statementNeutral),
+    pageFooter: fix(base.pageFooter),
+  };
 }

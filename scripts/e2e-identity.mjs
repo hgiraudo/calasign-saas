@@ -13,7 +13,6 @@ import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { SignedXml } from "xml-crypto";
 
-
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
 const tempDirs = [];
 process.on("exit", () => {
@@ -21,7 +20,12 @@ process.on("exit", () => {
 });
 // SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
 // process.exit para que la limpieza corra también en esos casos.
-for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
+for (const [sig, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+])
+  process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -72,7 +76,8 @@ class Client {
     const text = await res.text();
     const data = text && /json/.test(res.headers.get("content-type") ?? "") ? JSON.parse(text) : text;
     const exp = Array.isArray(expect) ? expect : [expect];
-    if (!exp.includes(res.status)) throw new Error(`${this.name}: ${method} ${path} → ${res.status} (esperaba ${exp.join("/")}) ${text.slice(0, 400)}`);
+    if (!exp.includes(res.status))
+      throw new Error(`${this.name}: ${method} ${path} → ${res.status} (esperaba ${exp.join("/")}) ${text.slice(0, 400)}`);
     return data;
   }
 }
@@ -132,7 +137,12 @@ async function upload(client, token, kind, bytes = fakeJpeg()) {
 const owner = new Client("owner");
 const ownerEmail = `owner+${stamp}@acme-idn.test`;
 const ownerPw = "clave-segura-123456";
-const me = await owner.api("POST", "/v1/auth/signup", { name: "Olga Owner", email: ownerEmail, password: ownerPw, organization: `ACME IDN ${stamp}` }, 201);
+const me = await owner.api(
+  "POST",
+  "/v1/auth/signup",
+  { name: "Olga Owner", email: ownerEmail, password: ownerPw, organization: `ACME IDN ${stamp}` },
+  201,
+);
 const slug = me.tenant.slug;
 ok(`organización ${slug}`);
 
@@ -141,7 +151,10 @@ ok(`organización ${slug}`);
 const st = await owner.api("GET", "/v1/settings/identity");
 assert(st.providers.find((p) => p.id === "mock")?.configured, "proveedor mock disponible en local");
 assert(st.providers.find((p) => p.id === "veriff") && st.providers.find((p) => p.id === "truora"), "Veriff y Truora listados");
-await owner.api("PATCH", "/v1/settings/identity", { maxAttempts: 2, mock: { decision: "approve", extractedName: "MARIA JOSE GOMEZ PEREZ", extractedDocumentNumber: "00112345678" } });
+await owner.api("PATCH", "/v1/settings/identity", {
+  maxAttempts: 2,
+  mock: { decision: "approve", extractedName: "MARIA JOSE GOMEZ PEREZ", extractedDocumentNumber: "00112345678" },
+});
 
 async function kycEnvelope(name, level, docNumber) {
   const { envelope } = await owner.api("POST", "/v1/envelopes", { subject: `KYC ${name} ${stamp}` }, 201);
@@ -151,7 +164,18 @@ async function kycEnvelope(name, level, docNumber) {
   const rid = randomUUID();
   const email = `kyc+${randomUUID().slice(0, 8)}@example.com`;
   await owner.api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
-    recipients: [{ id: rid, name, email, channels: ["email"], authMethod: "otp_email", idDocumentType: "cedula", idDocumentNumber: docNumber, idVerification: { provider: "mock", level } }],
+    recipients: [
+      {
+        id: rid,
+        name,
+        email,
+        channels: ["email"],
+        authMethod: "otp_email",
+        idDocumentType: "cedula",
+        idDocumentNumber: docNumber,
+        idVerification: { provider: "mock", level },
+      },
+    ],
   });
   await owner.api("PUT", `/v1/envelopes/${envelope.id}/fields`, {
     fields: [{ documentId: doc.id, recipientId: rid, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
@@ -177,7 +201,12 @@ async function passOtp(client, k) {
     { recipients: [{ name: "Copia", email: "cc@example.com", role: "cc", idVerification: { provider: "mock", level: "document" } }] },
     400,
   );
-  await owner.api("PUT", `/v1/envelopes/${envelope.id}/recipients`, { recipients: [{ name: "X", email: "x@example.com", idVerification: { provider: "veriff", level: "document" } }] }, 400);
+  await owner.api(
+    "PUT",
+    `/v1/envelopes/${envelope.id}/recipients`,
+    { recipients: [{ name: "X", email: "x@example.com", idVerification: { provider: "veriff", level: "document" } }] },
+    400,
+  );
 }
 ok("KYC: no aplica a copias; un proveedor sin configurar se rechaza");
 
@@ -221,24 +250,36 @@ for (let i = 0; i < 60; i++) {
 assert(det.envelope.status === "completed", "sobre completado");
 assert(det.recipients[0].identity?.status === "verified", "el remitente ve la identidad verificada");
 const hist = await owner.api("GET", `/v1/envelopes/${k1.envelopeId}/recipients/${k1.rid}/identity`);
-assert(hist.attempts.length === 1 && hist.attempts[0].result.documentNumber?.endsWith("5678") && !hist.attempts[0].result.documentNumber.includes("0011"), "historial sin datos completos del documento");
+assert(
+  hist.attempts.length === 1 && hist.attempts[0].result.documentNumber?.endsWith("5678") && !hist.attempts[0].result.documentNumber.includes("0011"),
+  "historial sin datos completos del documento",
+);
 const events = (await owner.api("GET", `/v1/envelopes/${k1.envelopeId}/events`)).items;
 const types = events.map((e) => e.type);
-for (const t of ["recipient.otp_sent", "recipient.authenticated", "recipient.identity_started", "recipient.identity_verified"]) assert(types.includes(t), `evento ${t}`);
+for (const t of ["recipient.otp_sent", "recipient.authenticated", "recipient.identity_started", "recipient.identity_verified"])
+  assert(types.includes(t), `evento ${t}`);
 assert(types.indexOf("recipient.authenticated") < types.indexOf("recipient.identity_started"), "el OTP va antes que el KYC");
 const evJson = JSON.stringify(events);
 assert(!/[A-Za-z0-9+/]{400,}/.test(evJson), "la evidencia no contiene imágenes");
 const verified = events.find((e) => e.type === "recipient.identity_verified").data;
-assert(verified.nameMatch.score >= 0.8 && verified.documentNumberMatched === true && verified.liveness === true && verified.faceMatchScore > 0.9, "resumen de la verificación");
+assert(
+  verified.nameMatch.score >= 0.8 && verified.documentNumberMatched === true && verified.liveness === true && verified.faceMatchScore > 0.9,
+  "resumen de la verificación",
+);
 const pdf = Buffer.from(await (await owner.raw("GET", `/v1/envelopes/${k1.envelopeId}/signed.pdf`)).arrayBuffer());
 const dir = tempDir("idn-");
 writeFileSync(join(dir, "signed.pdf"), pdf);
 const text = execFileSync("pdftotext", [join(dir, "signed.pdf"), "-"], { encoding: "utf8" });
-assert(/Verificación de identidad/.test(text) && /verificada/.test(text) && /prueba de vida/.test(text), "el certificado muestra la verificación de identidad");
+assert(
+  /Verificación de identidad/.test(text) && /verificada/.test(text) && /prueba de vida/.test(text),
+  "el certificado muestra la verificación de identidad",
+);
 ok("evidencia (eventos sin imágenes) y certificado con la sección «Verificación de identidad»");
 
 // 2) Nombre que no coincide → falla; intentos agotados.
-await owner.api("PATCH", "/v1/settings/identity", { mock: { decision: "approve", extractedName: "PEDRO RAMIREZ SOSA", extractedDocumentNumber: null } });
+await owner.api("PATCH", "/v1/settings/identity", {
+  mock: { decision: "approve", extractedName: "PEDRO RAMIREZ SOSA", extractedDocumentNumber: null },
+});
 const k2 = await kycEnvelope("Lucía Fernández", "document", "4.567.890-1");
 const signer2 = new Client("firmante2");
 await passOtp(signer2, k2);
@@ -246,7 +287,10 @@ await signer2.api("POST", `/v1/signing/${k2.token}/identity/start`);
 await upload(signer2, k2.token, "document_front");
 await upload(signer2, k2.token, "document_back");
 idn = (await signer2.api("POST", `/v1/signing/${k2.token}/identity/submit`)).identity;
-assert(idn.status === "pending" && idn.failureReason === "name_mismatch" && idn.attemptsLeft === 1, `nombre que no coincide (${JSON.stringify(idn)})`);
+assert(
+  idn.status === "pending" && idn.failureReason === "name_mismatch" && idn.attemptsLeft === 1,
+  `nombre que no coincide (${JSON.stringify(idn)})`,
+);
 // Segundo intento: frente y dorso idénticos.
 await signer2.api("POST", `/v1/signing/${k2.token}/identity/start`);
 const same = fakeJpeg();
@@ -257,11 +301,17 @@ assert(idn.status === "failed" && idn.attemptsLeft === 0, "intentos agotados");
 await signer2.api("POST", `/v1/signing/${k2.token}/identity/start`, undefined, 429);
 await signer2.api("POST", `/v1/signing/${k2.token}/consent`, undefined, 403);
 const ev2 = (await owner.api("GET", `/v1/envelopes/${k2.envelopeId}/events`)).items.filter((e) => e.type === "recipient.identity_failed");
-assert(ev2.length === 2 && ev2[0].data.reason === "name_mismatch" && ev2[1].data.reason === "document_front_back_identical", "dos fallas registradas");
+assert(
+  ev2.length === 2 && ev2[0].data.reason === "name_mismatch" && ev2[1].data.reason === "document_front_back_identical",
+  "dos fallas registradas",
+);
 ok("KYC fallido: nombre distinto del documento, foto repetida, intentos agotados");
 // El remitente corrige el nombre (estaba mal cargado): la verificación empieza de nuevo, con todos los intentos.
 // Antes el firmante seguía sin intentos y el sobre quedaba trabado.
-await owner.api("POST", `/v1/envelopes/${k2.envelopeId}/corrections`, { updateRecipients: [{ id: k2.rid, name: "Pedro Ramírez Sosa" }], reason: "nombre mal cargado" });
+await owner.api("POST", `/v1/envelopes/${k2.envelopeId}/corrections`, {
+  updateRecipients: [{ id: k2.rid, name: "Pedro Ramírez Sosa" }],
+  reason: "nombre mal cargado",
+});
 idn = (await signer2.api("GET", `/v1/signing/${k2.token}/identity`)).identity;
 assert(idn.status === "pending" && idn.attemptsLeft === 2 && !idn.failureReason, `la corrección reinicia la verificación (${JSON.stringify(idn)})`);
 await signer2.api("POST", `/v1/signing/${k2.token}/identity/start`);
@@ -316,7 +366,12 @@ const oidcServer = createServer(async (req, res) => {
     const c = idp.codes.get(p.get("code"));
     if (!c || auth !== "calasign-test:s3cr3t") return json({ error: "invalid_client" }, 401);
     idp.codes.delete(p.get("code"));
-    if (createHash("sha256").update(p.get("code_verifier") ?? "").digest("base64url") !== c.challenge) return json({ error: "invalid_grant" }, 400);
+    if (
+      createHash("sha256")
+        .update(p.get("code_verifier") ?? "")
+        .digest("base64url") !== c.challenge
+    )
+      return json({ error: "invalid_grant" }, 400);
     const now = Math.floor(Date.now() / 1000);
     const claims = {
       iss: issuer,
@@ -360,7 +415,15 @@ const domain = `acme-idn-${stamp}.test`;
 await owner.api(
   "PUT",
   "/v1/settings/sso",
-  { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: false, oidc: { issuer, clientId: "calasign-test", clientSecret: "s3cr3t" } },
+  {
+    enabled: true,
+    protocol: "oidc",
+    domains: [domain],
+    jitEnabled: true,
+    jitRole: "member",
+    enforce: false,
+    oidc: { issuer, clientId: "calasign-test", clientSecret: "s3cr3t" },
+  },
   200,
 );
 // El dominio no se usa para el descubrimiento hasta verificarlo por DNS (TXT de prueba en local).
@@ -408,13 +471,23 @@ const csrfStart = await csrfAttacker.raw("GET", (await csrfAttacker.api("POST", 
 const csrfCb = new URL((await fetch(csrfStart.headers.get("location"), { redirect: "manual" })).headers.get("location"));
 const csrfVictim = new Client("csrf-victim");
 const csrfRes = await csrfVictim.raw("GET", `${csrfCb.pathname}${csrfCb.search}`);
-assert(/sso_state_invalid/.test(csrfRes.headers.get("location") ?? "") && !csrfVictim.cookies.has("cs_session") && !csrfVictim.cookies.has("__Host-cs_session"), "el callback de otro navegador no abre sesión (login CSRF)");
+assert(
+  /sso_state_invalid/.test(csrfRes.headers.get("location") ?? "") &&
+    !csrfVictim.cookies.has("cs_session") &&
+    !csrfVictim.cookies.has("__Host-cs_session"),
+  "el callback de otro navegador no abre sesión (login CSRF)",
+);
 ok("OIDC rechaza nonce, aud y firma inválidos; el state no se puede reusar ni usar desde otro navegador");
 
 // Sesión SSO atada a su organización: Ana también es miembro de otra organización (vía SCIM de esa organización),
 // pero con la sesión SSO no puede cambiar a ella, ni usarla para aceptar invitaciones de otra organización.
 const other = new Client("other-owner");
-await other.api("POST", "/v1/auth/signup", { name: "Otra", email: `otra+${stamp}@example.com`, password: ownerPw, organization: `Otra ${stamp}` }, 201);
+await other.api(
+  "POST",
+  "/v1/auth/signup",
+  { name: "Otra", email: `otra+${stamp}@example.com`, password: ownerPw, organization: `Otra ${stamp}` },
+  201,
+);
 const otherTok = await other.api("POST", "/v1/settings/scim/tokens", { name: "otra" }, 201);
 // SCIM de OTRA organización no puede sumar (ni crear) cuentas de un dominio que no verificó: sería tomar la cuenta.
 const linked = await fetch(`${BASE}/scim/v2/Users`, {
@@ -453,7 +526,12 @@ ok("SCIM ajeno no vincula ni reserva cuentas; una sesión SSO no cambia de organ
 // persona y espera a que el SSO (alta JIT) de la organización de esa persona la vincule. Con la contraseña que eligió
 // no entra a esa organización: hace falta el SSO o restablecer la contraseña (que prueba el control del correo).
 const preEmail = `pre+${stamp}@${domain}`;
-await new Client("pre-squatter").api("POST", "/v1/auth/signup", { name: "Pre", email: preEmail, password: "clave-del-squatter-1", organization: `Squat ${stamp}` }, 201);
+await new Client("pre-squatter").api(
+  "POST",
+  "/v1/auth/signup",
+  { name: "Pre", email: preEmail, password: "clave-del-squatter-1", organization: `Squat ${stamp}` },
+  201,
+);
 const preVictim = new Client("pre-victim");
 idp.mode = "ok";
 await oidcLogin(preVictim, preEmail);
@@ -463,7 +541,12 @@ await preSquatter.api("POST", "/v1/auth/login", { email: preEmail, password: "cl
 await preSquatter.api("POST", "/v1/auth/switch-tenant", { tenantId: me.tenant.id }, 401);
 await new Client("pre-forgot").api("POST", "/v1/auth/password/forgot", { email: preEmail }, 202);
 const preMail = await waitMail((m) => m.to === preEmail && m.link?.includes("/reset/"), "reset del dueño del correo");
-await new Client("pre-reset").api("POST", "/v1/auth/password/reset", { token: preMail.link.split("/reset/")[1], password: "clave-del-dueño-12" }, 200);
+await new Client("pre-reset").api(
+  "POST",
+  "/v1/auth/password/reset",
+  { token: preMail.link.split("/reset/")[1], password: "clave-del-dueño-12" },
+  200,
+);
 const preOwner = new Client("pre-owner");
 await preOwner.api("POST", "/v1/auth/login", { email: preEmail, password: "clave-del-dueño-12" });
 await preOwner.api("POST", "/v1/auth/switch-tenant", { tenantId: me.tenant.id });
@@ -478,27 +561,51 @@ const bobMe = await bob.api("GET", "/v1/me");
 
 // Tokens OAuth de usuario: valen solo mientras valdría la sesión con la que se autorizaron (ronda 13).
 const OAUTH_REDIRECT = "https://erp.example.com/cb";
-const oapp = await owner.api("POST", "/v1/oauth/apps", { name: "ERP IDN", grantTypes: ["authorization_code"], redirectUris: [OAUTH_REDIRECT], scopes: ["envelopes:read", "offline_access"] }, 201);
+const oapp = await owner.api(
+  "POST",
+  "/v1/oauth/apps",
+  { name: "ERP IDN", grantTypes: ["authorization_code"], redirectUris: [OAUTH_REDIRECT], scopes: ["envelopes:read", "offline_access"] },
+  201,
+);
 const oauthBasic = `Basic ${Buffer.from(`${oapp.app.clientId}:${oapp.clientSecret}`).toString("base64")}`;
 async function oauthToken(params) {
-  const res = await fetch(`${BASE}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: oauthBasic }, body: new URLSearchParams(params) });
+  const res = await fetch(`${BASE}/oauth/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", authorization: oauthBasic },
+    body: new URLSearchParams(params),
+  });
   return { status: res.status, body: await res.json() };
 }
 async function authorizeOAuth(client) {
   const verifier = randomBytes(48).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const d = await client.api("POST", "/v1/oauth/authorize/decision", {
-    response_type: "code", client_id: oapp.app.clientId, redirect_uri: OAUTH_REDIRECT, scope: "envelopes:read offline_access",
-    state: "s", code_challenge: challenge, code_challenge_method: "S256", approve: true,
+    response_type: "code",
+    client_id: oapp.app.clientId,
+    redirect_uri: OAUTH_REDIRECT,
+    scope: "envelopes:read offline_access",
+    state: "s",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    approve: true,
   });
-  const r = await oauthToken({ grant_type: "authorization_code", code: new URL(d.redirectTo).searchParams.get("code"), redirect_uri: OAUTH_REDIRECT, code_verifier: verifier });
+  const r = await oauthToken({
+    grant_type: "authorization_code",
+    code: new URL(d.redirectTo).searchParams.get("code"),
+    redirect_uri: OAUTH_REDIRECT,
+    code_verifier: verifier,
+  });
   assert(r.status === 200, `canje del código OAuth: ${JSON.stringify(r.body)}`);
   return r.body;
 }
 const bearerStatus = async (tok) => (await fetch(`${BASE}/v1/envelopes`, { headers: { authorization: `Bearer ${tok}` } })).status;
 // La introspección (RFC 7662) tiene que decir lo mismo que la API al usar el token.
 const introspectActive = async (tok) => {
-  const res = await fetch(`${BASE}/oauth/introspect`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: oauthBasic }, body: new URLSearchParams({ token: tok }) });
+  const res = await fetch(`${BASE}/oauth/introspect`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", authorization: oauthBasic },
+    body: new URLSearchParams({ token: tok }),
+  });
   assert(res.status === 200, `introspección: HTTP ${res.status}`);
   return (await res.json()).active;
 };
@@ -511,7 +618,12 @@ assert((await bearerStatus(bobOld.access_token)) === 401, "sin membresía el tok
 assert((await introspectActive(bobOld.access_token)) === false, "sin membresía la introspección dice active: false");
 assert((await introspectActive(bobOld.refresh_token)) === false, "tampoco el refresh token figura activo");
 const invBob2 = await owner.api("POST", "/v1/invitations", { email: bobEmail, role: "member" }, 201);
-await new Client("bob-back").api("POST", `/v1/invite/${invBob2.acceptUrl.split("/invite/")[1]}/accept`, { password: "clave-de-bob-1234" }, [200, 201]);
+await new Client("bob-back").api(
+  "POST",
+  `/v1/invite/${invBob2.acceptUrl.split("/invite/")[1]}/accept`,
+  { password: "clave-de-bob-1234" },
+  [200, 201],
+);
 assert((await bearerStatus(bobOld.access_token)) === 401, "al volver a agregarlo, el token de la membresía anterior no revive");
 assert((await oauthToken({ grant_type: "refresh_token", refresh_token: bobOld.refresh_token })).status === 400, "ni su refresh token");
 await bob.api("POST", "/v1/auth/login", { email: bobEmail, password: "clave-de-bob-1234" });
@@ -520,7 +632,15 @@ await bob.api("POST", "/v1/auth/login", { email: bobEmail, password: "clave-de-b
 const bobTok = await authorizeOAuth(bob);
 const anaTok = await authorizeOAuth(ana2);
 assert((await bearerStatus(bobTok.access_token)) === 200, "token autorizado con contraseña funciona sin SSO obligatorio");
-await owner.api("PUT", "/v1/settings/sso", { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: true, oidc: { issuer, clientId: "calasign-test" } });
+await owner.api("PUT", "/v1/settings/sso", {
+  enabled: true,
+  protocol: "oidc",
+  domains: [domain],
+  jitEnabled: true,
+  jitRole: "member",
+  enforce: true,
+  oidc: { issuer, clientId: "calasign-test" },
+});
 assert((await bearerStatus(bobTok.access_token)) === 401, "con SSO obligatorio, el token autorizado con contraseña deja de valer");
 assert((await introspectActive(bobTok.access_token)) === false, "con SSO obligatorio, la introspección del token con contraseña dice active: false");
 assert((await introspectActive(anaTok.access_token)) === true, "el token autorizado con SSO sigue activo en la introspección");
@@ -539,9 +659,27 @@ ok("SSO obligatorio: sesiones con contraseña de miembros cerradas, login bloque
 // ───────────────────────────── SAML ─────────────────────────────
 
 const certDir = tempDir("idp-");
-execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(certDir, "k.pem"), "-out", join(certDir, "c.pem"), "-subj", "/CN=idp.test", "-days", "2"], {
-  stdio: "ignore",
-});
+execFileSync(
+  "openssl",
+  [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-keyout",
+    join(certDir, "k.pem"),
+    "-out",
+    join(certDir, "c.pem"),
+    "-subj",
+    "/CN=idp.test",
+    "-days",
+    "2",
+  ],
+  {
+    stdio: "ignore",
+  },
+);
 const idpKey = readFileSync(join(certDir, "k.pem"), "utf8");
 const idpCert = readFileSync(join(certDir, "c.pem"), "utf8");
 const idpIssuer = "https://idp.test/saml";
@@ -615,9 +753,14 @@ const r1 = await samlLogin(beto, `beto@${domain}`);
 assert(r1.location === "/app", `SAML redirige a /app (${r1.location})`);
 const betoMe = await beto.api("GET", "/v1/me");
 assert(betoMe.user.email === `beto@${domain}` && betoMe.user.name === "Beto SAML", "sesión SAML con JIT y nombre del IdP");
-const replay = await new Client("replay-saml").raw("POST", samlSettings.serviceProvider.samlAcsUrl.replace(/^https?:\/\/[^/]+/, BASE), r1.form.toString(), {
-  "content-type": "application/x-www-form-urlencoded",
-});
+const replay = await new Client("replay-saml").raw(
+  "POST",
+  samlSettings.serviceProvider.samlAcsUrl.replace(/^https?:\/\/[^/]+/, BASE),
+  r1.form.toString(),
+  {
+    "content-type": "application/x-www-form-urlencoded",
+  },
+);
 assert(/sso_state_invalid/.test(replay.headers.get("location") ?? ""), "la respuesta SAML no se puede reusar");
 const tampered = await samlLogin(new Client("tamper"), `cami@${domain}`, { tamper: true });
 assert(/sso_error=/.test(tampered.location ?? ""), "aserción adulterada rechazada");
@@ -647,7 +790,14 @@ const carlaEmail = `carla@${domain}`;
 const carla = await scimApi(
   "POST",
   "/Users",
-  { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: carlaEmail, externalId: "ext-carla", name: { givenName: "Carla", familyName: "Suárez" }, emails: [{ value: carlaEmail, primary: true }], active: true },
+  {
+    schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+    userName: carlaEmail,
+    externalId: "ext-carla",
+    name: { givenName: "Carla", familyName: "Suárez" },
+    emails: [{ value: carlaEmail, primary: true }],
+    active: true,
+  },
   201,
 );
 assert(carla.id && carla.active && carla.userName === carlaEmail, "usuario creado");
@@ -658,14 +808,28 @@ list = await scimApi("GET", `/Users?filter=${encodeURIComponent('externalId eq "
 assert(list.totalResults === 1, "filtro externalId eq");
 await scimApi("GET", `/Users?filter=${encodeURIComponent('title co "x"')}`, undefined, 400);
 let members = (await owner.api("GET", "/v1/members")).items;
-assert(members.some((m) => m.email === carlaEmail && m.role === "member"), "es miembro de la organización");
+assert(
+  members.some((m) => m.email === carlaEmail && m.role === "member"),
+  "es miembro de la organización",
+);
 
-const grp = await scimApi("POST", "/Groups", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"], displayName: `Legales ${stamp}`, members: [{ value: carla.id }] }, 201);
+const grp = await scimApi(
+  "POST",
+  "/Groups",
+  { schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"], displayName: `Legales ${stamp}`, members: [{ value: carla.id }] },
+  201,
+);
 assert(grp.members.length === 1, "grupo con miembro");
 let groups = (await owner.api("GET", "/v1/groups")).items;
-assert(groups.some((g) => g.id === grp.id), "grupo visible en la organización");
+assert(
+  groups.some((g) => g.id === grp.id),
+  "grupo visible en la organización",
+);
 // Desactivación al estilo Azure AD (string "False").
-let upd = await scimApi("PATCH", `/Users/${carla.id}`, { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [{ op: "Replace", path: "active", value: "False" }] });
+let upd = await scimApi("PATCH", `/Users/${carla.id}`, {
+  schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  Operations: [{ op: "Replace", path: "active", value: "False" }],
+});
 assert(upd.active === false, "desactivado");
 members = (await owner.api("GET", "/v1/members")).items;
 assert(!members.some((m) => m.email === carlaEmail), "sin membresía al desactivar");
@@ -693,7 +857,15 @@ ok("SCIM 2.0: alta, filtros, duplicado 409, desactivar/reactivar (membresía y g
 // ───────────────────────────── Cupo del plan en el alta JIT ─────────────────────────────
 // El SSO queda configurado aunque la organización baje a un plan con cupo de usuarios: el alta JIT respeta ese cupo
 // (como las invitaciones y SCIM); quien ya es miembro sigue entrando.
-await owner.api("PUT", "/v1/settings/sso", { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: false, oidc: { issuer, clientId: "calasign-test" } });
+await owner.api("PUT", "/v1/settings/sso", {
+  enabled: true,
+  protocol: "oidc",
+  domains: [domain],
+  jitEnabled: true,
+  jitRole: "member",
+  enforce: false,
+  oidc: { issuer, clientId: "calasign-test" },
+});
 {
   const co = await owner.api("POST", "/v1/billing/checkout", { plan: "starter", currency: "BRL", provider: "mock" }, [200, 201]);
   const page = await owner.api("GET", co.url.replace(BASE, ""));
@@ -710,7 +882,10 @@ const zedLoc = await oidcLogin(zed, `zed-${stamp}@${domain}`);
 assert(zedLoc === "/login?sso_error=sso_plan_limit", `alta JIT por encima del cupo del plan rechazada (${zedLoc})`);
 assert(!(await owner.api("GET", "/v1/members")).items.some((m) => m.email === `zed-${stamp}@${domain}`), "sin membresía nueva");
 const denied = (await owner.api("GET", "/v1/audit-log?action=auth.sso_denied")).items ?? [];
-assert(denied.some((x) => x.data?.reason === "plan_limit" && x.actorLabel === `zed-${stamp}@${domain}`), "rechazo por cupo en la auditoría");
+assert(
+  denied.some((x) => x.data?.reason === "plan_limit" && x.actorLabel === `zed-${stamp}@${domain}`),
+  "rechazo por cupo en la auditoría",
+);
 const anaAgain = new Client("ana-again");
 assert((await oidcLogin(anaAgain, `ana@${domain}`)) === "/app", "un miembro existente sigue entrando por SSO");
 ok("alta JIT por SSO: respeta el cupo de usuarios del plan (auditado); los miembros existentes siguen entrando");

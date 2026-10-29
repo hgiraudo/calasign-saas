@@ -14,7 +14,8 @@ import { signerTokenHash } from "../signer-token";
 export function publicCells(): CellInfo[] {
   const configured = cells();
   const out: CellInfo[] = configured.map((c) => ({ id: c.id, label: c.label, region: c.region, available: true, default: c.default }));
-  for (const c of CELL_CATALOG) if (!out.some((x) => x.id === c.id)) out.push({ id: c.id, label: c.label, region: c.region, available: false, default: false });
+  for (const c of CELL_CATALOG)
+    if (!out.some((x) => x.id === c.id)) out.push({ id: c.id, label: c.label, region: c.region, available: false, default: false });
   return out;
 }
 
@@ -30,11 +31,10 @@ export function cellForSignup(requested: string | undefined | null): string {
 
 /** Alta en el directorio global (en la misma transacción que crea la organización). */
 export async function registerTenantCell(db: Db, tenantId: string, slug: string, cell: string) {
-  await db.query(`INSERT INTO tenant_directory (tenant_id, cell, slug) VALUES ($1,$2,$3) ON CONFLICT (tenant_id) DO UPDATE SET cell = EXCLUDED.cell, slug = EXCLUDED.slug`, [
-    tenantId,
-    cell,
-    slug,
-  ]);
+  await db.query(
+    `INSERT INTO tenant_directory (tenant_id, cell, slug) VALUES ($1,$2,$3) ON CONFLICT (tenant_id) DO UPDATE SET cell = EXCLUDED.cell, slug = EXCLUDED.slug`,
+    [tenantId, cell, slug],
+  );
 }
 
 /**
@@ -42,7 +42,10 @@ export async function registerTenantCell(db: Db, tenantId: string, slug: string,
  * configurado en este despliegue se devuelve tal cual (no cae en la por defecto: ver misdirectedCell).
  */
 export async function cellOfTenant(db: Db, tenantId: string): Promise<string> {
-  const r = await db.one<any>(`SELECT COALESCE(d.cell, t.cell) AS cell FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id WHERE t.id = $1`, [tenantId]);
+  const r = await db.one<any>(
+    `SELECT COALESCE(d.cell, t.cell) AS cell FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id WHERE t.id = $1`,
+    [tenantId],
+  );
   return effectiveCellId(r?.cell);
 }
 
@@ -156,7 +159,11 @@ export async function cellRoutes(app: FastifyInstance, s: Services) {
     if (!wrong) return;
     if (wrong.baseUrl) reply.header("location", `${wrong.baseUrl}${req.url}`);
     return reply.code(wrong.unconfigured ? 503 : 421).send({
-      error: { code: "wrong_cell", message: "Los datos de esta organización están en otra región", details: { cell: wrong.cell, baseUrl: wrong.baseUrl } },
+      error: {
+        code: "wrong_cell",
+        message: "Los datos de esta organización están en otra región",
+        details: { cell: wrong.cell, baseUrl: wrong.baseUrl },
+      },
     });
   });
 }

@@ -29,7 +29,11 @@ define(["jquery"], function ($) {
       // rechaza un mapeo de otra (el mismo id de lead existe en las dos). Si Kommo no la informa, send.html se abre
       // igual y muestra el error (sin la cuenta no ofrece mapeos: podrían ser de otra cuenta).
       var acc = accountId();
-      window.open(SEND + "?ids=" + clean.join(",") + (total > clean.length ? "&total=" + total : "") + (acc ? "&companyId=" + acc : ""), "_blank", "noopener");
+      window.open(
+        SEND + "?ids=" + clean.join(",") + (total > clean.length ? "&total=" + total : "") + (acc ? "&companyId=" + acc : ""),
+        "_blank",
+        "noopener",
+      );
     }
 
     function accountId() {
@@ -59,7 +63,9 @@ define(["jquery"], function ($) {
           render:
             '<div class="calasign-widget-body">' +
             '<button type="button" class="button-input calasign-send" style="width:100%">' +
-            $("<div>").text(L.button || "Enviar a firmar con CalaSign").html() +
+            $("<div>")
+              .text(L.button || "Enviar a firmar con CalaSign")
+              .html() +
             "</button></div>",
         });
         return true;

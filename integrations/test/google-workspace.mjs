@@ -117,7 +117,11 @@ const allText = (card) => {
   walk(card, (n) => n.calls.forEach((c) => c.slice(1).forEach((a) => typeof a === "string" && out.push(a))));
   return out.join("\n");
 };
-const inputValue = (card, field) => arg(nodes(card, "TextInput").find((n) => arg(n, "setFieldName") === field), "setValue");
+const inputValue = (card, field) =>
+  arg(
+    nodes(card, "TextInput").find((n) => arg(n, "setFieldName") === field),
+    "setValue",
+  );
 const actionParams = (card, fnName) => {
   const a = nodes(card, "Action").find((n) => arg(n, "setFunctionName") === fnName);
   return a ? (arg(a, "setParameters") ?? {}) : null;
@@ -148,7 +152,11 @@ function load({ userProps = {}, scriptProps = {}, routes = () => response(404, {
   const user = store(userProps);
   const script = store(scriptProps);
   const cache = new Map();
-  const oauthState = { access: !!oauth.access, token: oauth.token ?? (oauth.access ? { access_token: "oauth-token", refresh_token: "rt-1" } : null), resets: 0 };
+  const oauthState = {
+    access: !!oauth.access,
+    token: oauth.token ?? (oauth.access ? { access_token: "oauth-token", refresh_token: "rt-1" } : null),
+    resets: 0,
+  };
   const OAuth2 = {
     getRedirectUri: (id) => `https://script.google.com/macros/d/${encodeURIComponent(id)}/usercallback`,
     createService(name) {
@@ -189,7 +197,10 @@ function load({ userProps = {}, scriptProps = {}, routes = () => response(404, {
     CardService,
     PropertiesService: { getUserProperties: () => user, getScriptProperties: () => script },
     CacheService: { getUserCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => cache.set(k, v) }) },
-    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }), getUserLock: () => ({ waitLock() {}, releaseLock() {}, tryLock: () => true }) },
+    LockService: {
+      getScriptLock: () => ({ waitLock() {}, releaseLock() {} }),
+      getUserLock: () => ({ waitLock() {}, releaseLock() {}, tryLock: () => true }),
+    },
     Session: { getActiveUser: () => ({ getEmail: () => self }), getActiveUserLocale: () => "es" },
     ScriptApp: { getScriptId: () => "SCRIPT123", getOAuthToken: () => "google-token" },
     HtmlService: { createHtmlOutput: (html) => ({ html }) },
@@ -248,7 +259,9 @@ const detail = (over = {}) => ({
     { id: "rec-2", role: "signer", email: "beto@cliente.com" },
   ],
 });
-const LIST = { items: [{ id: "env-9", subject: "NDA <ACME>", status: "completed", createdAt: "2026-10-01T10:00:00Z", completedAt: "2026-10-02T10:00:00Z" }] };
+const LIST = {
+  items: [{ id: "env-9", subject: "NDA <ACME>", status: "completed", createdAt: "2026-10-01T10:00:00Z", completedAt: "2026-10-02T10:00:00Z" }],
+};
 const json = (p) => JSON.parse(p.params.payload);
 /** Objetos del contexto vm a objetos de este (deepEqual compara prototipos). */
 const plain = (x) => JSON.parse(JSON.stringify(x));
@@ -322,7 +335,11 @@ await test("zip: proyecto para clasp, sin placeholders y con la URL base", () =>
   assert.equal(ctx.CS_BASE_URL, BASE);
   for (const f of ["appsscript.json", "README.md", "icon-128.png"]) assert.ok(readFileSync(join(DIR, f)).length > 0, f);
   const idx = JSON.parse(readFileSync(join(OUT, "connectors/index.json"), "utf8"));
-  assert.ok(idx.connectors.find((c) => c.id === "google-workspace")?.artifacts.includes("/integrations/connectors/google-workspace/calasign-google-workspace-addon.zip"));
+  assert.ok(
+    idx.connectors
+      .find((c) => c.id === "google-workspace")
+      ?.artifacts.includes("/integrations/connectors/google-workspace/calasign-google-workspace-addon.zip"),
+  );
 });
 
 await test("código: sin DriveApp/DocumentApp/SpreadsheetApp (Apps Script inferiría scopes amplios)", () => {
@@ -340,7 +357,8 @@ await test("i18n: es/en/pt con las mismas claves y todas las claves usadas defin
   const used = new Set([...CODE.matchAll(/t_\(\w+, '([\w.]+)'/g)].map((m) => m[1]).filter((k) => !k.endsWith(".")));
   for (const m of CODE.matchAll(/new CsInputError\('(\w+)'/g)) used.add(m[1]);
   for (const k of used) assert.ok(keys.includes(k), `falta la clave ${k}`);
-  for (const s of ["draft", "sent", "finalizing", "completed", "declined", "voided", "expired", "awaiting_certificates"]) assert.ok(keys.includes(`status.${s}`));
+  for (const s of ["draft", "sent", "finalizing", "completed", "declined", "voided", "expired", "awaiting_certificates"])
+    assert.ok(keys.includes(`status.${s}`));
   assert.equal(ctx.langOf_("pt-BR"), "pt");
   assert.equal(ctx.langOf_("es-419"), "es");
   assert.equal(ctx.langOf_("fr"), "es");
@@ -351,7 +369,11 @@ await test("i18n: es/en/pt con las mismas claves y todas las claves usadas defin
 
 await test("destinatarios: listas con comillas, nombres y correos inválidos", () => {
   const { ctx } = load();
-  assert.deepEqual(plain(ctx.splitAddressList_('"Pérez, Juan" <juan@x.com>, ana@x.com; Beto <b@x.com>')), ['"Pérez, Juan" <juan@x.com>', "ana@x.com", "Beto <b@x.com>"]);
+  assert.deepEqual(plain(ctx.splitAddressList_('"Pérez, Juan" <juan@x.com>, ana@x.com; Beto <b@x.com>')), [
+    '"Pérez, Juan" <juan@x.com>',
+    "ana@x.com",
+    "Beto <b@x.com>",
+  ]);
   assert.deepEqual({ ...ctx.parseAddress_('"Pérez, Juan" <Juan@X.com>') }, { name: "Pérez, Juan", email: "juan@x.com" });
   assert.deepEqual({ ...ctx.parseAddress_("maria.lopez@x.com") }, { name: "Maria Lopez", email: "maria.lopez@x.com" });
   assert.equal(ctx.parseAddress_("no es un correo"), null);
@@ -360,25 +382,43 @@ await test("destinatarios: listas con comillas, nombres y correos inválidos", (
   assert.deepEqual([...r.invalid], ["mal"]);
   assert.equal(ctx.formatAddress_({ name: "Pérez, Juan", email: "juan@x.com" }), '"Pérez, Juan" <juan@x.com>');
   // Ida y vuelta: lo que precarga la tarjeta se vuelve a leer igual.
-  const back = ctx.parseSignerLines_([{ name: "Pérez, Juan", email: "juan@x.com" }, { name: 'Dice "hola"', email: "h@x.com" }].map(ctx.formatAddress_).join("\n"));
+  const back = ctx.parseSignerLines_(
+    [
+      { name: "Pérez, Juan", email: "juan@x.com" },
+      { name: 'Dice "hola"', email: "h@x.com" },
+    ]
+      .map(ctx.formatAddress_)
+      .join("\n"),
+  );
   assert.deepEqual(plain(back.signers.map((s) => s.name)), ["Pérez, Juan", 'Dice "hola"']);
 });
 
 await test("destinatarios sugeridos de un correo: remitente, Para y CC sin uno mismo ni no-reply", () => {
   const { ctx } = load();
   const got = ctx.suggestSigners_(
-    { from: "Ana Gómez <ana@cliente.com>", to: "Yo <YO@empresa.com>, beto@cliente.com", cc: "no-reply@sistema.com, Ana <ana@cliente.com>, Carla <carla@cliente.com>" },
+    {
+      from: "Ana Gómez <ana@cliente.com>",
+      to: "Yo <YO@empresa.com>, beto@cliente.com",
+      cc: "no-reply@sistema.com, Ana <ana@cliente.com>, Carla <carla@cliente.com>",
+    },
     "yo@empresa.com",
   );
   assert.deepEqual(plain(got.map((s) => `${s.name}|${s.email}`)), ["Ana Gómez|ana@cliente.com", "Beto|beto@cliente.com", "Carla|carla@cliente.com"]);
   // Correo enviado por uno mismo: quedan los destinatarios.
-  assert.deepEqual(plain(ctx.suggestSigners_({ from: "Yo <yo@empresa.com>", to: "cliente@x.com" }, "yo@empresa.com").map((s) => s.email)), ["cliente@x.com"]);
+  assert.deepEqual(plain(ctx.suggestSigners_({ from: "Yo <yo@empresa.com>", to: "cliente@x.com" }, "yo@empresa.com").map((s) => s.email)), [
+    "cliente@x.com",
+  ]);
 });
 
 await test("anclas: [[firma]], [[firma_N]], variantes en inglés y portugués", () => {
   const { ctx } = load();
   const a = ctx.findAnchors_("Firma: [[firma]] ... [[ firma_2 ]] y [[signature_3]] [[assinatura 4]] [[firma_2]] [[firma_0]] [[otra]]");
-  assert.deepEqual(JSON.parse(JSON.stringify(a)), { 1: ["[[firma]]"], 2: ["[[ firma_2 ]]", "[[firma_2]]"], 3: ["[[signature_3]]"], 4: ["[[assinatura 4]]"] });
+  assert.deepEqual(JSON.parse(JSON.stringify(a)), {
+    1: ["[[firma]]"],
+    2: ["[[ firma_2 ]]", "[[firma_2]]"],
+    3: ["[[signature_3]]"],
+    4: ["[[assinatura 4]]"],
+  });
   assert.equal(ctx.resolvePlacement_("auto", a, 4, true), "anchors");
   assert.equal(ctx.resolvePlacement_("auto", a, 5, true), "lastPage");
   assert.equal(ctx.resolvePlacement_("auto", null, 2, false), "auto-pdf");
@@ -412,10 +452,13 @@ await test("pedido de una llamada: documento, firmantes en orden, campos por anc
   );
   assert.deepEqual(req.documents, [{ name: "Contrato.pdf", base64: "QUJD" }]);
   assert.equal(req.subject, "Contrato");
-  assert.deepEqual(req.recipients.map((r) => [r.routingOrder, r.role, r.email, r.channels[0], r.locale]), [
-    [1, "signer", "ana@x.com", "email", "es"],
-    [2, "signer", "beto@x.com", "email", "es"],
-  ]);
+  assert.deepEqual(
+    req.recipients.map((r) => [r.routingOrder, r.role, r.email, r.channels[0], r.locale]),
+    [
+      [1, "signer", "ana@x.com", "email", "es"],
+      [2, "signer", "beto@x.com", "email", "es"],
+    ],
+  );
   assert.deepEqual(req.fields, [
     { recipient: 0, type: "signature", anchor: { text: "[[firma_1]]", width: 150, height: 40, offsetY: -36 } },
     { recipient: 1, type: "signature", anchor: { text: "[[firma_2]]", width: 150, height: 40, offsetY: -36 } },
@@ -424,7 +467,10 @@ await test("pedido de una llamada: documento, firmantes en orden, campos por anc
   const draft = ctx.buildEnvelopeRequest_({ subject: "X", locale: "es", documentName: "a.pdf", pdfBase64: "QQ==", signers, placement: "lastPage" });
   assert.equal(draft.send, false);
   assert.equal(draft.fields.length, 0);
-  assert.deepEqual(draft.recipients.map((r) => r.routingOrder), [1, 1]);
+  assert.deepEqual(
+    draft.recipients.map((r) => r.routingOrder),
+    [1, 1],
+  );
   const errCode = (p) => {
     try {
       ctx.buildEnvelopeRequest_(p);
@@ -439,7 +485,10 @@ await test("pedido de una llamada: documento, firmantes en orden, campos por anc
   assert.equal(errCode({ ...ok, signers: [] }), "errNoSigners");
   // Campos de la última página con los ids que devuelve CalaSign.
   const f = JSON.parse(JSON.stringify(ctx.lastPageFields_(detail(), [{ name: "Beto", email: "beto@cliente.com" }])));
-  assert.deepEqual(f.map((x) => [x.documentId, x.recipientId, x.page, x.type]), [["doc-1", "rec-2", 2, "signature"]]);
+  assert.deepEqual(
+    f.map((x) => [x.documentId, x.recipientId, x.page, x.type]),
+    [["doc-1", "rec-2", 2, "signature"]],
+  );
 });
 
 // ───────── 5. Flujos ─────────
@@ -472,7 +521,10 @@ await test("gmail: tarjeta con el PDF adjunto y firmantes precargados; envío en
   assert.equal(inputValue(card, "subject"), "Contrato de servicios");
   assert.equal(inputValue(card, "signers"), "Ana Gómez <ana@cliente.com>\nBeto <beto@cliente.com>");
   const dd = nodes(card, "SelectionInput").find((n) => arg(n, "setFieldName") === "attachment");
-  assert.deepEqual(dd.calls.filter((c) => c[0] === "addItem").map((c) => c[1]), ["contrato.pdf", "anexo.PDF"]);
+  assert.deepEqual(
+    dd.calls.filter((c) => c[0] === "addItem").map((c) => c[1]),
+    ["contrato.pdf", "anexo.PDF"],
+  );
   assert.match(allText(card), /NDA &lt;ACME&gt;/, "recientes (escapados)");
   const params = actionParams(card, "onSend");
   assert.equal(params.source, "gmail");
@@ -482,7 +534,14 @@ await test("gmail: tarjeta con el PDF adjunto y firmantes precargados; envío en
     ev("GMAIL", {
       params,
       gmail: { messageId: "m1", accessToken: "tok-2" },
-      inputs: { subject: "Contrato de servicios", signers: inputValue(card, "signers"), attachment: "1", placement: "anchors", sequential: "1", message: "Por favor firmar" },
+      inputs: {
+        subject: "Contrato de servicios",
+        signers: inputValue(card, "signers"),
+        attachment: "1",
+        placement: "anchors",
+        sequential: "1",
+        message: "Por favor firmar",
+      },
     }),
   );
   const posts = fetches.filter((f) => f.url === `${BASE}/v1/envelopes`);
@@ -494,16 +553,22 @@ await test("gmail: tarjeta con el PDF adjunto y firmantes precargados; envío en
   const body = json(posts[0]);
   assert.equal(Buffer.from(body.documents[0].base64, "base64").toString(), PDF.toString(), "el PDF elegido, en base64");
   assert.equal(body.documents[0].name, "anexo.PDF");
-  assert.deepEqual(body.recipients.map((r) => [r.name, r.email, r.routingOrder]), [
-    ["Ana Gómez", "ana@cliente.com", 1],
-    ["Beto", "beto@cliente.com", 2],
-  ]);
+  assert.deepEqual(
+    body.recipients.map((r) => [r.name, r.email, r.routingOrder]),
+    [
+      ["Ana Gómez", "ana@cliente.com", 1],
+      ["Beto", "beto@cliente.com", 2],
+    ],
+  );
   // PDF: anclas convencionales, las que no están se ignoran.
-  assert.deepEqual(body.fields.map((f) => [f.recipient, f.anchor.text, f.anchor.ignoreIfNotPresent]), [
-    [0, "[[firma]]", true],
-    [0, "[[firma_1]]", true],
-    [1, "[[firma_2]]", true],
-  ]);
+  assert.deepEqual(
+    body.fields.map((f) => [f.recipient, f.anchor.text, f.anchor.ignoreIfNotPresent]),
+    [
+      [0, "[[firma]]", true],
+      [0, "[[firma_1]]", true],
+      [1, "[[firma_2]]", true],
+    ],
+  );
   assert.equal(body.send, true);
   assert.equal(body.message, "Por favor firmar");
   assert.equal(body.metadata.source, "google-workspace-gmail");
@@ -512,23 +577,47 @@ await test("gmail: tarjeta con el PDF adjunto y firmantes precargados; envío en
   assert.match(allText(pushed), new RegExp(`${BASE}/app/envelopes/env-1`));
 
   // Doble clic con el mismo formulario: misma Idempotency-Key.
-  ctx.onSend(ev("GMAIL", { params, gmail: { messageId: "m1", accessToken: "tok-2" }, inputs: { subject: "Contrato de servicios", signers: inputValue(card, "signers"), attachment: "1", placement: "anchors", sequential: "1", message: "Por favor firmar" } }));
+  ctx.onSend(
+    ev("GMAIL", {
+      params,
+      gmail: { messageId: "m1", accessToken: "tok-2" },
+      inputs: {
+        subject: "Contrato de servicios",
+        signers: inputValue(card, "signers"),
+        attachment: "1",
+        placement: "anchors",
+        sequential: "1",
+        message: "Por favor firmar",
+      },
+    }),
+  );
   const again = fetches.filter((f) => f.url === `${BASE}/v1/envelopes`);
   assert.equal(again[1].params.headers["Idempotency-Key"], p.headers["Idempotency-Key"]);
 });
 
 await test("gmail: correo sin PDF → aviso; firmante inválido → notificación sin llamar a la API", () => {
-  const gmail = { m2: { from: "a@x.com", attachments: [{ name: "a.docx", type: "application/msword", data: PDF }] }, m3: { from: "a@x.com", attachments: [{ name: "a.pdf", type: "application/pdf", data: PDF }] } };
+  const gmail = {
+    m2: { from: "a@x.com", attachments: [{ name: "a.docx", type: "application/msword", data: PDF }] },
+    m3: { from: "a@x.com", attachments: [{ name: "a.pdf", type: "application/pdf", data: PDF }] },
+  };
   const routes = (url) => (url.includes("limit=8") ? response(200, { items: [] }) : response(500, {}));
   const { ctx, fetches } = load({ userProps: signedIn, gmail, routes });
   assert.match(allText(ctx.onGmailMessage(ev("GMAIL", { gmail: { messageId: "m2", accessToken: "t" } }))), /no tiene PDF adjuntos/);
-  const res = ctx.onSend(ev("GMAIL", { params: { source: "gmail", cardKey: "k", messageId: "m3" }, gmail: { messageId: "m3", accessToken: "t" }, inputs: { subject: "X", signers: "Ana <ana@x.com>\nsin-arroba" } }));
+  const res = ctx.onSend(
+    ev("GMAIL", {
+      params: { source: "gmail", cardKey: "k", messageId: "m3" },
+      gmail: { messageId: "m3", accessToken: "t" },
+      inputs: { subject: "X", signers: "Ana <ana@x.com>\nsin-arroba" },
+    }),
+  );
   assert.match(allText(res), /Revisá estos firmantes: sin-arroba/);
   assert.equal(fetches.filter((f) => f.params.method === "post").length, 0);
 });
 
 await test("automático en un PDF sin anclas: la llamada atómica falla (422) → borrador, campos en la última página y envío", () => {
-  const gmail = { m1: { from: "Ana <ana@cliente.com>", cc: "beto@cliente.com", subject: "S", attachments: [{ name: "c.pdf", type: "application/pdf", data: PDF }] } };
+  const gmail = {
+    m1: { from: "Ana <ana@cliente.com>", cc: "beto@cliente.com", subject: "S", attachments: [{ name: "c.pdf", type: "application/pdf", data: PDF }] },
+  };
   const routes = (url, p) => {
     if (url.endsWith("limit=8")) return response(200, LIST);
     if (url === `${BASE}/v1/envelopes`) {
@@ -541,21 +630,36 @@ await test("automático en un PDF sin anclas: la llamada atómica falla (422) �
     return response(404, {});
   };
   const { ctx, fetches } = load({ userProps: signedIn, gmail, routes });
-  ctx.onSend(ev("GMAIL", { params: { source: "gmail", cardKey: "k1", messageId: "m1" }, gmail: { messageId: "m1", accessToken: "t" }, inputs: { subject: "S", signers: "Ana <ana@cliente.com>\nbeto@cliente.com", placement: "auto" } }));
+  ctx.onSend(
+    ev("GMAIL", {
+      params: { source: "gmail", cardKey: "k1", messageId: "m1" },
+      gmail: { messageId: "m1", accessToken: "t" },
+      inputs: { subject: "S", signers: "Ana <ana@cliente.com>\nbeto@cliente.com", placement: "auto" },
+    }),
+  );
   const seq = fetches.filter((f) => !f.url.includes("limit=")).map((f) => `${f.params.method.toUpperCase()} ${f.url.replace(BASE, "")}`);
   assert.deepEqual(seq, ["POST /v1/envelopes", "POST /v1/envelopes", "PUT /v1/envelopes/env-1/fields", "POST /v1/envelopes/env-1/send"]);
   const [first, second] = fetches.filter((f) => f.url === `${BASE}/v1/envelopes`);
   assert.notEqual(first.params.headers["Idempotency-Key"], second.params.headers["Idempotency-Key"]);
   assert.equal(json(second).send, false);
   const fields = json(fetches.find((f) => f.url.endsWith("/fields"))).fields;
-  assert.deepEqual(fields.map((f) => [f.recipientId, f.page, f.type]), [
-    ["rec-1", 2, "signature"],
-    ["rec-2", 2, "signature"],
-  ]);
+  assert.deepEqual(
+    fields.map((f) => [f.recipientId, f.page, f.type]),
+    [
+      ["rec-1", 2, "signature"],
+      ["rec-2", 2, "signature"],
+    ],
+  );
   for (const f of fields) assert.ok(f.x >= 0 && f.x + f.width <= 1 && f.y >= 0 && f.y + f.height <= 1);
   // Con "anclas" elegido a mano, el 422 se muestra (no cae a la última página).
   const n = fetches.length;
-  const res = ctx.onSend(ev("GMAIL", { params: { source: "gmail", cardKey: "k2", messageId: "m1" }, gmail: { messageId: "m1", accessToken: "t" }, inputs: { subject: "S", signers: "Ana <ana@cliente.com>", placement: "anchors" } }));
+  const res = ctx.onSend(
+    ev("GMAIL", {
+      params: { source: "gmail", cardKey: "k2", messageId: "m1" },
+      gmail: { messageId: "m1", accessToken: "t" },
+      inputs: { subject: "S", signers: "Ana <ana@cliente.com>", placement: "anchors" },
+    }),
+  );
   assert.match(allText(res), /Faltan firmas para algunos firmantes: Ana no tiene campo de firma/);
   assert.equal(fetches.length, n + 1);
 });
@@ -566,7 +670,8 @@ await test("docs: pide acceso al documento; con acceso, exporta a PDF y firma en
     if (url.endsWith("limit=8")) return response(200, LIST);
     if (url === "https://www.googleapis.com/drive/v3/files/DOC1/export?mimeType=text%2Fplain") return response(200, text);
     if (url === "https://www.googleapis.com/drive/v3/files/DOC1/export?mimeType=application%2Fpdf") return response(200, PDF);
-    if (url.startsWith("https://www.googleapis.com/drive/v3/files/DOC1?fields=")) return response(200, { id: "DOC1", name: "Contrato marco", mimeType: "application/vnd.google-apps.document", parents: ["FOLDER1"] });
+    if (url.startsWith("https://www.googleapis.com/drive/v3/files/DOC1?fields="))
+      return response(200, { id: "DOC1", name: "Contrato marco", mimeType: "application/vnd.google-apps.document", parents: ["FOLDER1"] });
     if (url === `${BASE}/v1/envelopes` && p.method === "post") return response(201, detail({ subject: "Contrato marco" }));
     return response(404, {});
   };
@@ -578,27 +683,43 @@ await test("docs: pide acceso al documento; con acceso, exporta a PDF y firma en
   const card = ctx.onDocsFileScopeGranted(ev("DOCS", { docs: { id: "DOC1", title: "Contrato marco", addonHasFileScopePermission: true } }));
   assert.match(allText(card), /Anclas encontradas: \[\[firma_1\]\], \[\[firma_2\]\]/);
   const drv = fetches.filter((f) => f.url.startsWith("https://www.googleapis.com/"));
-  assert.ok(drv.every((f) => f.params.headers.Authorization === "Bearer google-token"), "Drive con el token del add-on");
+  assert.ok(
+    drv.every((f) => f.params.headers.Authorization === "Bearer google-token"),
+    "Drive con el token del add-on",
+  );
   const params = actionParams(card, "onSend");
   assert.deepEqual([params.source, params.fileId], ["docs", "DOC1"]);
-  ctx.onSend(ev("DOCS", { params, docs: { id: "DOC1" }, inputs: { subject: "Contrato marco", signers: "Ana <ana@cliente.com>\nBeto <beto@cliente.com>", placement: "auto", saveBack: "1" } }));
+  ctx.onSend(
+    ev("DOCS", {
+      params,
+      docs: { id: "DOC1" },
+      inputs: { subject: "Contrato marco", signers: "Ana <ana@cliente.com>\nBeto <beto@cliente.com>", placement: "auto", saveBack: "1" },
+    }),
+  );
   const post = fetches.find((f) => f.url === `${BASE}/v1/envelopes`);
   const body = json(post);
   assert.equal(body.documents[0].name, "Contrato marco.pdf");
-  assert.deepEqual(body.fields.map((f) => [f.recipient, f.anchor.text, f.anchor.ignoreIfNotPresent]), [
-    [0, "[[firma_1]]", undefined],
-    [1, "[[firma_2]]", undefined],
-  ]);
+  assert.deepEqual(
+    body.fields.map((f) => [f.recipient, f.anchor.text, f.anchor.ignoreIfNotPresent]),
+    [
+      [0, "[[firma_1]]", undefined],
+      [1, "[[firma_2]]", undefined],
+    ],
+  );
   assert.equal(body.send, true);
   assert.deepEqual(body.metadata, { source: "google-workspace-docs", driveFileId: "DOC1" });
   const pending = JSON.parse(user.getProperty("calasign.pendingSaves"));
-  assert.deepEqual(pending.map((x) => [x.envelopeId, x.fileId, x.parentId, x.pdf]), [["env-1", "DOC1", "FOLDER1", false]]);
+  assert.deepEqual(
+    pending.map((x) => [x.envelopeId, x.fileId, x.parentId, x.pdf]),
+    [["env-1", "DOC1", "FOLDER1", false]],
+  );
 });
 
 await test("drive: selección (uno, tipo, permiso) y envío de un PDF", () => {
   const routes = (url, p) => {
     if (url.endsWith("limit=8")) return response(200, LIST);
-    if (url.startsWith("https://www.googleapis.com/drive/v3/files/PDF1?fields=")) return response(200, { id: "PDF1", name: "oferta.pdf", mimeType: "application/pdf", parents: ["F1"] });
+    if (url.startsWith("https://www.googleapis.com/drive/v3/files/PDF1?fields="))
+      return response(200, { id: "PDF1", name: "oferta.pdf", mimeType: "application/pdf", parents: ["F1"] });
     if (url === "https://www.googleapis.com/drive/v3/files/PDF1?alt=media&supportsAllDrives=true") return response(200, PDF);
     if (url === `${BASE}/v1/envelopes` && p.method === "post") return response(201, detail({ subject: "oferta" }));
     return response(404, {});
@@ -606,19 +727,31 @@ await test("drive: selección (uno, tipo, permiso) y envío de un PDF", () => {
   const { ctx, fetches } = load({ userProps: signedIn, routes });
   const two = ctx.onDriveItemsSelected(ev("DRIVE", { drive: { selectedItems: [{ id: "a" }, { id: "b" }] } }));
   assert.match(allText(two), /Seleccioná un solo archivo/);
-  const xls = ctx.onDriveItemsSelected(ev("DRIVE", { drive: { selectedItems: [{ id: "x", title: "a.xlsx", mimeType: "application/vnd.ms-excel" }] } }));
+  const xls = ctx.onDriveItemsSelected(
+    ev("DRIVE", { drive: { selectedItems: [{ id: "x", title: "a.xlsx", mimeType: "application/vnd.ms-excel" }] } }),
+  );
   assert.match(allText(xls), /«a.xlsx» no se puede enviar/);
-  const ask = ctx.onDriveItemsSelected(ev("DRIVE", { drive: { selectedItems: [{ id: "PDF1", title: "oferta.pdf", mimeType: "application/pdf", addonHasFileScopePermission: false }] } }));
+  const ask = ctx.onDriveItemsSelected(
+    ev("DRIVE", { drive: { selectedItems: [{ id: "PDF1", title: "oferta.pdf", mimeType: "application/pdf", addonHasFileScopePermission: false }] } }),
+  );
   const askParams = actionParams(ask, "onRequestDriveScope");
   assert.equal(askParams.fileId, "PDF1");
-  assert.deepEqual(nodes(ctx.onRequestDriveScope(ev("DRIVE", { params: askParams })), "DriveItemsSelectedActionResponseBuilder")[0].calls[0], ["requestFileScope", "PDF1"]);
-  const card = ctx.onDriveItemsSelected(ev("DRIVE", { drive: { selectedItems: [{ id: "PDF1", title: "oferta.pdf", mimeType: "application/pdf", addonHasFileScopePermission: true }] } }));
+  assert.deepEqual(nodes(ctx.onRequestDriveScope(ev("DRIVE", { params: askParams })), "DriveItemsSelectedActionResponseBuilder")[0].calls[0], [
+    "requestFileScope",
+    "PDF1",
+  ]);
+  const card = ctx.onDriveItemsSelected(
+    ev("DRIVE", { drive: { selectedItems: [{ id: "PDF1", title: "oferta.pdf", mimeType: "application/pdf", addonHasFileScopePermission: true }] } }),
+  );
   assert.equal(inputValue(card, "subject"), "oferta");
   assert.ok(nodes(card, "SelectionInput").some((n) => arg(n, "setFieldName") === "saveBack"));
   ctx.onSend(ev("DRIVE", { params: actionParams(card, "onSend"), inputs: { subject: "oferta", signers: "ana@cliente.com", placement: "anchors" } }));
   const body = json(fetches.find((f) => f.url === `${BASE}/v1/envelopes`));
   assert.equal(Buffer.from(body.documents[0].base64, "base64").toString(), PDF.toString());
-  assert.deepEqual(body.recipients.map((r) => [r.name, r.email]), [["Ana", "ana@cliente.com"]]);
+  assert.deepEqual(
+    body.recipients.map((r) => [r.name, r.email]),
+    [["Ana", "ana@cliente.com"]],
+  );
 });
 
 await test("drive: guardar el firmado al abrir (carpeta original → copia → carpeta CalaSign) y limpiar pendientes", () => {
@@ -640,11 +773,13 @@ await test("drive: guardar el firmado al abrir (carpeta original → copia → c
       const raw = fromAsBytes(p.payload).toString("latin1");
       const meta = JSON.parse(/\r\n\r\n(\{.*?\})\r\n/.exec(raw)[1]);
       uploads.push({ meta, hasPdf: raw.includes(SIGNED.toString("latin1")), contentType: p.contentType });
-      if (meta.parents[0] === "F1") return response(200, { id: "N1", name: meta.name, parents: ["F1"], webViewLink: "https://drive.google.com/file/d/N1/view" });
+      if (meta.parents[0] === "F1")
+        return response(200, { id: "N1", name: meta.name, parents: ["F1"], webViewLink: "https://drive.google.com/file/d/N1/view" });
       if (meta.parents[0] === "APPF") return response(200, { id: "N3", name: meta.name, parents: ["APPF"] });
       return response(404, { error: { message: "File not found" } });
     }
-    if (url.startsWith("https://www.googleapis.com/drive/v3/files/PDF2/copy")) return response(200, { id: "C2", name: JSON.parse(p.payload).name, parents: ["F2"] });
+    if (url.startsWith("https://www.googleapis.com/drive/v3/files/PDF2/copy"))
+      return response(200, { id: "C2", name: JSON.parse(p.payload).name, parents: ["F2"] });
     if (url.startsWith("https://www.googleapis.com/upload/drive/v3/files/C2?uploadType=media")) {
       assert.equal(fromAsBytes(p.payload).toString(), SIGNED.toString());
       return response(200, { id: "C2", name: "otro (firmado).pdf", parents: ["F2"] });
@@ -663,7 +798,10 @@ await test("drive: guardar el firmado al abrir (carpeta original → copia → c
   assert.ok(uploads.every((u) => u.hasPdf && /^multipart\/related; boundary=/.test(u.contentType)));
   assert.equal(user.getProperty("calasign.folderId"), "APPF");
   // Quedó solo el que sigue en curso; el anulado se descartó.
-  assert.deepEqual(JSON.parse(user.getProperty("calasign.pendingSaves")).map((x) => x.envelopeId), ["E5"]);
+  assert.deepEqual(
+    JSON.parse(user.getProperty("calasign.pendingSaves")).map((x) => x.envelopeId),
+    ["E5"],
+  );
   // Throttle: otra apertura enseguida no vuelve a consultar.
   const n = fetches.length;
   ctx.onDriveHomepage(ev("DRIVE"));
@@ -695,7 +833,10 @@ await test("oauth: sin sesión → tarjeta de login; registro dinámico (una vez
   assert.equal(arg(svc, "setCodeChallengeMethod"), "S256");
   const auth = nodes(card, "AuthorizationAction")[0];
   assert.match(arg(auth, "setAuthorizationUrl"), new RegExp(`^${BASE}/oauth/authorize\\?client_id=cid-123.*code_challenge_method=S256`));
-  assert.ok(nodes(card, "TextInput").some((n) => arg(n, "setFieldName") === "apiKey"), "alternativa con API key");
+  assert.ok(
+    nodes(card, "TextInput").some((n) => arg(n, "setFieldName") === "apiKey"),
+    "alternativa con API key",
+  );
   // Segunda vez: no se vuelve a registrar.
   ctx.onHomepage(ev("GMAIL"));
   assert.equal(fetches.filter((f) => f.url === `${BASE}/oauth/register`).length, 1);
@@ -727,7 +868,10 @@ await test("api key: se valida contra CalaSign antes de guardarla; 401 después 
     if (url === `${BASE}/v1/envelopes`) return response(401, { error: { code: "unauthorized", message: "API key revocada" } });
     return response(404, {});
   };
-  const { ctx, user, fetches } = load({ routes, gmail: { m: { from: "a@x.com", attachments: [{ name: "a.pdf", type: "application/pdf", data: PDF }] } } });
+  const { ctx, user, fetches } = load({
+    routes,
+    gmail: { m: { from: "a@x.com", attachments: [{ name: "a.pdf", type: "application/pdf", data: PDF }] } },
+  });
   assert.match(allText(ctx.onSaveApiKey(ev("DRIVE", { inputs: { apiKey: "no-es-una-key" } }))), /no es válida/);
   assert.equal(fetches.filter((f) => f.url.endsWith("limit=1")).length, 0, "formato inválido: ni se consulta");
   valid = false;
@@ -736,7 +880,13 @@ await test("api key: se valida contra CalaSign antes de guardarla; 401 después 
   const ok = ctx.onSaveApiKey(ev("DRIVE", { inputs: { apiKey: ` ${KEY} ` } }));
   assert.equal(user.getProperty("calasign.apiKey"), KEY);
   assert.match(allText(ok), /Sesión iniciada/);
-  const res = ctx.onSend(ev("GMAIL", { params: { source: "gmail", cardKey: "k", messageId: "m" }, gmail: { messageId: "m", accessToken: "t" }, inputs: { subject: "S", signers: "a@x.com", placement: "anchors" } }));
+  const res = ctx.onSend(
+    ev("GMAIL", {
+      params: { source: "gmail", cardKey: "k", messageId: "m" },
+      gmail: { messageId: "m", accessToken: "t" },
+      inputs: { subject: "S", signers: "a@x.com", placement: "anchors" },
+    }),
+  );
   assert.equal(user.getProperty("calasign.apiKey"), null, "401: credenciales olvidadas");
   assert.match(allText(res), /La sesión de CalaSign venció/);
   assert.ok(nodes(res, "AuthorizationAction").length, "vuelve a la tarjeta de inicio de sesión");

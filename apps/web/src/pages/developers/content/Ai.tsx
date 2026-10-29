@@ -30,25 +30,55 @@ export function AiOverviewPage() {
         <Card icon="⌁" title={t("ai.card.mcp.t")} to="/developers/ai/mcp" action={<ActionLink to="/developers/ai/mcp" label={t("ai.card.mcp.a")} />}>
           {t("ai.card.mcp.d")}
         </Card>
-        <Card icon="✳" title="Claude" to="/developers/ai/claude" action={<ActionLink to="/developers/ai/claude#connector" label={t("ai.card.claude.a")} />}>
+        <Card
+          icon="✳"
+          title="Claude"
+          to="/developers/ai/claude"
+          action={<ActionLink to="/developers/ai/claude#connector" label={t("ai.card.claude.a")} />}
+        >
           {t("ai.card.claude.d")}
         </Card>
-        <Card icon="⬢" title={t("ai.card.desktop.t")} to="/developers/ai/claude#desktop" action={<DownloadButton href={ARTIFACTS.mcpb} label="calasign.mcpb" />}>
+        <Card
+          icon="⬢"
+          title={t("ai.card.desktop.t")}
+          to="/developers/ai/claude#desktop"
+          action={<DownloadButton href={ARTIFACTS.mcpb} label="calasign.mcpb" />}
+        >
           {t("ai.card.desktop.d")}
         </Card>
-        <Card icon="❯_" title="Claude Code" to="/developers/ai/claude#code" action={<ActionLink to="/developers/ai/claude#code" label={t("ai.card.code.a")} />}>
+        <Card
+          icon="❯_"
+          title="Claude Code"
+          to="/developers/ai/claude#code"
+          action={<ActionLink to="/developers/ai/claude#code" label={t("ai.card.code.a")} />}
+        >
           {t("ai.card.code.d")}
         </Card>
-        <Card icon="◆" title={t("ai.card.skill.t")} to="/developers/ai/claude#skill" action={<DownloadButton href={ARTIFACTS.skillZip} label="calasign-skill.zip" />}>
+        <Card
+          icon="◆"
+          title={t("ai.card.skill.t")}
+          to="/developers/ai/claude#skill"
+          action={<DownloadButton href={ARTIFACTS.skillZip} label="calasign-skill.zip" />}
+        >
           {t("ai.card.skill.d")}
         </Card>
         <Card icon="◎" title="ChatGPT" to="/developers/ai/chatgpt" action={<ActionLink to="/developers/ai/chatgpt" label={t("ai.card.gpt.a")} />}>
           {t("ai.card.gpt.d")}
         </Card>
-        <Card icon="✧" title="Gemini" to="/developers/ai/gemini" action={<DownloadButton href={ARTIFACTS.geminiExtensionZip} label={t("ai.card.gem.a")} />}>
+        <Card
+          icon="✧"
+          title="Gemini"
+          to="/developers/ai/gemini"
+          action={<DownloadButton href={ARTIFACTS.geminiExtensionZip} label={t("ai.card.gem.a")} />}
+        >
           {t("ai.card.gem.d")}
         </Card>
-        <Card icon="▤" title={t("ai.card.office.t")} to="/developers/ai/office" action={<DownloadButton href={ARTIFACTS.officeManifest} label="manifest.xml" />}>
+        <Card
+          icon="▤"
+          title={t("ai.card.office.t")}
+          to="/developers/ai/office"
+          action={<DownloadButton href={ARTIFACTS.officeManifest} label="manifest.xml" />}
+        >
           {t("ai.card.office.d")}
         </Card>
       </CardGrid>
@@ -115,7 +145,13 @@ WWW-Authenticate: Bearer resource_metadata="${BASE}/.well-known/oauth-protected-
             <code>{tool}</code> {mcpToolIsNew(tool) && <Badge tone="new">{t("ui.new")}</Badge>}
           </span>,
           <Md key="d" text={t(`mcp.tool.${tool}` as DocsKey)} />,
-          mcpToolNeedsConfirm(tool) ? <Badge key="c" tone="warn">confirmToken</Badge> : "—",
+          mcpToolNeedsConfirm(tool) ? (
+            <Badge key="c" tone="warn">
+              confirmToken
+            </Badge>
+          ) : (
+            "—"
+          ),
         ])}
       />
 
@@ -212,7 +248,12 @@ print(response.content)`;
       <Md text={t("claude.code.p")} />
       <CodeTabs
         tabs={[
-          { id: "oauth", label: "OAuth", lang: "bash", code: `claude mcp add --transport http calasign ${MCP_URL}\n# ${t("claude.code.c.login")}\n/mcp` },
+          {
+            id: "oauth",
+            label: "OAuth",
+            lang: "bash",
+            code: `claude mcp add --transport http calasign ${MCP_URL}\n# ${t("claude.code.c.login")}\n/mcp`,
+          },
           {
             id: "apikey",
             label: "API key",
@@ -346,7 +387,12 @@ asyncio.run(main())`;
       <Md text={t("gem.cli.p")} />
       <CodeTabs
         tabs={[
-          { id: "oauth", label: "OAuth", lang: "bash", code: `gemini mcp add --transport http --scope user calasign ${MCP_URL}\n# ${t("gem.cli.c.login")}\n/mcp auth calasign` },
+          {
+            id: "oauth",
+            label: "OAuth",
+            lang: "bash",
+            code: `gemini mcp add --transport http --scope user calasign ${MCP_URL}\n# ${t("gem.cli.c.login")}\n/mcp auth calasign`,
+          },
           {
             id: "apikey",
             label: "API key",

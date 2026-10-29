@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-embed-signer-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant = "";
@@ -71,7 +71,7 @@ describe("delegar con una sesión embebida", () => {
     expect(d.json().error.message).toMatch(/embebido/);
   });
 
-  it("también abierta \"para pestaña\" (vuelve al returnUrl del integrador)", async () => {
+  it('también abierta "para pestaña" (vuelve al returnUrl del integrador)', async () => {
     const { token } = await setup({ session: "tab" });
     expect((await app.inject({ method: "GET", url: `/v1/signing/${token}` })).json().canDelegate).toBe(false);
     expect((await delegate(token)).statusCode).toBe(403);

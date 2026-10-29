@@ -18,12 +18,18 @@ async function p12(name: string, cn: string, opts: Parameters<typeof pki.issue>[
   writeFileSync(join(dir, `${name}.crt`), id.certPem);
   writeFileSync(join(dir, `${name}.chain`), pki.intermediate.certPem + pki.root.certPem);
   execFileSync("openssl", [
-    "pkcs12", "-export",
-    "-inkey", join(dir, `${name}.key`),
-    "-in", join(dir, `${name}.crt`),
-    "-certfile", join(dir, `${name}.chain`),
-    "-out", join(dir, `${name}.p12`),
-    "-passout", "pass:clave-del-titular",
+    "pkcs12",
+    "-export",
+    "-inkey",
+    join(dir, `${name}.key`),
+    "-in",
+    join(dir, `${name}.crt`),
+    "-certfile",
+    join(dir, `${name}.chain`),
+    "-out",
+    join(dir, `${name}.p12`),
+    "-passout",
+    "pass:clave-del-titular",
   ]);
   return id;
 }

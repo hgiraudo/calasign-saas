@@ -170,7 +170,9 @@ export function IdentityGate({
         <>
           <p>{tx("idv.intro", { org })}</p>
           <p className="idv-level">{tx(`idv.level.${idn.level}` as IdnKey)}</p>
-          {idn.failureReason && idn.attemptsLeft > 0 && <p className="muted small">{tx(idn.attemptsLeft === 1 ? "idv.attemptsLeftOne" : "idv.attemptsLeft", { n: idn.attemptsLeft })}</p>}
+          {idn.failureReason && idn.attemptsLeft > 0 && (
+            <p className="muted small">{tx(idn.attemptsLeft === 1 ? "idv.attemptsLeftOne" : "idv.attemptsLeft", { n: idn.attemptsLeft })}</p>
+          )}
           <p className="muted small">{tx("idv.privacy", { org })}</p>
           <button type="button" className="btn btn-primary btn-block" disabled={busy} onClick={() => call("/start")}>
             {idn.failureReason ? tx("idv.retry") : tx("idv.start")}
@@ -183,11 +185,7 @@ export function IdentityGate({
           {idn.redirectUrl && (
             // Embebido, el proveedor se abre en otra pestaña (muchos no cargan en un iframe y la vuelta perdía el modo
             // embebido), sin opener, como el pago; esta página sigue consultando el resultado.
-            <button
-              type="button"
-              className="btn btn-primary btn-block"
-              onClick={() => prepareProviderTab(tokenOfBase(base)).open(idn.redirectUrl!)}
-            >
+            <button type="button" className="btn btn-primary btn-block" onClick={() => prepareProviderTab(tokenOfBase(base)).open(idn.redirectUrl!)}>
               {tx("idv.redirectGo", { provider })}
             </button>
           )}
@@ -275,9 +273,7 @@ function BuiltinCapture({
           );
         })}
       </ol>
-      {current && (
-        <CaptureCard key={current} kind={current} busy={uploading === current} onCapture={(b) => upload(current, b)} />
-      )}
+      {current && <CaptureCard key={current} kind={current} busy={uploading === current} onCapture={(b) => upload(current, b)} />}
       {all && (
         <button type="button" className="btn btn-primary btn-block" disabled={busy || uploading !== null} onClick={onSubmit}>
           {busy ? tx("idv.checking") : tx("idv.submit")}
@@ -372,7 +368,12 @@ function CaptureCard({ kind, busy, onCapture }: { kind: IdvCaptureKind; busy: bo
           typeof navigator !== "undefined" &&
           typeof navigator.mediaDevices?.getUserMedia === "function" && (
             // Después de un error (permiso denegado, cámara ocupada) se puede volver a intentar: start() pide la cámara de nuevo.
-            <button type="button" className={`btn ${camera === "error" ? "btn-ghost" : "btn-primary"}`} onClick={start} disabled={busy || camera === "starting"}>
+            <button
+              type="button"
+              className={`btn ${camera === "error" ? "btn-ghost" : "btn-primary"}`}
+              onClick={start}
+              disabled={busy || camera === "starting"}
+            >
               📷 {tx(camera === "error" ? "idv.cameraRetry" : "idv.useCamera")}
             </button>
           )

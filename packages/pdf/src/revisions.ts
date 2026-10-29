@@ -46,7 +46,11 @@ class Canon {
     if (o instanceof PDFRawStream) return `S${this.dict(o.dict)}${h(o.contents)}`;
     if (o instanceof PDFStream) return `S${this.dict(o.dict)}${h(o.getContents())}`;
     if (o instanceof PDFDict) return this.dict(o);
-    if (o instanceof PDFArray) return `[${o.asArray().map((x) => this.of(x)).join(",")}]`;
+    if (o instanceof PDFArray)
+      return `[${o
+        .asArray()
+        .map((x) => this.of(x))
+        .join(",")}]`;
     return `${o.constructor.name}:${o.toString()}`;
   }
 
@@ -173,9 +177,34 @@ const MAX_ANNOTATIONS = 50_000;
 
 /** Subtipos de anotación (ISO 32000-2, 12.5.6). */
 const ANNOT_SUBTYPES = new Set([
-  "Text", "Link", "FreeText", "Line", "Square", "Circle", "Polygon", "PolyLine", "Highlight", "Underline", "Squiggly",
-  "StrikeOut", "Caret", "Stamp", "Ink", "Popup", "FileAttachment", "Sound", "Movie", "Screen", "Widget", "PrinterMark",
-  "TrapNet", "Watermark", "3D", "Redact", "Projection", "RichMedia",
+  "Text",
+  "Link",
+  "FreeText",
+  "Line",
+  "Square",
+  "Circle",
+  "Polygon",
+  "PolyLine",
+  "Highlight",
+  "Underline",
+  "Squiggly",
+  "StrikeOut",
+  "Caret",
+  "Stamp",
+  "Ink",
+  "Popup",
+  "FileAttachment",
+  "Sound",
+  "Movie",
+  "Screen",
+  "Widget",
+  "PrinterMark",
+  "TrapNet",
+  "Watermark",
+  "3D",
+  "Redact",
+  "Projection",
+  "RichMedia",
 ]);
 
 /** ¿Es un diccionario de anotación? /Type /Annot o, sin /Type (es opcional), un /Subtype de anotación. */
@@ -203,8 +232,31 @@ const DENIED_FIELD_KEYS = ["A", "AA", "OC", "FS", "AF", "Contents", "Popup", "Ri
  * (firma que verifica), del lado firmado no se aplica esta lista (ver laterSignatureWidgets).
  */
 const EMPTY_FIELD_ALLOWED_KEYS = new Set([
-  "Type", "Subtype", "FT", "Rect", "F", "P", "T", "Ff", "DA", "MK", "Parent", "Kids", "StructParent", "TU", "NM", "M",
-  "Border", "BS", "DR", "Lock", "SV", "DV", "Q", "AS", "H",
+  "Type",
+  "Subtype",
+  "FT",
+  "Rect",
+  "F",
+  "P",
+  "T",
+  "Ff",
+  "DA",
+  "MK",
+  "Parent",
+  "Kids",
+  "StructParent",
+  "TU",
+  "NM",
+  "M",
+  "Border",
+  "BS",
+  "DR",
+  "Lock",
+  "SV",
+  "DV",
+  "Q",
+  "AS",
+  "H",
 ]);
 /**
  * Del widget de un campo de firma (y de sus campos padre) no se comparan /Lock ni /SV (qué campos bloquear al firmar y
@@ -277,7 +329,8 @@ function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
 }
 
 const isPdfSpace = (c: number) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00;
-const isPdfDelimiter = (c: number) => c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
+const isPdfDelimiter = (c: number) =>
+  c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
 
 /**
  * ¿El contenido no dibuja nada? Solo espacios, comentarios ("% DSBlank", que deja Acrobat en los campos de firma vacíos)
@@ -353,7 +406,14 @@ function emptyFieldSkippable(ctx: PDFContext, chain: PDFDict[]): boolean {
  * se saltea sin la lista estricta: del otro lado también se saltea, con las mismas condiciones (invisible y sin claves
  * prohibidas), así que lo que pre-creó el editor (/DV, una apariencia en blanco…) no lo vuelve "contenido".
  */
-function isEvidenceWidget(ctx: PDFContext, d: PDFDict, sig: SignatureField | null, evidence: Set<string>, widgets: Map<string, Set<unknown>>, signedLater = false): boolean {
+function isEvidenceWidget(
+  ctx: PDFContext,
+  d: PDFDict,
+  sig: SignatureField | null,
+  evidence: Set<string>,
+  widgets: Map<string, Set<unknown>>,
+  signedLater = false,
+): boolean {
   if (!sig || hasDeniedKeys(sig.chain) || !isInvisibleWidget(ctx, d)) return false;
   if (laterSignature(sig, evidence, widgets)) return true;
   return sig.empty && (signedLater || emptyFieldSkippable(ctx, sig.chain));
@@ -579,7 +639,8 @@ function pageFingerprints(doc: PDFDocument, evidence: Set<string>, signedLater: 
   const kidEvidence = new Map<PDFDict, boolean>();
   const isEvidenceKid = (kid: PDFDict, tag: string | null) => {
     let v = kidEvidence.get(kid);
-    if (v === undefined) kidEvidence.set(kid, (v = isEvidenceWidget(ctx, kid, signatureField(ctx, kid), evidence, widgets, !!tag && signedLater.has(tag))));
+    if (v === undefined)
+      kidEvidence.set(kid, (v = isEvidenceWidget(ctx, kid, signatureField(ctx, kid), evidence, widgets, !!tag && signedLater.has(tag))));
     return v;
   };
   return pages.map(({ node, annots }) => {
@@ -640,10 +701,12 @@ export async function changesAfterRevision(
     const loaded = current ?? (await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
     const signedBytes = pdf.subarray(0, end);
     const signed = await PDFDocument.load(signedBytes, { updateMetadata: false, ignoreEncryption: true });
-    const evidence = new Set([...laterSignatures].filter((k) => {
-      const [, , c, d] = k.split(",").map(Number);
-      return c + d > end;
-    }));
+    const evidence = new Set(
+      [...laterSignatures].filter((k) => {
+        const [, , c, d] = k.split(",").map(Number);
+        return c + d > end;
+      }),
+    );
     const docA = documentFingerprint(signed);
     // La huella de lo firmado depende de qué widgets firma después cada lectura (pageFingerprints, `signedLater`).
     const signedPages = new Map<string, string[]>();
@@ -690,10 +753,7 @@ function signedRevisionAmbiguous(pdf: Uint8Array, end: number, signed: PDFDocume
 // después), apuntar un objeto a una versión vieja dentro de lo firmado o marcarlo libre: pdf-lib vería lo firmado y el
 // lector otra cosa. Por eso, en las revisiones posteriores a la firma, cada objeto se toma de donde lo toma el lector.
 
-type XrefEntry =
-  | { num: number; kind: "n"; offset: number }
-  | { num: number; kind: "f" }
-  | { num: number; kind: "c"; stream: number };
+type XrefEntry = { num: number; kind: "n"; offset: number } | { num: number; kind: "f" } | { num: number; kind: "c"; stream: number };
 
 interface XrefSection {
   entries: XrefEntry[];
@@ -930,7 +990,12 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, s
   // seguir en el xref de la revisión firmada: con un /Prev a un xref más viejo (o sin /Prev) el lector resolvería esos
   // objetos con versiones anteriores a lo firmado (o no los encontraría), y pdf-lib seguiría viendo lo firmado.
   // La revisión firmada, leída con el mismo criterio que el documento completo.
-  const signedStarts = end > 0 ? viewerStarts(pdf.subarray(0, end)).filter((s) => s.shift === start.shift).map((s) => s.at) : [];
+  const signedStarts =
+    end > 0
+      ? viewerStarts(pdf.subarray(0, end))
+          .filter((s) => s.shift === start.shift)
+          .map((s) => s.at)
+      : [];
   let off: number | null = start.at;
   while (off !== null && off >= end) {
     if (seen.has(off) || off >= pdf.length) throw new Error("cadena de xref inválida");

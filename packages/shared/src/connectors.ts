@@ -138,7 +138,10 @@ export const ConnectorFlowInput = z.object({
    * el flujo solo se dispara si la entrega trae X-CalaSign-Signature: sha256=<hex HMAC-SHA256(secreto, cuerpo)> (o la
    * firma propia de HiBob/Factorial, ver docs/CONECTORES.md). La API nunca lo devuelve (webhookSigned dice si hay).
    */
-  webhookSecret: z.union([z.literal(""), z.string().min(16).max(200)]).optional().nullable(),
+  webhookSecret: z
+    .union([z.literal(""), z.string().min(16).max(200)])
+    .optional()
+    .nullable(),
   send: z.boolean().default(true),
   active: z.boolean().default(true),
 });

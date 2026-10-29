@@ -10,8 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-signing-complete-"));
 delete process.env.DATABASE_URL;
 
-type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
-type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+type Db = Awaited<ReturnType<(typeof import("../src/infra/db"))["createDb"]>>;
+type App = Awaited<ReturnType<(typeof import("../src/app"))["buildApp"]>>;
 let db: Db;
 let app: App;
 let tenant = "";
@@ -100,19 +100,27 @@ async function setup(fields: FieldSpec[], o: { consented?: boolean } = {}) {
   );
   const file = uuidv7();
   const doc = uuidv7();
-  await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`, [file, tenant]);
-  await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`, [
-    doc,
-    tenant,
-    envelope,
-    file,
-    JSON.stringify([{ width: 600, height: 800 }]),
-  ]);
+  await db.query(
+    `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k','application/pdf',1,'h')`,
+    [file, tenant],
+  );
+  await db.query(
+    `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'c.pdf',$4,1,$5)`,
+    [doc, tenant, envelope, file, JSON.stringify([{ width: 600, height: 800 }])],
+  );
   const ids: Record<string, string> = {};
   for (const f of fields) ids[f.key] = uuidv7();
   let y = 0;
   for (const f of fields) {
-    const conds = f.conditions ? JSON.stringify((f.conditions as { fieldKey: string; operator: string; value?: string }[]).map((c) => ({ fieldId: ids[c.fieldKey], operator: c.operator, value: c.value ?? null }))) : null;
+    const conds = f.conditions
+      ? JSON.stringify(
+          (f.conditions as { fieldKey: string; operator: string; value?: string }[]).map((c) => ({
+            fieldId: ids[c.fieldKey],
+            operator: c.operator,
+            value: c.value ?? null,
+          })),
+        )
+      : null;
     await db.query(
       `INSERT INTO fields (id, tenant_id, envelope_id, document_id, recipient_id, type, page, x, y, width, height, required, label, conditions)
        VALUES ($1,$2,$3,$4,$5,$6,0,0.1,$7,0.3,0.05,$8,$9,$10)`,
@@ -207,7 +215,10 @@ describe("completar: imagen de la firma", () => {
     expect((await db.one<any>(`SELECT kind, text FROM adopted_signatures WHERE recipient_id = $1`, [a.recipient])).text).toBeNull();
     const b = await setup([{ key: "sig", type: "signature" }]);
     expect((await complete(b.token, { fields: [], signature: { kind: "typed", imagePng: INKED, text: " Ana " } })).statusCode).toBe(200);
-    expect(await db.one<any>(`SELECT kind, text FROM adopted_signatures WHERE recipient_id = $1`, [b.recipient])).toEqual({ kind: "typed", text: "Ana" });
+    expect(await db.one<any>(`SELECT kind, text FROM adopted_signatures WHERE recipient_id = $1`, [b.recipient])).toEqual({
+      kind: "typed",
+      text: "Ana",
+    });
   });
 });
 
@@ -243,7 +254,12 @@ describe("completar: iniciales y automáticos en la lógica (mismo criterio que 
     const r = await complete(s.token, { fields: [], signature: { kind: "drawn", imagePng: INKED } });
     expect(r.statusCode).toBe(422);
     // Visibles (y obligatorios) los dos condicionados: iniciales "firmadas" con la firma y el nombre automático.
-    expect(r.json().error.details.fields.map((f: { id: string }) => f.id).sort()).toEqual([s.ids.t1, s.ids.t2].sort());
+    expect(
+      r
+        .json()
+        .error.details.fields.map((f: { id: string }) => f.id)
+        .sort(),
+    ).toEqual([s.ids.t1, s.ids.t2].sort());
   });
 
   it("signerFixedLogicValue: firma, iniciales y automáticos", async () => {
@@ -259,7 +275,9 @@ describe("completar: iniciales y automáticos en la lógica (mismo criterio que 
 
 describe("rechazar: la evidencia dice si la identidad estaba verificada o confirmada", () => {
   const lastDecline = (envelope: string) =>
-    db.one<any>(`SELECT actor_type, actor_id, actor_label, data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.declined'`, [envelope]);
+    db.one<any>(`SELECT actor_type, actor_id, actor_label, data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.declined'`, [
+      envelope,
+    ]);
 
   it("KYC pendiente: se puede rechazar y queda identityVerified: false", async () => {
     const s = await setup([{ key: "sig", type: "signature" }]);
@@ -289,10 +307,10 @@ describe("rechazar: la evidencia dice si la identidad estaba verificada o confir
       confirmed ? new Date() : null,
     ]);
     const cookie = randomToken();
-    await db.query(`INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person','127.0.0.1', now() + interval '1 hour')`, [
-      sha256Hex(cookie),
-      s.recipient,
-    ]);
+    await db.query(
+      `INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person','127.0.0.1', now() + interval '1 hour')`,
+      [sha256Hex(cookie), s.recipient],
+    );
     const r = await app.inject({ method: "POST", url: `/v1/signing/${s.token}/decline`, payload: { reason: "No" }, cookies: { cs_signer: cookie } });
     expect(r.statusCode).toBe(200);
     return { ...s, host, ev: await lastDecline(s.envelope) };

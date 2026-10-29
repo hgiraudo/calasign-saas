@@ -130,9 +130,71 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0062_ai_first_attempt` | `envelopes.ai_metadata_first_attempt_at`: primer intento de la extracción automática, para contar los 30 días de reintentos desde ahí (no desde que se completó el sobre) |
 | `0063_payment_webhooks_checkouts` | `payment_webhook_events.processed_at` (el evento se marca procesado al terminar); `envelope_payments.stale_checkout_ids` (cola de checkouts descartados a cerrar, reemplaza `stale_checkout_id`), `discarded_checkout_refs` y `checkout_ref` (un pago por un checkout descartado se reembolsa), `disputed_at` (contracargo o disputa en el proveedor) e índice por `provider_payment_id` |
 | `0064_subscription_cancellations_webhook_claims` | `subscription_cancellations` (suscripciones reemplazadas pendientes de cancelar en el proveedor; las reintenta el barrido) y `payment_webhook_events.claim_id` (quién tomó un evento en curso: solo esa toma suelta la marca). 0063 pasa a ser re-ejecutable |
+| `0065_subscription_cancellations_done` | `subscription_cancellations.done_at`: la suscripción reemplazada ya no se borra al cancelarla en el proveedor; un alta atrasada o reprocesada de ella no la vuelve a aplicar. El barrido toma solo las pendientes, con backoff |
+| `0066_download_links_issuer` | Links de descarga del MCP con la credencial que los pidió: al descargar se revalida que la API key o el token OAuth sigan vigentes (revocar al agente corta los links ya entregados) |
+| `0067_oauth_clients_created_by_key` | `oauth_clients.created_by_api_key`: la key que creó una app OAuth puede seguir administrándola mientras esté vigente |
+| `0068_webform_otp_limits` | Índices para contar los topes de formularios web por organización y de códigos de verificación por destino y por organización |
+| `0069_downloads_bytes_webform_lock_bulk_round` | Descargas del MCP: las continuaciones con `Range` valen solo poco después de una descarga contada y suman `bytes_served` (no se puede bajar el archivo entero una y otra vez) |
+| `0070_notification_feedback` | Rebotes y quejas de SES (`notifications.feedback_*`, `email_suppressions`), reintento por canal dentro del job, `telegram_link_tokens` y tope de recordatorios automáticos (`recipients.auto_reminders_sent`) |
+| `0071_suppression_scope_webform_submitter` | Supresión de correos con alcance: una queja suprime solo para la organización; un rebote permanente, para toda la plataforma y con vencimiento (`EMAIL_BOUNCE_SUPPRESSION_DAYS`). Ver `CORREO-REBOTES.md` |
+| `0072_evidence_append_only` | **Evidencia append-only en la base**: triggers que rechazan `UPDATE`/`DELETE`/`TRUNCATE` en `envelope_events` y `account_audit_log` (ver `EVIDENCIA-ROLES-BD.md`) |
+| `0073_workflow_public_hardening` | Workflows de inicio público: huella (HMAC de workflow + correo + IP/64) de quien completó el formulario, para no aceptar el mismo envío repetido |
+| `0074_signed_chain_head_draft_guard` | `files.chain_head`: hash final de la cadena impreso en el certificado de un PDF sellado (la verificación pública no parsea el PDF); un sobre no vuelve a borrador desde otro estado |
+| `0075_ai_usage_recipient` | El cupo de consultas de IA del firmante se cuenta en `ai_usage`, con el destinatario, y se consume al reservar (antes de llamar al modelo) |
+| `0076_chain_head_guard_public_runs` | `files.chain_head` una vez fijado no cambia (solo `NULL` → valor, salvo mantenimiento explícito) |
+| `0077_identity_sso_scim_hardening` | SSO y SCIM: `scim_users.deleted_at`, `sso_configs.oidc_trust_unverified_email` y `session_ttl_hours` (1-336 h), `saml_assertion_ids` contra la reutilización de aserciones SAML |
+| `0078_byok_key_history` | Historial de claves BYOK por organización: una falla de KMS se atribuye a la organización solo si la clave con que se cifró el archivo es o fue suya |
+| `0079_identity_sso_compat` | Compatibilidad de 0077 con lo que ya estaba en uso: los OIDC existentes conservan la confianza en correos no verificados y las sesiones SSO abiertas, su vencimiento |
+| `0080_oauth_sso_session_deadline` | Tokens OAuth autorizados desde una sesión SSO: el tope de la familia es el mínimo entre el vencimiento de esa sesión y la duración de la conexión |
+| `0081_integrations_history_webhook_secret` | Desconectar un CRM o conector ya no borra el historial de ejecuciones (`connection_id` → `NULL`); `connector_flows.webhook_secret_enc` |
+| `0082_white_label_texts_frame_ancestors` | Limpia configuraciones guardadas antes de dos validaciones nuevas: textos propios protegidos de la verificación pública y orígenes inválidos de `frame-ancestors` |
+| `0083_signer_session_tokens` | `signer_session_tokens`: el canje de la URL embebida redirige a un token de sesión, no al token permanente del destinatario; `envelope_payments.checkout_return_token_enc` |
+| `0084_signer_session_tokens_purge_return` | Índices para la purga de tokens de sesión del firmante vencidos o revocados (barrido, de a 5000) |
+| `0085_jobs_maintenance` | `jobs.priority` y los índices de toma por prioridad, pendientes, en curso y terminados |
+| `0086_jobs_purge_checked_connector_runs_idx` | `jobs.purge_checked_at` y su índice para `purgeFinishedJobs`; índice de reentregas de webhooks de conectores |
+| `0087_webhook_health` | Webhooks salientes: `consecutive_failures`, `failing_since`, `last_success_at`, desactivación automática con motivo, idempotencia del fan-out y retención de entregas |
+| `0088_agreements_title_trgm_templates_cursor` | Búsqueda de acuerdos por título con índice trigram sobre el título plegado (la expresión es exactamente la de `titleFoldSql`) |
+| `0089_subscription_cancel_at` | Baja programada de la suscripción (`cancel_at`): la consola muestra «Termina el …» |
+| `0090_agreements_title_fold_v2` | `pg_trgm` de nuevo (instancias creadas sin `postgresql-contrib`) y el índice trigram con la expresión nueva de `titleFoldSql` |
+| `0091_identity_result_masked` | `identity_verifications.result` enmascarado: documento con asteriscos y los últimos 4, del nacimiento solo el año (también los existentes) |
+| `0092_certsign_id_match_default` | Firma con certificado: «el certificado tiene que corresponder al documento» pasa a `false` por defecto; se apaga en los roles de plantilla |
+| `0094_certsign_id_match_explicit` | Los sobres no terminados armados con la regla vieja conservan explícito (`true`) el control de documento que tenían (no existe la `0093`) |
+| `0095_member_removals` | `member_removals`: una baja desde la consola se sostiene frente al alta JIT por SSO y la activación por SCIM, hasta una invitación nueva |
+| `0096_sweep_backoff` | Barridos que no se traban con un sobre o archivo que falla siempre: intentos y error registrados, backoff (retención, `pending_file_deletions`). Sus índices pasaron a 0098-0100 |
+| `0097_member_removals_user_idx` | Índice de `member_removals` por usuario (baja de la cuenta, liberación de bloqueos JIT/SCIM) |
+| `0098_envelopes_finalizing_idx` | `-- no-transaction`: índice de sobres en `finalizing` para el barrido de finalizaciones agotadas |
+| `0099_jobs_finalize_envelope_idx` | `-- no-transaction`: índice de jobs de finalización por sobre |
+| `0100_envelopes_awaiting_cert_reminders_idx` | `-- no-transaction`: índice para recordatorios y vencimientos de sobres esperando firmas con certificado |
+| `0101_ai_metadata_failures` | Extracción automática de metadatos: contador de fallas no clasificadas seguidas; pasado el tope no se reintenta (cada intento se cobra) |
+| `0102_pending_file_deletions_storage_key` | Borrado de archivos en dos fases: la fila de `files` se borra en una transacción corta y la clave queda anotada para borrar el archivo después |
+| `0103_bulk_items_retryable` | Envío masivo: si una fila fallida se puede reintentar (falla del momento) o no (sus datos o la plantilla) |
+| `0104_bulk_items_line` | Envío masivo: línea del CSV de origen de cada fila, aparte del número de fila de datos |
+| `0105_account_audit_log_tenant_id_idx` | `-- no-transaction`: índice de la auditoría por organización e id descendente (paginación por cursor) |
+| `0106_account_audit_log_actor_action_idx` | `-- no-transaction`: índice por actor y acción para el bloqueo por intentos fallidos y la deduplicación de descargas |
+| `0107_agreements_retention` | Retención de datos de workflows y negociaciones terminados; la IP del inicio público pasa a `started_by_ip` (solo la ve la auditoría) |
+| `0108_email_domains_ses_identity_error` | El rechazo de SES por identidad sin verificar en su propia columna (un error de DNS ya no lo pisa) |
+| `0109_identity_cancel_on_close` | Trigger: al cerrarse un sobre se cancelan sus verificaciones de identidad en curso, venga de donde venga el cierre |
+| `0110_identity_polled_at_and_close_backfill` | `identity_verifications.polled_at` (consulta del firmante) separado de `updated_at` (actividad del proveedor, desde donde corre el plazo) |
+| `0111_identity_verifications_active_envelope_idx` | Índice parcial de verificaciones en curso por sobre (lo usa el trigger de 0109) |
+| `0112_identity_session_binding` | La verificación de identidad queda atada al token de sesión del canje embebido desde el que se inició |
+| `0113_embed_sessions_replay_code` | Código de un solo uso de la URL de firma de la creación rápida, cifrado: repetir el pedido con la misma `Idempotency-Key` devuelve el mismo código |
+| `0114_identity_verifications_stale_idx` | Índice parcial de verificaciones pendientes por última actividad (barrido de vencidas) |
+| `0115_jobs_cell` | `jobs.cell`: cada job solo lo toma un worker que atiende la celda de su organización (`SERVED_CELLS`) |
+| `0116_archive_renewed_at_tenant_alerts_storage_reason` | `envelopes.archive_renewed_at` (el intervalo del sello de archivo se mide desde la última renovación exitosa), `tenant_alerts`, `storage_connections.deactivated_reason` |
+| `0117_identity_verifications_integration_level` | Nivel que declaraba la integración del proveedor de identidad al iniciar la verificación (un cambio de configuración no afecta a las en curso) |
+| `0118_jobs_cell_agreements_backfill` | Celda de los jobs de acuerdos que llevan solo el id del run, la negociación o el acuerdo (0115 los había dejado sin celda) |
+| `0119_jobs_cell_claim_idx` | Índice de toma de jobs por celda (`cell, run_at, id`), parcial sobre los pendientes |
+| `0120_jobs_cell_claim_priority_idx` | Como 0119, para las prioridades altas (`cell, priority, run_at, id`) |
+| `0121_storage_connections_account_sub` | `sub` de la cuenta de Google de una conexión de Drive: al desconectar se revoca en Google solo si ninguna otra conexión usa la misma cuenta |
+| `0122_staff_auth_sessions_lockout` | Sesiones del personal: id visible, `authenticated_at` (re-autenticación), `last_seen_at` (cierre por inactividad), «recordarme»; bloqueo de login por red (`login_attempts.scope`, `password_resets.ip_key`) |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.
+Las reglas completas, con el porqué, están en [`estandares/codigo-sql-y-migraciones.md` §4](estandares/codigo-sql-y-migraciones.md#4-migraciones);
+`node scripts/check-calidad.mjs` (en `qa.sh` y en el hook de pre-commit) verifica el nombre, que el número no se repita
+y que no se edite una migración ya versionada. La `0052` está repetida desde antes (dos ramas en paralelo tomaron el
+mismo número; ya se aplicaron, así que no se renombran). No existen la `0037`, la `0039` a la `0041` ni la `0093`: números
+que quedaron sin usar (no hace falta llenarlos).
 
 Cada migración corre entera en su propia transacción (`migrate` en `apps/api/src/infra/db.ts`, con un candado para que
 dos procesos que arrancan juntos no la apliquen dos veces), salvo las que llevan `-- no-transaction` como primera

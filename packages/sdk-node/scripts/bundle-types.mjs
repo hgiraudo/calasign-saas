@@ -133,7 +133,10 @@ function print(type, depth = 0, top = false) {
 function printUnion(types, depth) {
   // boolean llega como true | false: se vuelve a juntar.
   const parts = types.map((t) => print(t, depth + 1));
-  if (parts.includes("true") && parts.includes("false")) parts.splice(parts.indexOf("false"), 1, "boolean"), parts.splice(parts.indexOf("true"), 1);
+  if (parts.includes("true") && parts.includes("false")) {
+    parts.splice(parts.indexOf("false"), 1, "boolean");
+    parts.splice(parts.indexOf("true"), 1);
+  }
   return parts.map((p) => (/=>/.test(p) ? `(${p})` : p)).join(" | ");
 }
 

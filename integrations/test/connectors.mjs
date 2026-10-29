@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import Module, { createRequire } from "node:module";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -115,7 +115,10 @@ await test("power automate: reglas de certificación en cada operación y parám
   const refs = [];
   (function collect(n) {
     if (Array.isArray(n)) n.forEach(collect);
-    else if (n && typeof n === "object") for (const [k, v] of Object.entries(n)) k === "$ref" ? refs.push(v) : collect(v);
+    else if (n && typeof n === "object")
+      for (const [k, v] of Object.entries(n))
+        if (k === "$ref") refs.push(v);
+        else collect(v);
   })(swagger);
   for (const r of refs) assert.ok(swagger.definitions[r.replace("#/definitions/", "")], `$ref roto ${r}`);
   for (const [path, item] of Object.entries(swagger.paths)) {

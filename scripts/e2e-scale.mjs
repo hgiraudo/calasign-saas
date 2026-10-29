@@ -222,7 +222,7 @@ step("plantilla con condiciones y fórmula; fórmulas inválidas, autorreferenci
 // ───────────────────────────── Envío masivo ─────────────────────────────
 
 const skeleton = await (await api("GET", `/v1/templates/${template.id}/bulk-csv`, null, { raw: true })).text();
-const header = skeleton.replace(/^﻿/, "").split("\r\n")[0];
+const header = skeleton.replace(/^\uFEFF/, "").split("\r\n")[0];
 assert(
   header.includes("Cliente.email") && header.includes("Empresa.name") && header.includes("field.Precio") && !header.includes("field.Total"),
   `CSV de ejemplo: ${header}`,

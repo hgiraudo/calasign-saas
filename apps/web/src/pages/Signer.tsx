@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
 import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose, signingDateForDisplay } from "@calasign/shared";
 import { api, errorText, fetchResponse, HttpError, problemFields, readBody } from "../lib/api";
-import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
@@ -423,7 +423,6 @@ function BrandOrg({ org, branding }: { org?: string; branding?: SessionBranding 
 }
 
 function SignerShell({ children, org, branding }: { children: ReactNode; org?: string; branding?: SessionBranding }) {
-  const { t } = useI18n();
   return (
     <div className="signer">
       <header className="signer-bar" style={brandBarStyle(branding)}>

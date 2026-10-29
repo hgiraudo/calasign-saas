@@ -16,15 +16,21 @@
     "qa:e2e": "bash scripts/qa.sh --e2e",
     "calidad": "node scripts/check-calidad.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings 4"
   },
   "devDependencies": {
     "@aws-sdk/client-kms": "^3.1152.0",
     "@aws-sdk/client-ssm": "^3.1152.0",
     "@calasign/pdf": "workspace:^",
+    "@eslint/js": "9.17.0",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "eslint": "9.17.0",
+    "eslint-plugin-react-hooks": "5.1.0",
+    "globals": "15.14.0",
     "prettier": "3.3.3",
     "tsx": "^4.23.15",
+    "typescript-eslint": "8.18.1",
     "xml-crypto": "6.4.0"
   },
   "type": "module",

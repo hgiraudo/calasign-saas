@@ -524,7 +524,6 @@ export function statusRank(s: string | null | undefined): number {
   if (!s) return 0;
   return s === "sent" ? 1 : 2;
 }
-const STATUS_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
 /** Write-back que falló de forma definitiva sin llegar a escribir el estado: last_status vuelve al valor anterior
  *  (solo si nadie lo cambió después del reclamo) y queda registrado en la actividad. */

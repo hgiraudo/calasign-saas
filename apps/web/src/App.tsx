@@ -12,7 +12,6 @@ import { Spinner } from "./components/ui";
  * páginas. Un trozo que ya no existe tras un deploy recarga la página (vite:preloadError en main.tsx) o, si persiste,
  * muestra RouteError.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function page<K extends string, M extends Record<K, ComponentType<any>>>(load: () => Promise<M>, name: K) {
   return lazy(() => load().then((m) => ({ default: m[name] })));
 }

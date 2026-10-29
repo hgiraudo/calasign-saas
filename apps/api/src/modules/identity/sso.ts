@@ -7,7 +7,7 @@ import { SAML, ValidateInResponseTo, type CacheProvider } from "@node-saml/node-
 import { SsoDiscoverInput, SsoSettingsInput, type SsoDiscoverResponse, type SsoSettings } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
-import { AppError, badRequest, conflict, forbidden } from "../../lib/errors";
+import { AppError, badRequest, forbidden } from "../../lib/errors";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { auditFromRequest, changedValues, recordAudit } from "../audit";
 import { authenticate, clientInfo, setSessionCookie, type AuthContext, type Services } from "../context";

@@ -932,7 +932,6 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (n.data_purged_at) throw purgedError();
     return { p, n };
   }
-  const partAuthor = (p: any): NegotiationAuthor => ({ type: "participant", name: p.name });
 
   app.get<{ Params: { token: string } }>("/v1/public/negotiations/:token", rl, async (req) => {
     const { p, n } = await participantFor(req.params.token);

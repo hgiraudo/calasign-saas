@@ -286,7 +286,7 @@ function realZ(bundle) {
 const bundle = { authData: { apiKey: KEY }, inputData: {} };
 const z = realZ(bundle);
 
-(await app.authentication.test.url) && (await z.request({ url: app.authentication.test.url }));
+if (await app.authentication.test.url) await z.request({ url: app.authentication.test.url });
 const sub = await app.triggers.envelope_completed.operation.performSubscribe(z, { ...bundle, targetUrl: `${RECV}/zapier` });
 assert(sub.webhook.id && sub.secret, "Zapier: suscripción REST hook");
 step("Zapier: test de autenticación y suscripción REST hook");

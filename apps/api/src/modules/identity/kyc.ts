@@ -42,7 +42,6 @@ import {
   withIntegrationCapabilities,
 } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
-import { tenantBaseUrl } from "../custom-domains";
 import { requireFeature, tenantPlan } from "../billing/plans";
 import { discardBlobsOnFailure } from "../file-cleanup";
 

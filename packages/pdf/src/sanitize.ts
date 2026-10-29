@@ -469,7 +469,7 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
 // ───────────────────── Contenido marcado sin cerrar ─────────────────────
 
 /** Diccionario de una imagen en línea cuyo (primer) filtro es ASCII85: `/F /A85`, `/Filter [/ASCII85Decode …]`. */
-const A85_INLINE = /\/(?:F|Filter)\s*(?:\[\s*)?\/(?:A85|ASCII85Decode)(?![^\s\/\[\]<>()%{}])/;
+const A85_INLINE = /\/(?:F|Filter)\s*(?:\[\s*)?\/(?:A85|ASCII85Decode)(?![^\s/[\]<>()%{}])/;
 
 const isWhite = (c: number) => c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
 const isDelim = (c: number) =>

@@ -8,7 +8,7 @@ import type { BlobStore } from "../../infra/storage";
 import { sha256Hex } from "../../lib/util";
 import type { Services } from "../context";
 import { signerTokenHash } from "../signer-token";
-import { assetPath, brandForHost, productLabel, publicTheme, rebrands, resolveBrand, type ResolvedBrand } from "./brand";
+import { assetPath, productLabel, publicTheme, rebrands, resolveBrand, type ResolvedBrand } from "./brand";
 import { brandFromKeyOrHost, whiteLabelRoutes } from "./routes";
 
 export { applyEnvelopeBrand, recheckWhiteLabelDomains } from "./routes";

@@ -16,7 +16,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent, type Actor } from "../../infra/evidence";
 import { AppError, assertNotStale, badRequest, conflict, notFound } from "../../lib/errors";
-import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, resolveToken } from "../signing";

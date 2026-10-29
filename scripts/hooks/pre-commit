@@ -3,7 +3,8 @@
 #   1. secretos en texto plano en las líneas agregadas (claves de AWS, privadas, de Anthropic, Stripe, Mercado Pago,
 #      Slack, GitHub, Google, Telegram y API keys cs_live_) y archivos que nunca se versionan (.env, tfstate, .p12…)
 #   2. el trinquete de calidad sobre los archivos en stage (scripts/check-calidad.mjs --staged)
-#   3. bash -n de los scripts de shell en stage
+#   3. prettier --check y eslint (sólo errores) sobre los .ts/.tsx/.js en stage
+#   4. bash -n de los scripts de shell en stage
 # Instalarlo (una vez por clon):   git config core.hooksPath scripts/hooks
 # Saltearlo, sólo ante un falso positivo y diciéndolo en el commit:   git commit --no-verify
 set -uo pipefail
@@ -32,7 +33,18 @@ fi
 # ── 2. trinquete de calidad ──
 if ! node scripts/check-calidad.mjs --staged; then fail=1; fi
 
-# ── 3. scripts de shell ──
+# ── 3. formato y lint de los archivos en stage (contenido del working tree: con `git add -p` puede diferir) ──
+code=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx|mts|mjs|cjs|js)$' || true)
+if [ -n "$code" ]; then
+  if ! echo "$code" | xargs ./node_modules/.bin/prettier --check --log-level warn; then
+    echo "✗ pre-commit: formato. Corré: corepack pnpm format   (o prettier --write sobre esos archivos)" >&2; fail=1
+  fi
+  if ! echo "$code" | xargs ./node_modules/.bin/eslint --no-warn-ignored --quiet; then
+    echo "✗ pre-commit: eslint con errores en lo que está en stage" >&2; fail=1
+  fi
+fi
+
+# ── 4. scripts de shell ──
 for f in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.sh$|^scripts/hooks/' || true); do
   if ! git show ":$f" | bash -n 2>/tmp/.calasign-bash-n.$$; then
     echo "✗ pre-commit: $f no pasa bash -n:" >&2; sed 's/^/    /' /tmp/.calasign-bash-n.$$ >&2; fail=1

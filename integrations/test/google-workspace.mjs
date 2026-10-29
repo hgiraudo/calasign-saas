@@ -810,7 +810,7 @@ await test("drive: guardar el firmado al abrir (carpeta original → copia → c
 });
 
 await test("oauth: sin sesión → tarjeta de login; registro dinámico (una vez) y servicio con PKCE S256", () => {
-  const routes = (url, p) => {
+  const routes = (url, _p) => {
     if (url === `${BASE}/oauth/register`) return response(201, { client_id: "cid-123" });
     return response(404, {});
   };
@@ -861,7 +861,7 @@ await test("oauth: con token usa Bearer del token; cerrar sesión revoca el refr
 
 await test("api key: se valida contra CalaSign antes de guardarla; 401 después la borra y vuelve al login", () => {
   let valid = true;
-  const routes = (url, p) => {
+  const routes = (url, _p) => {
     if (url === `${BASE}/oauth/register`) return response(201, { client_id: "cid" });
     if (url.endsWith("limit=1")) return response(valid ? 200 : 401, { items: [] });
     if (url.endsWith("limit=8")) return response(200, LIST);

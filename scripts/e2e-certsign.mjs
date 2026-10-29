@@ -7,7 +7,7 @@
 // reporte de /v1/validate y progreso del remitente. Si hay SoftHSM, prueba también la fuente PKCS#11.
 // Uso: node scripts/e2e-certsign.mjs      (no recibe URL: usa la API que levanta en el puerto 4118)
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

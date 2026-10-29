@@ -82,7 +82,6 @@ import {
   BulkSendSchema,
   BulkValidationResultSchema,
   CustomRoleSchema,
-  DocumentSchema,
   UploadedDocumentSchema,
   EnvelopeDetailSchema,
   EnvelopeEventSchema,

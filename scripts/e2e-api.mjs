@@ -388,10 +388,7 @@ try {
       "secreto nuevo y vigencia del anterior",
     );
     await api("POST", `/v1/webhooks/${webhook.id}/test`, null, { expect: 202 });
-    const d1 = await waitDelivery(
-      (d, i) => received.indexOf(d) >= before && d.headers["calasign-event-type"] === "webhook.test",
-      "test con dos firmas",
-    );
+    const d1 = await waitDelivery((d) => received.indexOf(d) >= before && d.headers["calasign-event-type"] === "webhook.test", "test con dos firmas");
     const [tPart] = d1.headers["calasign-signature"].split(",");
     const t = tPart.slice(2);
     const sigs = sigsOf(d1.headers["calasign-signature"]);

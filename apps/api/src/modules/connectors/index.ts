@@ -576,8 +576,6 @@ async function writeBack(
   return detail;
 }
 
-const LINK_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
-
 export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: JobContext) {
   const { db } = d;
   const run = await db.one<any>(`SELECT * FROM connector_runs WHERE id = $1`, [p.runId]);

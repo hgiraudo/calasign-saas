@@ -118,7 +118,6 @@ export function AgreementsPage() {
       if (latest.current.appliedQ !== q.trim()) latest.current.setParam("q", q.trim());
     }, 350);
     return () => window.clearTimeout(h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
   const loadMore = async () => {

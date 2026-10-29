@@ -20,7 +20,6 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   CertsignCertificateInput,
   CertsignSignatureInput,
-  type CertificateRequirements,
   type CertsignPairing,
   type CertsignPrepared,
   type CertsignResult,

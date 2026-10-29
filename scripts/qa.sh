@@ -78,6 +78,10 @@ static_checks() {
     run "tsc $(basename "$p")" "$p" ./node_modules/.bin/tsc --noEmit
   done
   echo "▶ reglas"
+  run "prettier --check" . ./node_modules/.bin/prettier --check . --log-level warn
+  # Errores: cero. Avisos (react-hooks/exhaustive-deps): el total no sube del medido. Si un arreglo lo baja, bajá
+  # ESLINT_MAX_WARNINGS el mismo día (docs/estandares/tests-automatizados.md §4.2).
+  run "eslint" . ./node_modules/.bin/eslint . --max-warnings "${ESLINT_MAX_WARNINGS:-4}"
   run "calidad (trinquete)" . node scripts/check-calidad.mjs
   run "códigos de error i18n" . node scripts/check-error-codes.mjs
   local sh_ok=1

@@ -1361,7 +1361,7 @@ const OPS: Op[] = [
     tag: "Firmante",
     summary: "Pedir un link para dibujar la firma en el celular",
     description:
-      "Crea un pase de un solo uso que vence a los 10 minutos, atado a este destinatario y sobre, y devuelve la URL corta (/h/<token>) para abrir en el celular; un pase nuevo deja sin efecto los anteriores sin usar. Mismas guardas que completar la firma (código OTP, identidad, consentimiento, turno; 409 consent_required, not_your_turn, not_signable; 410 envelope_closed). Con `channel` además manda el link (ver …/send). La firma se adopta después desde esta sesión: POST …/complete con `signature.handoffId`. 429 handoff_too_many (20 por hora).",
+      "Crea un pase de un solo uso que vence a los 10 minutos, atado a este destinatario y sobre, y devuelve la URL corta (/h/<token>) para abrir en el celular; un pase nuevo deja sin efecto los anteriores sin usar. Mismas guardas que completar la firma (código OTP, identidad, consentimiento, turno; 409 consent_required, not_your_turn, not_signable; 410 envelope_closed). Con `channel` además manda el link (ver …/send); si el envío falla, el error (429, 409, 502) trae el pase creado en `details.handoff` para copiar el link o reenviarlo. Un pase pedido con un link de firma anterior (se corrigió el contacto) da 404 en las demás rutas y no se acepta en …/complete. La firma se adopta después desde esta sesión: POST …/complete con `signature.handoffId`. 429 handoff_too_many (20 por hora).",
     body: CreateSignatureHandoffInput,
     response: z.object({
       id: z.string().uuid(),

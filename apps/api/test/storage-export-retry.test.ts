@@ -322,3 +322,57 @@ describe("revocación de tokens al desconectar", () => {
     expect(await revokeProviderToken("gdrive", { refresh_token: "r" })).toEqual({ ok: false, error: "HTTP 503" });
   });
 });
+
+describe("renovación del sello: la copia anterior se reemplaza, no se duplica", () => {
+  const bytes = new TextEncoder().encode("%PDF-renovado");
+  const base = { envelopeId: "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000", kind: "pdf" as const, retry: false };
+
+  it("Dropbox: overwrite sobre la ruta de la exportación anterior (aunque haya quedado renombrada)", async () => {
+    const calls = mockFetch(() => json(200, { path_display: "/F/C (1).pdf" }));
+    const r = await uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
+      ...base,
+      replace: { ref: "dropbox:/F/C (1).pdf" },
+    });
+    expect(JSON.parse(String((calls[0].init.headers as any)["dropbox-api-arg"]))).toMatchObject({
+      path: "/F/C (1).pdf",
+      mode: "overwrite",
+      autorename: false,
+    });
+    expect(r.ref).toBe("dropbox:/F/C (1).pdf");
+    // La evidencia no tiene ref propio: se reemplaza por nombre.
+    const ev = mockFetch(() => json(200, { path_display: "/F/C - evidencia.json" }));
+    await uploadDropbox(creds, { folder: "F" }, "C - evidencia.json", bytes, "application/json", undefined, {
+      ...base,
+      kind: "evidence",
+      replace: { ref: "dropbox:/F/C (1).pdf" },
+    });
+    expect(JSON.parse(String((ev[0].init.headers as any)["dropbox-api-arg"]))).toMatchObject({ path: "/F/C - evidencia.json", mode: "overwrite" });
+  });
+
+  it("OneDrive/SharePoint: conflictBehavior=replace (también en la sesión de carga de archivos grandes)", async () => {
+    const { uploadOnedrive } = await import("../src/modules/storage-export");
+    let calls = mockFetch(() => json(200, { id: "o1", webUrl: "https://od/o1" }));
+    await uploadOnedrive(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, { ...base, replace: { ref: "https://od/o1" } });
+    expect(calls.find((c) => c.init.method === "PUT")!.url).toContain("conflictBehavior=replace");
+    const big = new Uint8Array(4 * 1024 * 1024 + 1);
+    calls = mockFetch((url) => (url.endsWith("createUploadSession") ? json(200, { uploadUrl: "https://up/s" }) : json(201, { id: "o1" })));
+    await uploadOnedrive(creds, { folder: "F" }, "C.pdf", big, "application/pdf", undefined, { ...base, replace: { ref: "https://od/o1" } });
+    const session = calls.find((c) => c.url.endsWith("createUploadSession"))!;
+    expect(JSON.parse(String(session.init.body)).item["@microsoft.graph.conflictBehavior"]).toBe("replace");
+  });
+
+  it("Box: con el nombre ocupado por la copia anterior, sube una versión nueva de ese archivo", async () => {
+    const { uploadBox } = await import("../src/modules/storage-export");
+    let n = 0;
+    const calls = mockFetch(() =>
+      n++ === 0 ? json(409, { context_info: { conflicts: [{ id: "77", sha1: "viejo" }] } }) : json(201, { entries: [{ id: "77" }] }),
+    );
+    const r = await uploadBox(creds, { folderId: "5", folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
+      ...base,
+      replace: { ref: "box:77" },
+    });
+    expect(r.ref).toBe("box:77");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url).toContain("/api/2.0/files/77/content");
+  });
+});

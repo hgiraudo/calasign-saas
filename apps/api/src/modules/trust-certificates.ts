@@ -13,12 +13,13 @@ interface CaCert {
   info: TrustCertificate;
 }
 
-let cache: CaCert[] | null = null;
+/** Atado a la cadena que devuelve el proveedor del sello: si cambia (sello renovado bajo otra CA), se recalcula. */
+let cache: { chain: Uint8Array[]; items: CaCert[] } | null = null;
 
 /** Las autoridades de la cadena del sello (sin el certificado del sello), de la raíz hacia abajo. */
 export async function sealAuthorities(): Promise<CaCert[]> {
-  if (cache) return cache;
   const chain = await (await getSealProvider()).certificateChain();
+  if (cache?.chain === chain) return cache.items;
   const out: CaCert[] = [];
   for (const der of chain.slice(1)) {
     const c = parseCert(der);
@@ -39,7 +40,7 @@ export async function sealAuthorities(): Promise<CaCert[]> {
   }
   // La raíz primero: es la que se marca como de confianza en Acrobat.
   out.sort((a, b) => Number(b.info.root) - Number(a.info.root));
-  cache = out;
+  cache = { chain, items: out };
   return out;
 }
 

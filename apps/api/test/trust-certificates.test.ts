@@ -73,4 +73,21 @@ describe("certificados de confianza de CalaSign", () => {
       expect((await app.inject({ method: "GET", url: `/v1/public/trust-certificates/${file}` })).statusCode, file).toBe(404);
     }
   });
+
+  it("si el proveedor del sello pasa a otra cadena, la lista la sigue (no queda la del arranque)", async () => {
+    const { getSealProvider } = await import("../src/infra/seal");
+    const provider = await getSealProvider();
+    const chain = await provider.certificateChain();
+    const list = async () => (await app.inject({ method: "GET", url: "/v1/public/trust-certificates" })).json().items as unknown[];
+    expect((await list()).length).toBe(chain.length - 1);
+    // Otra cadena (acá, sin autoridades): la lista cambia sin reiniciar.
+    const original = provider.certificateChain.bind(provider);
+    provider.certificateChain = async () => [chain[0]!];
+    try {
+      expect(await list()).toEqual([]);
+    } finally {
+      provider.certificateChain = original;
+    }
+    expect((await list()).length).toBe(chain.length - 1);
+  });
 });

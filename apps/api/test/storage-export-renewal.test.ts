@@ -22,12 +22,14 @@ afterEach(() => {
 
 /** Dropbox simulado: registra los bytes de cada subida; get_metadata no encuentra nada (no hay copia que reutilizar). */
 function mockDropbox() {
-  const uploads: Buffer[] = [];
+  const uploads: Buffer[] & { args?: any[] } = [];
+  uploads.args = [];
   globalThis.fetch = (async (u: any, init: any = {}) => {
     const url = String(u);
     if (url.endsWith("/files/get_metadata")) return new Response('{"error_summary":"path/not_found/"}', { status: 409 });
     if (url.endsWith("/files/upload")) {
       uploads.push(Buffer.from(init.body));
+      uploads.args!.push(JSON.parse(String(init.headers["dropbox-api-arg"])));
       return new Response(JSON.stringify({ path_display: `/CalaSign/f${uploads.length}.pdf` }), { status: 200 });
     }
     return new Response("inesperado", { status: 500 });
@@ -118,6 +120,8 @@ describe("renovación del sello de archivo y copias exportadas", () => {
     await se.exportEnvelopeJob(db, blobs, { connectionId: conn, envelopeId: env });
     expect(uploads).toHaveLength(1);
     expect(uploads[0].equals(Buffer.from(renewed.bytes))).toBe(true);
+    // Reemplaza la copia anterior (Dropbox guarda la versión vieja), no suma «c (1).pdf» al lado.
+    expect(uploads.args![0]).toMatchObject({ path: "/CalaSign/c.pdf", mode: "overwrite", autorename: false });
     expect(await exportRow(ex)).toMatchObject({ status: "succeeded", pdf_sha256: renewed.sha, remote_ref: "dropbox:/CalaSign/f1.pdf" });
 
     // Idempotente: otro trabajo (reintento de la cola) no vuelve a subir.

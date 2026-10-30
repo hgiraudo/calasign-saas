@@ -446,16 +446,18 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing, fields: missingFields });
         if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid, fields: invalidFields });
 
-        // Firma dibujada en el celular: el pase es de este destinatario y sobre, ya recibió la firma y la imagen es
-        // exactamente la que llegó (si no, cualquiera podía decir que su firma se dibujó en otro dispositivo).
+        // Firma dibujada en el celular: el pase es de este destinatario y sobre, se pidió con su link vigente (una
+        // corrección del contacto lo revoca), ya recibió la firma y la imagen es exactamente la que llegó (si no,
+        // cualquiera podía decir que su firma se dibujó en otro dispositivo).
         const devices = new Map<string, { handoffId: string; ip: string | null; userAgent: string | null; submittedAt: string }>();
         for (const x of stored) {
           const meta = x.purpose === "signature" ? input.signature : input.initials;
           if (!meta?.handoffId) continue;
           const h = await t.one<SubmittedHandoffRow>(
             `SELECT id, submitted_ip, submitted_user_agent, submitted_at FROM signature_handoffs
-              WHERE id = $1 AND recipient_id = $2 AND envelope_id = $3 AND purpose = $4 AND submitted_at IS NOT NULL AND image_sha256 = $5`,
-            [meta.handoffId, r.id, e.id, x.purpose, sha256Hex(x.png)],
+              WHERE id = $1 AND recipient_id = $2 AND envelope_id = $3 AND purpose = $4 AND submitted_at IS NOT NULL AND image_sha256 = $5
+                AND access_token_hash = $6`,
+            [meta.handoffId, r.id, e.id, x.purpose, sha256Hex(x.png), r.access_token_hash],
           );
           if (!h || meta.kind !== "drawn")
             throw badRequest("invalid_handoff", "La firma del celular no corresponde a este pase: volvé a dibujarla o pedí otro link");

@@ -22,13 +22,14 @@ import { rateLimitIpKey } from "../lib/ip";
 import { AppError, conflict, notFound } from "../lib/errors";
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
+import { scrubPii } from "../notifications/outbound";
 import { getSmsProvider } from "../notifications/sms";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { currentSignerGroup, lockEnvelope, pastExpiry } from "./envelopes";
 import { normalizeOtpDestination } from "./otp";
 import { assertCanComplete, assertLinkCurrent, decodeSignaturePng, recipientActor, resolveToken } from "./signing";
-import { envelopeBaseUrl } from "./white-label/brand";
+import { brandForEnvelope, envelopeBaseUrl } from "./white-label/brand";
 
 /** Token del pase en la URL: randomToken() de 32 bytes (256 bits) en base64url. */
 const HANDOFF_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -78,6 +79,7 @@ interface EnvelopeRow {
   locale: string | null;
   subject: string | null;
   created_by: string | null;
+  brand_id: string | null;
 }
 
 const MSG = {
@@ -134,9 +136,15 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
     config: { rateLimit: { max, timeWindow: "1 minute", keyGenerator: (req: FastifyRequest) => rateLimitIpKey(req.ip) } },
   });
 
-  /** Pase del destinatario del link (404 si es de otro destinatario o sobre, aunque sea de la misma organización). */
+  /**
+   * Pase del destinatario del link (404 si es de otro destinatario o sobre, aunque sea de la misma organización, o si se
+   * pidió con un link de firma anterior: una corrección del contacto lo revoca, como en el celular con liveHandoff).
+   */
   async function ownHandoff(db: Db, r: SignerRow, e: EnvelopeRow, id: string) {
-    const h = await db.one<HandoffRow>(`SELECT * FROM signature_handoffs WHERE id = $1 AND recipient_id = $2 AND envelope_id = $3`, [id, r.id, e.id]);
+    const h = await db.one<HandoffRow>(
+      `SELECT * FROM signature_handoffs WHERE id = $1 AND recipient_id = $2 AND envelope_id = $3 AND access_token_hash = $4`,
+      [id, r.id, e.id, r.access_token_hash],
+    );
     if (!h) throw notFound("Pase de firma");
     return h;
   }
@@ -208,6 +216,8 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
     });
     const locale = normLocale(r.locale ?? e.locale);
     const url = await handoffUrl(s.db, h, token);
+    // Marca blanca: el SMS sale con el remitente de la marca del sobre, como el código OTP (white-label/otp-text.ts).
+    const smsFrom = input.channel === "sms" ? ((await brandForEnvelope(s.db, e)).smsSenderId ?? null) : null;
     let res;
     try {
       res = await deliver({
@@ -217,6 +227,7 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
         text: MSG[locale].text(url),
         link: url,
         cta: MSG[locale].cta,
+        smsFrom,
         locale,
         // WhatsApp solo acepta plantillas aprobadas por Meta: va la del pedido de firma ({{1}} remitente, {{2}} asunto,
         // {{3}} link), que ya está aprobada y dice de qué sobre se trata. Sin saltos de línea (Meta los rechaza).
@@ -225,7 +236,8 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
         tenantId: e.tenant_id,
       });
     } catch (err) {
-      req.log.warn({ err: String(err), channel: input.channel, envelopeId: e.id }, "no salió el link del pase de firma");
+      // Sin el teléfono ni el correo: los errores de Twilio y de WhatsApp traen el destino completo.
+      req.log.warn({ err: scrubPii(String(err)), channel: input.channel, envelopeId: e.id }, "no salió el link del pase de firma");
       throw new AppError(502, "handoff_delivery_failed", "No se pudo mandar el link: copialo y pegalo en el chat, o probá de nuevo en unos segundos");
     }
     await s.db.tx(async (t) => {
@@ -280,7 +292,18 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
       );
     });
     const h = (await s.db.one<HandoffRow>(`SELECT * FROM signature_handoffs WHERE id = $1`, [id]))!;
-    const sent = input.channel ? await sendLink(req, r, e, h, token, { channel: input.channel, phone: input.phone }) : null;
+    let sent: SignatureHandoff["sent"] = null;
+    if (input.channel) {
+      try {
+        sent = await sendLink(req, r, e, h, token, { channel: input.channel, phone: input.phone });
+      } catch (err) {
+        // El pase ya existe (y dejó sin efecto los anteriores): si el envío falla, el error lleva el pase en
+        // details.handoff para que el firmante copie el link o lo reenvíe por …/send en vez de perderlo.
+        if (!(err instanceof AppError)) throw err;
+        const details = err.details && typeof err.details === "object" ? err.details : {};
+        throw new AppError(err.status, err.code, err.message, { ...details, handoff: await toApi(s.db, h, r, token, null) });
+      }
+    }
     return reply.code(201).send(await toApi(s.db, h, r, token, sent));
   });
 

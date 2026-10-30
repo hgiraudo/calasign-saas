@@ -891,13 +891,15 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     ],
     // Tokens de vinculación de Telegram (30 minutos): vencidos hace más de un día ya no hacen falta.
     ["telegram-link-tokens", () => d.db.query(`DELETE FROM telegram_link_tokens WHERE expires_at < now() - interval '1 day'`)],
-    // Pases de firma del celular (0124, 10 minutos): la imagen que llegó y no se adoptó, y los envíos del link (topes
-    // diarios por destino, que se borran en cascada), no hacen falta pasado un día. De a 5000 por pasada.
+    // Pases de firma del celular (0124, 10 minutos): los envíos del link (topes diarios por destino, que se borran en
+    // cascada) no hacen falta pasado un día. Una imagen que llegó y todavía no se adoptó espera 7 días: la pestaña de la
+    // computadora puede quedar abierta de un día para el otro y /complete la sigue aceptando. De a 5000 por pasada.
     [
       "signature-handoffs",
       () =>
         d.db.query(
-          `DELETE FROM signature_handoffs WHERE id IN (SELECT id FROM signature_handoffs WHERE created_at < now() - interval '1 day' LIMIT 5000)`,
+          `DELETE FROM signature_handoffs WHERE id IN (SELECT id FROM signature_handoffs WHERE created_at < now() - interval '1 day'
+             AND (image_png IS NULL OR created_at < now() - interval '7 days') LIMIT 5000)`,
         ),
     ],
     // Tokens de sesión del firmante (canje embebido, 0083): vencidos o revocados hace más de un día ya no abren nada

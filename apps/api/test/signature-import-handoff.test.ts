@@ -313,4 +313,83 @@ describe("firma dibujada en el celular (pase de firma)", () => {
     expect(ok.json().channels).toContain("telegram");
     expect(ok.json().sent).toMatchObject({ channel: "telegram", destination: "Telegram" });
   });
+
+  it("un pase pedido con un link anterior (se corrigió el contacto) no se consulta ni se adopta con el link nuevo", async () => {
+    const s = await setup();
+    const h = (await signing(s.token, "/signature-handoffs", "POST", {})).json();
+    expect((await phone(tokenOf(h.url), "POST", { imagePng: INKED })).statusCode).toBe(200);
+    // Corrección del contacto: el link de firma rota y el anterior deja de servir.
+    const { randomToken, sha256Hex } = await import("../src/lib/util");
+    const nuevo = randomToken();
+    await db.query(`UPDATE recipients SET access_token_hash = $2 WHERE id = $1`, [s.recipient, sha256Hex(nuevo)]);
+    expect((await signing(nuevo, `/signature-handoffs/${h.id}`)).statusCode).toBe(404);
+    const r = await signing(nuevo, "/complete", "POST", { fields: [], signature: { kind: "drawn", imagePng: INKED, handoffId: h.id } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error.code).toBe("invalid_handoff");
+  });
+
+  it("crear con channel: si el envío falla, el error trae el pase creado para copiar el link o reenviarlo", async () => {
+    const s = await setup();
+    expect((await signing(s.token, "/signature-handoffs", "POST", { channel: "sms", phone: "+5491122334400" })).statusCode).toBe(201);
+    // Otro pase con envío enseguida: la espera de 30 s entre envíos lo frena, pero el pase nuevo ya existe.
+    const r = await signing(s.token, "/signature-handoffs", "POST", { channel: "sms", phone: "+5491122334400" });
+    expect(r.statusCode).toBe(429);
+    const err = r.json().error;
+    expect(err.code).toBe("handoff_cooldown");
+    expect(err.details).toMatchObject({ resendInSeconds: expect.any(Number), handoff: { id: expect.any(String), sent: null } });
+    expect(err.details.handoff.url).toMatch(/\/h\/[A-Za-z0-9_-]{43}$/);
+    expect((await signing(s.token, `/signature-handoffs/${err.details.handoff.id}`)).json().status).toBe("pending");
+    expect((await phone(tokenOf(err.details.handoff.url))).statusCode).toBe(200);
+  });
+
+  it("marca blanca: el SMS con el link sale con el remitente de la marca del sobre, como el código OTP", async () => {
+    const { uuidv7 } = await import("../src/lib/util");
+    const { config } = await import("../src/config");
+    const { readMailbox } = await import("../src/notifications/channels");
+    const brand = uuidv7();
+    await db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,'Acme',$3,$4)`, [
+      brand,
+      tenant,
+      `acme-${brand.slice(-8)}`,
+      JSON.stringify({ sms: { senderId: "ACME" } }),
+    ]);
+    const envelope = uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, brand_id) VALUES ($1, $2, 'Contrato', 'sent', $3)`, [
+      envelope,
+      tenant,
+      brand,
+    ]);
+    const s = await setup({ envelope });
+    config.sms.alphanumericAllowedTenants.push(tenant);
+    try {
+      const c = await signing(s.token, "/signature-handoffs", "POST", { channel: "sms", phone: "+5491122334411" });
+      expect(c.statusCode).toBe(201);
+      const sms = (await readMailbox(tenant)).filter((m: any) => m.channel === "sms" && m.text.includes(c.json().url));
+      expect(sms).toHaveLength(1);
+      expect(sms[0].from).toBe("ACME");
+    } finally {
+      config.sms.alphanumericAllowedTenants.length = 0;
+    }
+  });
+
+  it("barrido: una firma que llegó y no se adoptó espera 7 días; lo demás se borra pasado un día", async () => {
+    const mk = async (age: string, image: boolean) => {
+      const s = await setup();
+      const h = (await signing(s.token, "/signature-handoffs", "POST", {})).json();
+      if (image) expect((await phone(tokenOf(h.url), "POST", { imagePng: INKED })).statusCode).toBe(200);
+      await db.query(`UPDATE signature_handoffs SET created_at = now() - $2::interval WHERE id = $1`, [h.id, age]);
+      return h.id as string;
+    };
+    const fresh = await mk("1 hour", false);
+    const oldNoImage = await mk("2 days", false);
+    const oldWithImage = await mk("2 days", true);
+    const ancientWithImage = await mk("8 days", true);
+    const { sweep } = await import("../src/modules/jobs");
+    const { createBlobStore } = await import("../src/infra/storage");
+    await sweep({ db, blobs: createBlobStore(), log: { info() {}, warn() {}, error() {} } } as any);
+    const left = (
+      await db.query<{ id: string }>(`SELECT id FROM signature_handoffs WHERE id = ANY($1)`, [[fresh, oldNoImage, oldWithImage, ancientWithImage]])
+    ).map((r) => r.id);
+    expect(left.sort()).toEqual([fresh, oldWithImage].sort());
+  });
 });

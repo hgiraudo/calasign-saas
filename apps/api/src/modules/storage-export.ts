@@ -315,6 +315,13 @@ export interface UploadOpts {
   retry: boolean;
   /** Nombre con el formato anterior (id del sobre recortado): un intento previo al cambio pudo subirlo así. */
   legacyName?: string;
+  /**
+   * Re-exportación tras una renovación del sello: la copia que dejó la exportación anterior se reemplaza (nueva versión
+   * del mismo archivo; Dropbox, OneDrive, SharePoint y Box guardan el historial) en lugar de sumar una «X (1).pdf» al
+   * lado, que dejaba a la vista la del sello que vence. `ref` es el remote_ref de esa exportación (Dropbox lo usa como
+   * ruta: si aquella copia había quedado renombrada, se reemplaza esa).
+   */
+  replace?: { ref: string | null };
 }
 
 /** Consulta de Drive por el archivo ya exportado de un sobre (appProperties que pone uploadGdrive). */
@@ -652,7 +659,8 @@ export async function uploadDropbox(
   // anterior pudo haber subido (nombre actual y, por los reintentos en curso al cambiar el formato, el anterior) y se
   // reutiliza solo si es byte a byte lo mismo (content_hash de Dropbox); si no, "add" con autorename. Sin permiso para
   // leer metadatos (conexión anterior a pedir files.metadata.read) se sube igual, sin deduplicar: fallar siempre
-  // dejaba la exportación trabada; con autorename, a lo sumo queda una copia de más.
+  // dejaba la exportación trabada; con autorename, a lo sumo queda una copia de más. La excepción es la renovación del
+  // sello (opts.replace): ahí se pisa la copia que dejó nuestra exportación anterior, y Dropbox conserva la versión vieja.
   if (opts?.retry) {
     const mine = dropboxContentHash(bytes);
     for (const p of [path, ...(opts.legacyName && opts.legacyName !== name ? [pathOf(opts.legacyName)] : [])]) {
@@ -661,11 +669,12 @@ export async function uploadDropbox(
       if (meta?.[".tag"] === "file" && meta.content_hash === mine) return { ref: `dropbox:${meta.path_display ?? p}`, creds: updated ?? undefined };
     }
   }
+  // Renovación del sello: se pisa la copia propia de la exportación anterior (Dropbox guarda la versión vieja).
+  const replacePath = opts?.replace ? (opts.replace.ref?.startsWith("dropbox:") && opts.kind === "pdf" ? opts.replace.ref.slice(8) : path) : null;
   // Dropbox-API-Arg viaja en un header: los caracteres no ASCII van escapados.
-  const arg = JSON.stringify({ path, mode: "add", autorename: true, mute: true }).replace(
-    /[\u007f-￿]/g,
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
+  const arg = JSON.stringify(
+    replacePath ? { path: replacePath, mode: "overwrite", autorename: false, mute: true } : { path, mode: "add", autorename: true, mute: true },
+  ).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
   const res: any = await (
     await check(
       await fetch("https://content.dropboxapi.com/2/files/upload", {
@@ -677,7 +686,7 @@ export async function uploadDropbox(
       "subir a Dropbox",
     )
   ).json();
-  return { ref: `dropbox:${res.path_display ?? path}`, creds: updated ?? undefined };
+  return { ref: `dropbox:${res.path_display ?? replacePath ?? path}`, creds: updated ?? undefined };
 }
 
 export async function uploadOnedrive(
@@ -851,11 +860,13 @@ async function graphUpload(
       if (prev?.file && Number(prev.size) === bytes.length && graphSameContent(prev, bytes)) return prev;
     }
   }
+  // Renovación del sello: nueva versión del archivo de la exportación anterior (mismo nombre), no una copia «(1)».
+  const conflict = opts?.replace ? "replace" : "rename";
   let item: any;
   if (bytes.length <= 4 * 1024 * 1024) {
     item = await (
       await check(
-        await fetch(`${driveBase}/root:/${path}:/content?@microsoft.graph.conflictBehavior=rename`, {
+        await fetch(`${driveBase}/root:/${path}:/content?@microsoft.graph.conflictBehavior=${conflict}`, {
           method: "PUT",
           headers: { ...auth, "content-type": contentType },
           body: Buffer.from(bytes),
@@ -871,7 +882,7 @@ async function graphUpload(
         await fetch(`${driveBase}/root:/${path}:/createUploadSession`, {
           method: "POST",
           headers: { ...auth, "content-type": "application/json" },
-          body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename" } }),
+          body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": conflict } }),
           signal: AbortSignal.timeout(15_000),
         }),
         `sesión de carga ${what}`,
@@ -928,6 +939,7 @@ export async function uploadBox(
   bytes: Uint8Array,
   contentType: string,
   onRefresh?: OnRefresh,
+  opts?: UploadOpts,
 ): Promise<UploadResult> {
   const { token, updated } = await freshToken("box", creds, onRefresh);
   let folderId: string = cfg.folderId ?? "";
@@ -964,6 +976,21 @@ export async function uploadBox(
     const existing = Array.isArray(c) ? c[0] : c;
     if (existing?.id && typeof existing.sha1 === "string" && existing.sha1.toLowerCase() === createHash("sha1").update(bytes).digest("hex")) {
       return { ref: `box:${existing.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
+    }
+    // Renovación del sello: nueva versión del archivo de la exportación anterior (Box guarda la vieja), no otra copia.
+    if (opts?.replace && existing?.id) {
+      const form = new FormData();
+      form.append("attributes", JSON.stringify({ name }));
+      form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }), name);
+      const v = await fetch(`${BOX_UPLOAD()}/api/2.0/files/${encodeURIComponent(String(existing.id))}/content?fields=id,name`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: form,
+        signal: AbortSignal.timeout(60_000),
+      });
+      const vb = (await (await check(v, "subir versión a Box")).json()) as { id?: string; entries?: { id?: string }[] };
+      const vf = vb?.entries?.[0] ?? vb;
+      return { ref: `box:${vf?.id ?? existing.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
     }
     res = await put(name.replace(/(\.[a-z0-9]+)$/i, ` (${Date.now().toString(36)})$1`));
   }
@@ -1018,7 +1045,7 @@ async function uploadTo(
   if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes, contentType, onRefresh, opts);
   if (provider === "onedrive") return uploadOnedrive(creds, cfg, name, bytes, contentType, onRefresh, opts);
   if (provider === "sharepoint") return uploadSharepoint(creds, cfg, name, bytes, contentType, onRefresh, opts);
-  if (provider === "box") return uploadBox(creds, cfg, name, bytes, contentType, onRefresh);
+  if (provider === "box") return uploadBox(creds, cfg, name, bytes, contentType, onRefresh, opts);
   return uploadS3(creds, cfg, name, bytes, contentType);
 }
 
@@ -1116,6 +1143,8 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
     const prev = await db.one<any>(`SELECT pdf_ref, pdf_sha256 FROM storage_exports WHERE id = $1`, [ex.id]);
     if (prev?.pdf_ref && !exportIsCurrent(prev, e.sha256 ?? null)) prev.pdf_ref = null;
     let ref: string = prev?.pdf_ref ?? null;
+    // Ya hubo una exportación completa (remote_ref) y ahora se vuelve a subir: es la de una renovación del sello.
+    const replace = ex.remote_ref ? { ref: String(ex.remote_ref) } : null;
     let pdfSha: string | null = prev?.pdf_ref ? (prev.pdf_sha256 ?? null) : null;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
@@ -1132,6 +1161,7 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
           kind: "pdf",
           retry,
           legacyName: legacyFileName(e.subject, p.envelopeId),
+          ...(replace ? { replace } : {}),
         },
       );
       await persistUpload(db, c.id, r, cur.config?.folder);
@@ -1157,6 +1187,7 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
           kind: "evidence",
           retry,
           legacyName: `${legacySafeBaseName(e.subject, p.envelopeId)} - evidencia.json`,
+          ...(replace ? { replace } : {}),
         },
       );
       await persistUpload(db, c.id, r2, cur.config?.folder);

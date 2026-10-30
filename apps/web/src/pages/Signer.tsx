@@ -456,7 +456,7 @@ function Final({ icon, title, text, ok, children }: { icon: string; title: strin
   );
 }
 
-function EnvelopeIntro({ session, downloads, focus }: { session: SigningSession; downloads?: ReactNode; focus?: boolean }) {
+function EnvelopeIntro({ session, focus }: { session: SigningSession; focus?: boolean }) {
   const { t, locale } = useI18n();
   const e = session.envelope;
   // En el flujo de firma, el foco empieza en el asunto (lectores de pantalla y teclado: no queda en la pantalla anterior).
@@ -470,7 +470,6 @@ function EnvelopeIntro({ session, downloads, focus }: { session: SigningSession;
         {e.subject}
       </h1>
       {e.message && <p className="message-box">{e.message}</p>}
-      {downloads && <div className="row-wrap">{downloads}</div>}
       {session.recipient.telegramLink && (
         <p>
           <a className="btn btn-sm btn-telegram" href={session.recipient.telegramLink} target="_blank" rel="noopener noreferrer">
@@ -908,7 +907,8 @@ function SigningFlow({
         ? recipient.name
         : f.type === "email"
           ? (recipient.email ?? "")
-          : signingDateForDisplay(formatSigningDate(new Date(), recipient.locale));
+          : // En el huso de la organización, como la estampará el servidor (no en el del navegador del firmante).
+            signingDateForDisplay(formatSigningDate(new Date(), recipient.locale, session.envelope.timeZone), session.envelope.timeZone);
 
   const uploadAttachment = async (f: Field, file: File) => {
     if (file.size > ATTACHMENT_MAX_BYTES) {
@@ -1144,19 +1144,9 @@ function SigningFlow({
       </header>
 
       <main className="signer-main">
-        <EnvelopeIntro
-          session={session}
-          focus
-          downloads={session.documents.map((d) => (
-            <SignerDownload
-              key={d.id}
-              path={`${base}/documents/${d.id}/file?download=1`}
-              name={d.name.replace(/\.pdf$/i, "")}
-              label={session.documents.length > 1 ? `${sx("doc.download")}: ${d.name}` : sx("doc.download")}
-              onAuth={() => api<SigningSession>(base).then(onDone, () => undefined)}
-            />
-          ))}
-        />
+        {/* Sin "Descargar documento (PDF)" antes de firmar (pedido del 2026-10-29): el documento se lee en pantalla y
+            se descarga recién firmado (la copia con su firma o el PDF sellado, en la pantalla de fin). */}
+        <EnvelopeIntro session={session} focus />
         <AiSignerAssist base={base} />
         <ErrorBox error={error} />
         {session.documents.map((d) => {

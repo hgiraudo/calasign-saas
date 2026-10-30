@@ -4,7 +4,7 @@
 // por SMS, WhatsApp o Telegram. El celular abre la página pública, dibuja y envía el PNG (una sola vez, antes de que
 // venza); la computadora consulta el pase hasta que llega, lo muestra y el firmante lo adopta ahí: la firma la sigue
 // completando la sesión del firmante (/complete con `handoffId`), nunca el celular.
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   CreateSignatureHandoffInput,
   SendSignatureHandoffInput,
@@ -19,7 +19,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { rateLimitIpKey } from "../lib/ip";
-import { AppError, conflict, notFound } from "../lib/errors";
+import { AppError, conflict, notFound, rateLimitError } from "../lib/errors";
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
 import { scrubPii } from "../notifications/outbound";
@@ -130,8 +130,8 @@ async function assertCanPrepare(db: Db, r: SignerRow, e: EnvelopeRow) {
 
 export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { token: string; id?: string } };
-  // Por IP (en IPv6, por /64), como el OTP: crear y mandar cuesta (filas y mensajes); consultar es el polling de la
-  // computadora (cada 2 s, unos 30 por minuto).
+  // Por IP (en IPv6, por /64), como el OTP: crear y mandar cuesta (filas y mensajes). La consulta del estado va aparte
+  // (pollRl, por firmante).
   const byIp = (max: number) => ({
     config: { rateLimit: { max, timeWindow: "1 minute", keyGenerator: (req: FastifyRequest) => rateLimitIpKey(req.ip) } },
   });
@@ -322,7 +322,28 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
     return toApi(s.db, h, r, token, sent);
   });
 
-  app.get<P>("/v1/signing/:token/signature-handoffs/:id", byIp(90), async (req) => {
+  // La consulta del estado (la computadora pregunta cada 2 s, ~30 por minuto) cuenta por firmante, no por IP: varios
+  // firmantes detrás de la misma conexión (una oficina) se repartían 90 por minuto y a partir del cuarto la espera daba
+  // 429. La clave es el hash del token de firma (el secreto no queda en el contador). Como cada token inventado tendría su
+  // propio cupo, además hay un techo por IP igual al límite global (este tope de ruta lo reemplaza).
+  const pollIpCeiling = app.createRateLimit({ max: 600, timeWindow: "1 minute", keyGenerator: (req) => `handoff-poll-ip:${rateLimitIpKey(req.ip)}` });
+  const pollRl = {
+    config: {
+      rateLimit: {
+        max: 90,
+        timeWindow: "1 minute",
+        keyGenerator: (req: FastifyRequest) => `handoff-poll:${sha256Hex(String((req.params as { token?: string } | undefined)?.token ?? ""))}`,
+      },
+    },
+    onRequest: async (req: FastifyRequest, reply: FastifyReply) => {
+      const r = await pollIpCeiling(req);
+      if (r.isAllowed || !r.isExceeded) return;
+      reply.header("retry-after", r.ttlInSeconds);
+      throw rateLimitError(req, { statusCode: 429, ttl: r.ttl });
+    },
+  };
+
+  app.get<P>("/v1/signing/:token/signature-handoffs/:id", pollRl, async (req) => {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     const h = await ownHandoff(s.db, r, e, req.params.id!);
     const submitted = Boolean(h.submitted_at && h.image_png);

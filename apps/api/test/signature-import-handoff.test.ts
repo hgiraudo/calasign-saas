@@ -392,4 +392,30 @@ describe("firma dibujada en el celular (pase de firma)", () => {
     ).map((r) => r.id);
     expect(left.sort()).toEqual([fresh, oldWithImage].sort());
   });
+
+  it("la espera cuenta por firmante: varios firmantes detrás de la misma IP no se reparten el tope; tokens inventados sí topan", async () => {
+    const office = "198.51.100.20";
+    const poll = (token: string, id: string, ip = office) =>
+      app.inject({ method: "GET", url: `/v1/signing/${token}/signature-handoffs/${id}`, remoteAddress: ip });
+    const a = await setup();
+    const b = await setup();
+    const ha = (await signing(a.token, "/signature-handoffs", "POST", {})).json();
+    const hb = (await signing(b.token, "/signature-handoffs", "POST", {})).json();
+    // A espera su firma 3 minutos de consultas seguidas (90 por minuto): no se corta.
+    const codes = await Promise.all(Array.from({ length: 90 }, () => poll(a.token, ha.id).then((r) => r.statusCode)));
+    expect(codes.every((c) => c === 200)).toBe(true);
+    // B, desde la misma oficina, sigue pudiendo esperar la suya (por IP, a partir del cuarto firmante daba 429).
+    expect((await poll(b.token, hb.id)).statusCode).toBe(200);
+    // A se pasa de su cupo: 429 con el código estable.
+    const over = await poll(a.token, ha.id);
+    expect(over.statusCode).toBe(429);
+    expect(over.json().error.code).toBe("rate_limited");
+
+    // Cada token inventado tendría su propio cupo: el techo por IP (600 por minuto) los frena igual.
+    const { randomToken } = await import("../src/lib/util");
+    const scanner = "198.51.100.66";
+    const fake = await Promise.all(Array.from({ length: 600 }, () => poll(randomToken(), ha.id, scanner).then((r) => r.statusCode)));
+    expect(fake.every((c) => c === 404)).toBe(true);
+    expect((await poll(randomToken(), ha.id, scanner)).statusCode).toBe(429);
+  }, 60_000);
 });

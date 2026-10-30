@@ -12,10 +12,23 @@ import { sessionCookieToken, type Services } from "../context";
 import { signerTokenHash } from "../signer-token";
 
 export function publicCells(): CellInfo[] {
+  const where = (id: string) => {
+    const c = CELL_CATALOG.find((x) => x.id === id);
+    return { country: c?.country ?? null, city: c?.city ?? null, area: c?.area ?? null };
+  };
   const configured = cells();
-  const out: CellInfo[] = configured.map((c) => ({ id: c.id, label: c.label, region: c.region, available: true, default: c.default }));
+  const out: CellInfo[] = configured.map((c) => ({
+    id: c.id,
+    label: c.label,
+    region: c.region,
+    ...where(c.id),
+    available: true,
+    default: c.default,
+  }));
+  // Las del catálogo que este despliegue no atiende: «Próximamente», en el orden del catálogo.
   for (const c of CELL_CATALOG)
-    if (!out.some((x) => x.id === c.id)) out.push({ id: c.id, label: c.label, region: c.region, available: false, default: false });
+    if (!out.some((x) => x.id === c.id))
+      out.push({ id: c.id, label: c.label, region: c.region, country: c.country, city: c.city, area: c.area, available: false, default: false });
   return out;
 }
 

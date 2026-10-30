@@ -48,6 +48,11 @@ simula una clave caída. Nunca disponible en producción.
 Cada organización tiene una celda (`tenant_directory.cell`, el directorio global tenant → celda) que fija
 dónde se guardan sus archivos. Se elige al darse de alta («Dónde se guardan tus documentos»,
 `GET /v1/public/cells`); las celdas del catálogo que no están configuradas se muestran «Próximamente».
+El catálogo (`CELL_CATALOG` en `apps/api/src/infra/cells.ts`) tiene **todas las regiones comerciales de AWS** (34 al
+29-Oct-2026: Estados Unidos ×4, Canadá ×2, México, Brasil, Europa ×8, Asia-Pacífico ×14, Medio Oriente y África ×4) y
+**Chile** (Santiago), que AWS anunció para fines de 2026 y todavía no tiene código de región (`region: null`). La web
+las muestra en un desplegable agrupado por zona, con el país traducido (`Intl.DisplayNames`). Una región pasa a estar
+disponible cuando se configura en `CELLS` (bucket propio en esa región y, si hace falta, su despliegue).
 
 ```bash
 CELLS='{"us":{"label":"Estados Unidos","region":"us-east-1","default":true,"storage":{"driver":"s3","bucket":"calasign-us"}},
@@ -89,9 +94,13 @@ Ver también `EVIDENCIA.md` §2. El barrido (`archiveSweep`, en el worker, como 
 3. Historial en `envelope_signed_versions` (v1 = original, v2… = renovaciones); la versión anterior se
    conserva y `/v1/verify` encuentra cualquiera por hash. Evento `envelope.archive_renewed` con ambos hashes.
    En la misma transacción, el acuerdo del repositorio y los enlaces de descarga vigentes pasan a la versión
-   nueva (el chequeo de duplicados del repositorio compara contra todas las versiones). Lo ya exportado a
-   almacenamiento o conectores no se vuelve a subir; el JSON de evidencia que acompaña a cada exportación lleva
-   el hash del PDF que efectivamente se subió.
+   nueva (el chequeo de duplicados del repositorio compara contra todas las versiones). Las copias ya exportadas
+   a almacenamiento (Drive, Dropbox, OneDrive, SharePoint, Box, S3) se vuelven a subir con el PDF renovado: el
+   evento encola una exportación por conexión activa, y el trabajo compara el sha256 subido con el vigente (una
+   subida del PDF anterior todavía en curso no la deja como hecha). Drive reemplaza el contenido del mismo archivo y
+   S3 lo pisa en la misma clave; Dropbox, OneDrive, SharePoint y Box, que nunca pisan, dejan la versión renovada
+   al lado con otro nombre. Lo enviado a conectores no se vuelve
+   a mandar. El JSON de evidencia que acompaña a cada exportación lleva el hash del PDF que efectivamente se subió.
 4. No se vuelve a renovar el mismo sobre antes de `ARCHIVE_RENEWAL_MIN_INTERVAL_DAYS` (30). Si la TSA vigente
    vence igual o antes que la anterior, se deja `archive_error` (conviene configurar otra TSA); no aplica al
    completar un B-T a B-LTA (no hay sello de archivo anterior con el que comparar).

@@ -47,6 +47,10 @@ export interface CellInfo {
   id: string;
   label: string;
   region: string | null;
+  /** País (ISO 3166-1 alfa-2), ciudad y zona del mundo, para mostrarla traducida y agrupada. Null en una celda propia. */
+  country: string | null;
+  city: string | null;
+  area: "americas" | "europe" | "asia_pacific" | "middle_east_africa" | null;
   /** false: se muestra como «Próximamente». */
   available: boolean;
   default: boolean;

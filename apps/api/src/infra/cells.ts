@@ -31,10 +31,66 @@ export interface CellConfig {
   default: boolean;
 }
 
-/** Celdas que se ofrecen aunque no estén configuradas (se muestran como «Próximamente»). */
-export const CELL_CATALOG: { id: string; label: string; region: string }[] = [
-  { id: "us", label: "Estados Unidos", region: "us-east-1" },
-  { id: "br", label: "Brasil", region: "sa-east-1" },
+export type CellArea = "americas" | "europe" | "asia_pacific" | "middle_east_africa";
+
+export interface CellCatalogEntry {
+  id: string;
+  /** Nombre en castellano (la web lo arma traducido con `country` y `city`). */
+  label: string;
+  /** Código de la región de AWS; null si AWS la anunció pero todavía no tiene código publicado. */
+  region: string | null;
+  /** País ISO 3166-1 alfa-2 (Intl.DisplayNames lo traduce en la web). */
+  country: string;
+  city: string;
+  area: CellArea;
+}
+
+/**
+ * Celdas que se ofrecen aunque no estén configuradas (se muestran como «Próximamente»): todas las regiones comerciales
+ * de AWS (34, lista de docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html al 29-Oct-2026) y
+ * Chile, que AWS anunció para fines de 2026 (Santiago) sin código publicado todavía. "us" y "br" conservan sus ids
+ * (son las de siempre); el resto usa el código de la región. Una celda se habilita configurándola en CELLS.
+ */
+export const CELL_CATALOG: CellCatalogEntry[] = [
+  // América
+  { id: "us", label: "Estados Unidos (Virginia)", region: "us-east-1", country: "US", city: "Virginia", area: "americas" },
+  { id: "us-east-2", label: "Estados Unidos (Ohio)", region: "us-east-2", country: "US", city: "Ohio", area: "americas" },
+  { id: "us-west-1", label: "Estados Unidos (California)", region: "us-west-1", country: "US", city: "California", area: "americas" },
+  { id: "us-west-2", label: "Estados Unidos (Oregón)", region: "us-west-2", country: "US", city: "Oregon", area: "americas" },
+  { id: "ca-central-1", label: "Canadá (Montreal)", region: "ca-central-1", country: "CA", city: "Montreal", area: "americas" },
+  { id: "ca-west-1", label: "Canadá (Calgary)", region: "ca-west-1", country: "CA", city: "Calgary", area: "americas" },
+  { id: "mx-central-1", label: "México (Querétaro)", region: "mx-central-1", country: "MX", city: "Querétaro", area: "americas" },
+  { id: "br", label: "Brasil (São Paulo)", region: "sa-east-1", country: "BR", city: "São Paulo", area: "americas" },
+  { id: "cl", label: "Chile (Santiago)", region: null, country: "CL", city: "Santiago", area: "americas" },
+  // Europa
+  { id: "eu-central-1", label: "Alemania (Fráncfort)", region: "eu-central-1", country: "DE", city: "Frankfurt", area: "europe" },
+  { id: "eu-west-1", label: "Irlanda", region: "eu-west-1", country: "IE", city: "Dublin", area: "europe" },
+  { id: "eu-west-2", label: "Reino Unido (Londres)", region: "eu-west-2", country: "GB", city: "London", area: "europe" },
+  { id: "eu-south-1", label: "Italia (Milán)", region: "eu-south-1", country: "IT", city: "Milano", area: "europe" },
+  { id: "eu-west-3", label: "Francia (París)", region: "eu-west-3", country: "FR", city: "Paris", area: "europe" },
+  { id: "eu-south-2", label: "España (Aragón)", region: "eu-south-2", country: "ES", city: "Aragón", area: "europe" },
+  { id: "eu-north-1", label: "Suecia (Estocolmo)", region: "eu-north-1", country: "SE", city: "Stockholm", area: "europe" },
+  { id: "eu-central-2", label: "Suiza (Zúrich)", region: "eu-central-2", country: "CH", city: "Zürich", area: "europe" },
+  // Asia-Pacífico
+  { id: "ap-east-1", label: "Hong Kong", region: "ap-east-1", country: "HK", city: "Hong Kong", area: "asia_pacific" },
+  { id: "ap-south-2", label: "India (Hyderabad)", region: "ap-south-2", country: "IN", city: "Hyderabad", area: "asia_pacific" },
+  { id: "ap-south-1", label: "India (Bombay)", region: "ap-south-1", country: "IN", city: "Mumbai", area: "asia_pacific" },
+  { id: "ap-southeast-3", label: "Indonesia (Yakarta)", region: "ap-southeast-3", country: "ID", city: "Jakarta", area: "asia_pacific" },
+  { id: "ap-southeast-5", label: "Malasia", region: "ap-southeast-5", country: "MY", city: "Kuala Lumpur", area: "asia_pacific" },
+  { id: "ap-southeast-4", label: "Australia (Melbourne)", region: "ap-southeast-4", country: "AU", city: "Melbourne", area: "asia_pacific" },
+  { id: "ap-southeast-2", label: "Australia (Sídney)", region: "ap-southeast-2", country: "AU", city: "Sydney", area: "asia_pacific" },
+  { id: "ap-southeast-6", label: "Nueva Zelanda", region: "ap-southeast-6", country: "NZ", city: "Auckland", area: "asia_pacific" },
+  { id: "ap-northeast-3", label: "Japón (Osaka)", region: "ap-northeast-3", country: "JP", city: "Osaka", area: "asia_pacific" },
+  { id: "ap-northeast-1", label: "Japón (Tokio)", region: "ap-northeast-1", country: "JP", city: "Tokyo", area: "asia_pacific" },
+  { id: "ap-northeast-2", label: "Corea del Sur (Seúl)", region: "ap-northeast-2", country: "KR", city: "Seoul", area: "asia_pacific" },
+  { id: "ap-southeast-1", label: "Singapur", region: "ap-southeast-1", country: "SG", city: "Singapore", area: "asia_pacific" },
+  { id: "ap-east-2", label: "Taiwán (Taipéi)", region: "ap-east-2", country: "TW", city: "Taipei", area: "asia_pacific" },
+  { id: "ap-southeast-7", label: "Tailandia (Bangkok)", region: "ap-southeast-7", country: "TH", city: "Bangkok", area: "asia_pacific" },
+  // Medio Oriente y África
+  { id: "af-south-1", label: "Sudáfrica (Ciudad del Cabo)", region: "af-south-1", country: "ZA", city: "Cape Town", area: "middle_east_africa" },
+  { id: "il-central-1", label: "Israel (Tel Aviv)", region: "il-central-1", country: "IL", city: "Tel Aviv", area: "middle_east_africa" },
+  { id: "me-south-1", label: "Baréin", region: "me-south-1", country: "BH", city: "Manama", area: "middle_east_africa" },
+  { id: "me-central-1", label: "Emiratos Árabes Unidos", region: "me-central-1", country: "AE", city: "Dubai", area: "middle_east_africa" },
 ];
 
 const ID_RE = /^[a-z0-9-]{1,40}$/;

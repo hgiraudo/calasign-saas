@@ -6,32 +6,66 @@ import { formatDateTime, useI18n } from "../lib/i18n";
 import { useDataText } from "../lib/i18n-data";
 import { ErrorBox } from "./ui";
 
-/** «Dónde se guardan tus documentos»: celdas disponibles y las próximas, deshabilitadas. */
+const AREAS = ["americas", "europe", "asia_pacific", "middle_east_africa"] as const;
+
+/** «Dónde se guardan tus documentos»: las regiones disponibles y las próximas (deshabilitadas), agrupadas por zona. */
 export function CellPicker({ value, onChange }: { value: string; onChange: (cell: string) => void }) {
   const dt = useDataText();
+  const { locale } = useI18n();
   const [cells, setCells] = useState<CellInfo[]>([]);
   useEffect(() => {
+    let vivo = true;
     api<CellsResponse>("/v1/public/cells")
       .then((r) => {
+        if (!vivo) return;
         setCells(r.items);
-        if (!value) onChange(r.items.find((c) => c.default)?.id ?? r.items[0]?.id ?? "");
+        if (!value) onChange(r.items.find((c) => c.default)?.id ?? r.items.find((c) => c.available)?.id ?? "");
       })
-      .catch(() => setCells([]));
+      .catch(() => vivo && setCells([]));
+    return () => {
+      vivo = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   if (cells.filter((c) => c.available).length < 1) return null;
+
+  // El país en el idioma de la pantalla (Intl), con la ciudad: «Canadá (Calgary)», «Canada (Calgary)».
+  let countries: Intl.DisplayNames | null = null;
+  try {
+    countries = new Intl.DisplayNames([locale], { type: "region" });
+  } catch {
+    countries = null; // navegador sin Intl.DisplayNames: queda el nombre en castellano de la API
+  }
+  const name = (c: CellInfo) => {
+    const country = c.country && countries ? countries.of(c.country) : null;
+    if (!country) return c.label;
+    return c.city && c.city !== country ? `${country} (${c.city})` : country;
+  };
+  const option = (c: CellInfo) => (
+    <option key={c.id} value={c.id} disabled={!c.available}>
+      {name(c)}
+      {c.available ? "" : ` — ${dt("cells.soon")}`}
+    </option>
+  );
+  const sinZona = cells.filter((c) => !c.area);
   return (
-    <fieldset className="field data-cells">
-      <legend>{dt("cells.title")}</legend>
-      {cells.map((c) => (
-        <label key={c.id} className={`data-cell${c.available ? "" : " data-cell-soon"}`}>
-          <input type="radio" name="cell" value={c.id} checked={value === c.id} disabled={!c.available} onChange={() => onChange(c.id)} />
-          <span>{c.id === "us" || c.id === "br" ? dt(`cells.${c.id}`) : c.label}</span>
-          {!c.available && <span className="badge data-soon">{dt("cells.soon")}</span>}
-        </label>
-      ))}
+    <label className="field data-cells">
+      <span>{dt("cells.title")}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        {sinZona.map(option)}
+        {AREAS.map((a) => {
+          const items = cells.filter((c) => c.area === a);
+          if (!items.length) return null;
+          return (
+            <optgroup key={a} label={dt(`cells.area.${a}`)}>
+              {/* Las disponibles primero dentro de cada zona. */}
+              {[...items.filter((c) => c.available), ...items.filter((c) => !c.available)].map(option)}
+            </optgroup>
+          );
+        })}
+      </select>
       <small className="muted">{dt("cells.hint")}</small>
-    </fieldset>
+    </label>
   );
 }
 

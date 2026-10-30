@@ -178,9 +178,9 @@ test y no mandaba nada.
 
 ### 5.1 Suites que sólo existen en local
 
-`e2e-integrations`, `e2e-teams`, `e2e-identity`, `e2e-ai`, `e2e-agreements`, `e2e-data`, `e2e-white-label`, `e2e-api`
-y `e2e-password` usan funciones que sólo existen con `APP_ENV=local` (buzón sin sesión, barridos manuales, receptores en
-127.0.0.1). El resto también corre contra `https://dev.calasign.com`.
+`e2e-integrations`, `e2e-teams`, `e2e-identity`, `e2e-ai`, `e2e-agreements`, `e2e-data`, `e2e-white-label`, `e2e-api`,
+`e2e-password` y `e2e-platform` usan funciones que sólo existen con `APP_ENV=local` (buzón sin sesión, barridos
+manuales, receptores en 127.0.0.1). El resto también corre contra `https://dev.calasign.com`.
 
 ---
 

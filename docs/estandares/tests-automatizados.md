@@ -239,3 +239,62 @@ del consentimiento quitada, el test del firmante da rojo («Expected: disabled /
 - [ ] Cambio en la web → `./scripts/qa.sh --web`; pantalla nueva en un camino crítico → su test en `apps/web/e2e/`
 - [ ] Cambio grande, merge de ramas o cierre de una pasada de review → `./scripts/qa.sh --e2e`
 - [ ] Bajó alguna cuenta del trinquete → `node scripts/check-calidad.mjs --baseline` en el mismo commit
+
+---
+
+## 8. Mutation testing (Stryker)
+
+**Qué es.** Stryker cambia el código a propósito (un `<` por `<=`, una condición por `true`, borra una línea…) y
+corre los tests. Si siguen verdes, ese **mutante sobrevivió**: hay un comportamiento que ningún test verifica. Es la
+versión automática de «ver el test fallar con el bug inyectado» (§2).
+
+```bash
+./scripts/mutacion.sh        # pdf y api, uno después del otro (~6 min)
+./scripts/mutacion.sh pdf    # sólo packages/pdf (~1,5 min)
+./scripts/mutacion.sh api    # sólo apps/api (~4 min)
+```
+
+Informe navegable en `var/mutacion/<paquete>.html` (qué mutante sobrevivió y en qué línea). **Incremental**: la segunda
+corrida sólo prueba los mutantes de lo que cambió.
+
+### 8.1 Alcance, a propósito chico
+
+Stryker corre los tests una vez por mutante: sobre la suite entera de la API (954 tests, ~4 min, PGlite por archivo)
+serían días. Por eso cada paquete muta **pocos módulos críticos y puros** y usa una configuración de vitest
+(`vitest.stryker.config.ts`) con **sólo sus tests unitarios enfocados**:
+
+| Paquete | Módulos | Tests | Por qué esos |
+|---|---|---|---|
+| `packages/pdf` | `src/signatures.ts` | `test/byterange.test.ts` | `byteRangeIssue`: si el hueco sin firmar no es exactamente el `/Contents`, se pueden cambiar bytes sin invalidar la firma |
+| `apps/api` | `src/lib/redact.ts`, `src/lib/totp.ts` | `test/redact.test.ts`, `test/totp.test.ts` | Que ningún secreto llegue a un log; el segundo factor |
+
+Un módulo nuevo entra si es crítico, puro (sin base ni red) y tiene un test unitario enfocado: se suma a `mutate` en
+el `stryker.config.mjs` y su test al `include` del `vitest.stryker.config.ts`.
+
+### 8.2 Medido el 29-Oct-2026
+
+| Módulo | Mutantes | Muertos | Sobreviven | Sin cobertura | Puntaje total | Sobre lo cubierto |
+|---|---|---|---|---|---|---|
+| `pdf` `signatures.ts` (primera corrida) | 262 | 79 | 23 | 160 | 30 % | 77 % |
+| `pdf` `signatures.ts` (con los tests nuevos) | 262 | 102 | 2 | 158 | 39 % | **98 %** |
+| `api` `redact.ts` | 142 | 93 | 48 | 1 | 65 % | 66 % |
+| `api` `totp.ts` | 99 | 55 | 20 | 24 | 56 % | 73 % |
+
+- La primera corrida de `pdf` encontró 23 bordes de `byteRangeIssue` sin probar (valores negativos o no enteros, el
+  límite exacto del archivo, cada extremo de los rangos hexadecimales, el largo impar, el relleno con ceros). Se
+  agregaron los tests y quedaron 2, los dos **equivalentes** (no cambian el resultado: `Buffer.from(…, "hex")` corta en
+  el primer carácter no hexadecimal, y sin la comparación de largo el `equals` igual da distinto).
+- «Sin cobertura» son funciones del archivo que ese test unitario no llama (en `signatures.ts`, el parser de firmas,
+  probado por otros tests de `pdf` más pesados). No es una falla: dice dónde haría falta un test unitario.
+- **Pendiente**: los 48 sobrevivientes de `redact.ts` (sobre todo las listas de rutas y parámetros con secreto: cada
+  entrada sin un caso propio en `redact.test.ts`) y los 20 de `totp.ts`. Ver el informe HTML.
+
+### 8.3 El piso
+
+Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **61**): si baja, la
+corrida falla. Cuando un test nuevo lo sube, el piso sube el mismo día, igual que el trinquete de `check-calidad.mjs`.
+
+**Cuándo correrlo**: al tocar un módulo mutado (o su test), y una vez por mes. No va en `qa.sh` ni en el deploy: tarda
+minutos y compite por la RAM. Un mutante que sobrevive no se «arregla» con un test que sólo sube el número: el test
+tiene que afirmar el comportamiento que el mutante rompió.
+

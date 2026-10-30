@@ -231,14 +231,19 @@ de code review: sin el comentario, cada una re-descubriría el mismo borde.
 
 ---
 
-## 14. No hay mutation testing 🟡
+## 14. Mutation testing con Stryker, acotado a módulos críticos 🟡
 
-**Estado.** Ninguna herramienta mide si un test verde puede fallar.
+**Decisión (29-Oct-2026, pedida por el usuario).** Stryker 10 con el runner de vitest, sobre **pocos módulos críticos
+y puros** con sus tests unitarios enfocados: `packages/pdf/src/signatures.ts` (ByteRange) y `apps/api/src/lib/redact.ts`
+y `totp.ts`. `./scripts/mutacion.sh`, incremental, con un piso por paquete (`thresholds.break`). Detalle y números en
+[`tests-automatizados.md` §8](tests-automatizados.md#8-mutation-testing-stryker).
 
-**Dónde tendría sentido, acotado.** Donde un test que no prueba nada es caro: `packages/pdf` (sellado, validador),
-`packages/xades`, `apps/api/src/infra/evidence.ts` y `modules/access.ts`. Stryker sobre esos módulos, **mensual y
-fuera de horario**, es razonable; sobre toda la API, no (la suite tarda casi 4 minutos y Stryker la corre una vez por
-mutante).
+**Por qué acotado.** Stryker corre los tests una vez por mutante. El primer intento, con un archivo de `pdf` y toda su
+suite (194 tests, 2,5 min la corrida en seco), pasó los 45 minutos sin terminar. Con sólo los tests enfocados, el mismo
+archivo tarda 1,5 min. Sobre toda la API serían días.
 
-**Mientras tanto, la regla manual** ([`tests-automatizados.md` §2](tests-automatizados.md#2-qué-test-escribir-para-cada-cambio)):
-antes de creerle a un test nuevo, correrlo una vez con el bug inyectado a propósito.
+**Lo que ya dio.** La primera corrida encontró 23 bordes sin probar en `byteRangeIssue` (la validación que impide que un
+PDF firmado tenga bytes sin firmar); con los tests nuevos el puntaje sobre lo cubierto pasó de 77 % a 98 %.
+
+**Descartado.** *Stryker en `qa.sh` o en el deploy*: minutos por paquete, compite por la RAM. *Mutar toda la API*: la
+suite levanta PGlite por archivo.

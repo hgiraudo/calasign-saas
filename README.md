@@ -96,6 +96,7 @@ Todo junto, en un comando (mapa de capas y qué test escribir para cada cambio e
 ./scripts/qa.sh --web      # la web en navegador con Playwright (~1 min; ver apps/web/e2e/README.md)
 ./scripts/qa.sh --e2e      # todo: lo anterior + las 23 suites e2e contra una API efímera en :4199 (~11 min)
 corepack pnpm format       # Prettier sobre todo el TS/JS (corepack pnpm lint: ESLint)
+./scripts/mutacion.sh      # mutation testing con Stryker de los módulos críticos (~6 min; no va en qa.sh)
 git config core.hooksPath scripts/hooks                   # una vez por clon: hook de pre-commit
 git config blame.ignoreRevsFile .git-blame-ignore-revs    # git blame saltea el commit de formato
 ```

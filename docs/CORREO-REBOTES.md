@@ -27,33 +27,6 @@ rebote duro cada uno y bajarían la reputación de la cuenta. La suscripción HT
 `ses-notifications` a `https://dev.calasign.com/v1/integrations/ses/sns` se crea después del deploy (con el tema ya en
 `SES_SNS_TOPIC_ARNS`, si no la confirmación se rechaza con 403).
 
-### Pendientes (30-Oct-2026)
-
-1. **Acceso de producción de SES** (caso 179115865500671, us-east-2). La respuesta del 29-Oct a AWS salió con valores
-   de relleno y contradice la del 17-Oct; falta mandar la corrección: 5.000 correos/día con la tasa por defecto,
-   ~2.500 por mes (menos de 100 en un día típico), solo transaccionales, formularios y firma con la misma identidad
-   (`no-reply@calasign.com`) y el mismo configuration set, con supresión de cuenta, SNS, métricas de reputación y
-   alarmas de rebotes (5 %) y quejas (0,1 %). El historial del caso está en `~/cala/calasign-setup`.
-2. **Website de la cuenta de SES**: todavía dice `https://formularios.biz`. `aws sesv2 put-account-details` reenvía
-   el pedido de producción: no correrlo con el caso abierto; cambiarlo después de la aprobación.
-3. **Direcciones `@calasign.com` que no existen.** Las organizaciones de prueba de dev usan direcciones
-   `@calasign.com` que no son casillas de Google Workspace (el MX del dominio): cada aviso a una de ellas rebota
-   (5.1.3) y la deja suprimida en SES y en `email_suppressions`. Arreglo propuesto: un catch-all en la consola de
-   Workspace (Gmail → Enrutamiento → Enrutamiento predeterminado: cambiar el destinatario del sobre a una casilla
-   existente, solo para mensajes no reconocidos). Después, quitar las supresiones de cada dirección afectada:
-   - SES: `aws sesv2 delete-suppressed-destination --email-address <dirección> --region us-east-2`;
-   - dev: `DELETE FROM email_suppressions WHERE tenant_id IS NULL AND address = lower('<dirección>');`.
-4. **Entregabilidad**: confirmar que los avisos de dev llegan a la bandeja de entrada y no a spam (en Gmail,
-   «Mostrar original»: SPF, DKIM y DMARC en `PASS`).
-5. **Suscripción por correo de `ses-notifications`**: además de la HTTPS de dev, el tema tiene una suscripción EMAIL a
-   una casilla personal que recibe todo (rebotes de formularios y de CalaSign, alarmas). Opcional: una política de
-   filtro o quitarla cuando la API sea la única destinataria.
-6. **Métricas**: el perfil de CLI de esa cuenta no puede leer CloudWatch (`cloudwatch:GetMetricStatistics`) ni
-   suscribir a SNS; las alarmas y métricas de reputación se ven en la consola.
-7. **Migrar SES a la organización de AWS** (decisión pendiente): región (la SCP solo permite `us-east-1`; el diseño de
-   la CA dice `sa-east-1`), dominio (`avisos.calasign.com`) y un pedido de producción nuevo en esa cuenta. La
-   infraestructura sería la de «Infraestructura a crear», en Terraform.
-
 ## Qué hace la API
 
 - `POST /v1/integrations/ses/sns` (público, sin sesión; SNS manda JSON con `Content-Type: text/plain`).

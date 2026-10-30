@@ -13,7 +13,8 @@ mensajes de error, commits, docs y respuestas en castellano (los identificadores
 
 ## Antes de dar algo por terminado
 
-- `./scripts/qa.sh` verde (`--rapido` para un cambio chico; `--e2e` después de un merge o un cambio grande).
+- `corepack pnpm format` (Prettier) y `./scripts/qa.sh` verde (`--rapido` para un cambio chico; `--web` si tocaste
+  la web; `--e2e` después de un merge o un cambio grande). ESLint: errores en cero, avisos que no suben.
 - El test de la fila que corresponda en `tests-automatizados.md` §2, visto fallar con el bug inyectado.
 - El trinquete (`node scripts/check-calidad.mjs`) no sube; si algo bajó, `--baseline` en el mismo commit.
 

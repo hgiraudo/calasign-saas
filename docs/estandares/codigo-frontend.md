@@ -123,7 +123,9 @@ Es la pantalla que más importa y la que peor se prueba en un escritorio. Lo que
 
 ## 6. Checklist pre-commit (frontend)
 
-- [ ] `tsc --noEmit` en `apps/web` → 0 errores (`./scripts/qa.sh --rapido`)
+- [ ] `tsc --noEmit` en `apps/web` → 0 errores, Prettier y ESLint sin errores (`./scripts/qa.sh --rapido`)
+- [ ] `./scripts/qa.sh --web` verde (Playwright); pantalla nueva en un camino crítico → su test en `apps/web/e2e/`
+- [ ] Ningún aviso nuevo de `react-hooks/exhaustive-deps` (el total no sube de 4)
 - [ ] Tipos de la API desde `@calasign/shared`; campo nuevo agregado ahí, en **este** commit
 - [ ] Todo pedido por `api()` / `fetchResponse`; ningún host hardcodeado; errores con `errorText`
 - [ ] Ningún texto visible literal: clave en el diccionario del área, en ES, PT-BR y EN

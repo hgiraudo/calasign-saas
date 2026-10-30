@@ -2,7 +2,7 @@
 
 > Lo que no puede fallar en CalaSign es **la evidencia de una firma**: que el PDF sellado sea el que se firmó, que la
 > cadena de eventos esté completa y que nadie vea un sobre de otra organización. El centro de gravedad está en los
-> tests de la API y de `packages/pdf`; el navegador es la capa más floja (§6).
+> tests de la API y de `packages/pdf`; el navegador tiene un smoke de los caminos críticos (§6).
 >
 > Este doc es el **mapa**: qué capa caza qué, qué test escribir para cada cambio, y el comando que corre todo.
 
@@ -15,23 +15,24 @@ dependencias instaladas.
 
 | # | Capa | Comando | Tarda | Qué caza | Qué NO caza |
 |---|---|---|---|---|---|
-| 0 | **Hook pre-commit** | automático en `git commit` (si está activado) | **0,15 s** | secretos en texto plano, `.env`/tfstate en stage, el trinquete sobre lo que está en stage, `bash -n` | nada de comportamiento |
+| 0 | **Hook pre-commit** | automático en `git commit` (si está activado) | **~1,5 s** | secretos en texto plano, `.env`/tfstate en stage, formato y errores de ESLint en lo que está en stage, el trinquete, `bash -n` | nada de comportamiento |
 | 1 | **Typecheck** | `tsc --noEmit` en los 7 paquetes | **~42 s** (api 14, web 14) | contrato API↔web roto (`@calasign/shared`), traducciones faltantes (`Record<Key, string>`) | que algo funcione |
-| 2 | **Reglas** | `check-calidad.mjs` + `check-error-codes.mjs` | **< 1 s** | `any`/`catch` vacío/`console` nuevos, migraciones con número repetido o editadas, códigos de error sin texto | — |
+| 2 | **Reglas** | `prettier --check` + `eslint` + `check-calidad.mjs` + `check-error-codes.mjs` | **~35 s** (Prettier 19, ESLint 14) | formato, imports y variables sin uso, hooks de React mal usados, `any`/`catch` vacío/`console` nuevos, migraciones con número repetido o editadas, códigos de error sin texto | — |
 | 3 | **Unit de paquetes** | vitest en `pdf`, `xades`, `firmador`, `sdk-node` | **~36 s** · 261 tests (pdf 188) | PDF malformado, ByteRange, LTV, XAdES de DGII/DIAN/SUNAT, el Firmador | integración con la API |
 | 4 | **Unit + integración de la API** | `cd apps/api && vitest run` | **~3 min 40 s** · **954 tests** · 100 archivos | la app real sobre PGlite: permisos, auditoría, evidencia append-only, SSRF, webhooks, carreras, OpenAPI | concurrencia real (PGlite es un proceso) |
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
 | 6 | **e2e locales** | `qa.sh --solo-e2e` | **~5 min** · 23 suites | flujos de punta a punta contra una API de verdad: firmar, sellar, CRM, conectores, certificado propio, SDKs | la web en un navegador; B-LT/B-LTA (sin PKI de laboratorio) |
 | 7 | **e2e contra dev** | `node scripts/<suite>.mjs https://dev.calasign.com` | minutos | lo mismo sobre Postgres, S3, KMS y Caddy reales | las suites que sólo existen en local (§5.1) |
-| 8 | **Web en navegador** | 🔴 no existe | — | — | §6: propuesta |
+| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 10 tests (build 19 s + 31 s) | el firmante de punta a punta en Chromium de escritorio y de celular (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | Safari (WebKit opcional), pantallas fuera del smoke |
 
 **`qa.sh` las agrupa:**
 
 | Modo | Capas | Tarda | Cuándo |
 |---|---|---|---|
-| `./scripts/qa.sh --rapido` | 1-2 | ~45 s | lo corre `deploy-dev.sh`; antes de un commit chico |
-| `./scripts/qa.sh` | 1-5 | ~5 min | antes de commitear un cambio de comportamiento |
-| `./scripts/qa.sh --e2e` | 1-6 | ~10 min | antes de un deploy grande, después de un merge de ramas, al cerrar una pasada de review |
+| `./scripts/qa.sh --rapido` | 1-2 | ~75 s | lo corre `deploy-dev.sh`; antes de un commit chico |
+| `./scripts/qa.sh` | 1-5 | ~6 min | antes de commitear un cambio de comportamiento |
+| `./scripts/qa.sh --web` | 8 | ~1 min | después de tocar la web |
+| `./scripts/qa.sh --e2e` | 1-6 y 8 | ~11 min | antes de un deploy grande, después de un merge de ramas, al cerrar una pasada de review |
 
 ---
 
@@ -54,7 +55,7 @@ Buscá tu fila **antes** de escribir el test.
 | Una ruta con un secreto en el path o la query | Caso en `redact.test.ts` | Y la ruta en `lib/redact.ts` |
 | Un código de error nuevo | Nada a mano: `check-error-codes.mjs` verifica el texto en PT-BR/EN | — |
 | Un conector de CRM o de terceros | Simulador HTTP del proveedor en la suite e2e del área (`e2e-crm`, `e2e-connectors`) | Unit del mapeo (`crm-mapping.test.ts`) |
-| Una pantalla de la web | **Nada automatizado hoy**: tsc + prueba manual en celular y escritorio | §6 |
+| Una pantalla de la web | Si está en un camino crítico (firmante, login, verificación): un test en `apps/web/e2e/`; si no, tsc + prueba manual en celular y escritorio | §6 |
 | Un script de deploy u operación | `bash -n` (lo hace `qa.sh`) + una corrida en seco | Nunca contra dev sin avisar si hay otra sesión trabajando ahí |
 
 **La regla que gobierna todas**: antes de creerle a un test nuevo que pasa, **correlo una vez con el bug inyectado a
@@ -82,9 +83,10 @@ la ausencia de resultado leída como resultado limpio (§5).
 
 ```bash
 ./scripts/qa.sh              # completo sin e2e (~5 min)
-./scripts/qa.sh --rapido     # typecheck + reglas (~45 s)
-./scripts/qa.sh --e2e        # completo + e2e contra una API efímera (~10 min)
-./scripts/qa.sh --solo-e2e   # sólo la parte e2e
+./scripts/qa.sh --rapido     # typecheck + formato + lint + reglas (~75 s)
+./scripts/qa.sh --e2e        # completo + e2e contra una API efímera + navegador (~11 min)
+./scripts/qa.sh --solo-e2e   # sólo la parte e2e (API y navegador)
+./scripts/qa.sh --web        # sólo los tests en navegador (~1 min)
 ```
 
 Corre **un comando pesado a la vez** (la máquina tiene 14 GB y puede haber otra sesión compilando), deja los logs en
@@ -128,15 +130,20 @@ el próximo puede volver a subir hasta el número viejo sin que nadie se entere.
 Además: estructura de `apps/api/migrations` (nombre, número repetido, migración versionada editada) y un aviso si un
 archivo **nuevo** pasa las 1.000 líneas.
 
+**ESLint sigue la misma idea**: errores en cero, y los avisos (`react-hooks/exhaustive-deps`, 4 hoy) no pueden
+subir: `qa.sh` corre `eslint --max-warnings 4` (`ESLINT_MAX_WARNINGS` lo cambia). Si un arreglo baja la cuenta, el
+número de `qa.sh` y de `package.json` (`lint`) baja en el mismo commit.
+
 ### 4.3 Cableado al deploy
 
-`scripts/deploy-dev.sh` corre `qa.sh --rapido` antes de compilar y subir (unos 45 s sobre un deploy de varios
+`scripts/deploy-dev.sh` corre `qa.sh --rapido` antes de compilar y subir (unos 75 s sobre un deploy de varios
 minutos). `SKIP_QA=1 ./scripts/deploy-dev.sh` lo saltea: es para una emergencia, y se dice en el commit o en la sesión.
 El completo no va en el camino del deploy: 5 minutos cada vez terminarían salteándose siempre.
 
 ### 4.4 QA nocturno — propuesta
 
-No existe todavía. La forma barata es un timer de systemd de usuario que corra `qa.sh --e2e` de madrugada sobre
+No existe todavía. Dos formas: un workflow de **GitHub Actions** programado (el repo tiene remoto en GitHub; corre
+fuera de esta máquina, así que no compite por la RAM) o, la más barata, un timer de systemd de usuario que corra `qa.sh --e2e` de madrugada sobre
 `main` en un **worktree propio** (no el checkout compartido) y avise sólo si sale ≠0:
 
 ```ini
@@ -177,47 +184,48 @@ y `e2e-password` usan funciones que sólo existen con `APP_ENV=local` (buzón si
 
 ---
 
-## 6. e2e de la web en navegador — propuesta acotada (no vigente)
+## 6. e2e de la web en navegador (Playwright)
 
-**Estado.** No hay Playwright ni ninguna herramienta de navegador en el repo.
+**Estado (29-Oct-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 10 tests, ~31 s
+más ~19 s de compilar la web. Corren en `qa.sh --web` y dentro de `qa.sh --e2e`.
 
-**Por qué conviene, acotado.** Hay regresiones que **sólo** se ven en un navegador y que la pasada 147 tuvo que
-arreglar a mano: el visor de PDF en Safari < 17.4, el foco al cambiar de ruta, una pestaña abierta durante un deploy
-que pide un chunk que ya no existe, la barra del firmante ilegible con colores de marca claros.
+**Por qué.** Hay regresiones que **sólo** se ven en un navegador y que la pasada 147 tuvo que arreglar a mano: el
+visor de PDF en Safari < 17.4, el foco al cambiar de ruta, una pestaña abierta durante un deploy que pide un chunk que
+ya no existe, la barra del firmante ilegible con colores de marca claros.
 
-### 6.1 Alcance mínimo: un smoke, sin capturas de pantalla
+### 6.1 Qué cubre
 
-```
-apps/web/e2e/
-├── firmante.e2e.ts   — abrir el link del buzón de desarrollo, ver el PDF, firmar, descargar el PDF sellado
-├── consola.e2e.ts    — login, crear un sobre con un PDF, enviarlo, verlo en la lista
-├── publicas.e2e.ts   — /verify con el PDF sellado, /developers carga en ES/PT-BR/EN
-└── helpers/
-    ├── api.ts        — alta de cuenta y sobre por la API (rápido), no por la UI
-    └── ir.ts         — goto + espera de un ancla del componente
-```
+| Archivo | Proyecto | Qué prueba |
+|---|---|---|
+| `firmante.e2e.ts` | Chromium escritorio **y celular** (Pixel 7) | Consentimiento obligatorio, PDF dibujado por pdf.js, adoptar la firma escrita, finalizar, pantalla de fin, **descarga byte a byte igual al PDF sellado**; idioma portugués; link inválido |
+| `consola.e2e.ts` | Chromium | Login por la pantalla, el sobre en la lista y en el detalle, contraseña equivocada |
+| `publicas.e2e.ts` | Chromium | `/verify` con el PDF sellado («Documento válido»), con **un byte cambiado** y con un PDF ajeno («No coincide»); `/developers` y cambio de idioma |
 
-Contra la API efímera de `qa.sh --e2e`, con Chromium y WebKit (WebKit es el que caza Safari). En el gate iría como
-`--web`, **opt-in**, hasta que tenga un mes sin falsos positivos.
+Todos fallan además si la página tira una excepción de JavaScript. Visto fallar con un bug inyectado: con la traba
+del consentimiento quitada, el test del firmante da rojo («Expected: disabled / Received: enabled»).
 
-**Reglas tomadas del set de Milhouse que sí aplican:**
+### 6.2 Cómo corre
+
+- **API efímera propia** (`e2e/servidor.mjs`, `:4197`, PGlite temporal, buzón de desarrollo, sin TSA) que sirve
+  `apps/web/dist`. 🔴 Si el puerto está ocupado **falla**: no corre contra una API ajena.
+- **Los datos se arman por la API** (`helpers/api.ts`); la UI sólo para lo que se prueba.
+- **Un worker**: comparten la API y la máquina tiene poca RAM.
+- **Navegadores**: Chromium siempre; **WebKit** (Safari) con `E2E_WEBKIT=1`, después de instalar sus librerías una
+  vez con `sudo ./node_modules/.bin/playwright install-deps webkit` (en `apps/web`).
+- **En una falla**: captura y traza en `var/playwright/<test>/` (`playwright show-trace …/trace.zip`).
+
+### 6.3 Reglas
 
 | Regla | Por qué |
 |---|---|
-| `load`, **nunca** `networkidle` | El firmante y la consola mantienen conexiones (eventos, sesión): `networkidle` puede no llegar nunca |
-| Después de navegar, **esperar un ancla** del componente | Confirma que React montó, no que llegó el HTML |
-| Selectores por rol y texto accesible (`getByRole`), nunca por clase CSS | Prueba también la accesibilidad, y no se rompe por un cambio de estilo |
-| Los datos se arman por la API, la UI sólo para lo que se prueba | Un test de firma no tiene que pasar por diez pantallas de alta |
+| `getByRole` con el nombre accesible, nunca clases CSS | Prueba también la accesibilidad, y no se rompe por un cambio de estilo |
+| Esperar un **ancla** (heading, botón), nunca `networkidle` | El firmante y la consola mantienen conexiones abiertas |
+| Un selector nuevo se verifica contra la app corriendo | `locator("body").ariaSnapshot()` muestra lo que ve el test |
+| Los datos se arman por la API | Un test de firma no pasa por diez pantallas de alta |
 | Todo `test()` dentro de un `test.describe` | Si no, el reporte lo muestra como `<anonymous>` |
 | `page.once("dialog", …)`, no `page.on` | Con `on` el handler queda y se apila en los reintentos |
-
-### 6.2 Lo que NO hay que copiar
-
-- 🔴 **Capturas de pantalla comparadas (golden images) de entrada, no**: son la mayor parte del mantenimiento de un
-  set así (fuentes, antialiasing, fechas). Primero el smoke funcional.
-- 🔴 **Cobertura total de pantallas, no**: el equivalente acá está en los tests de la API.
-- **Los tres idiomas, sí, pero baratos**: `tsc` ya garantiza que las claves existen; el e2e sólo verifica que cambiar
-  el idioma cambia la página.
+| Sin capturas comparadas (golden images) | Son la mayor parte del mantenimiento de un set así; se agregan sólo ante una regresión visual que esto no caza |
+| Un selector que matchea dos cosas se acota (`getByRole("main").getByText(…)`) | Mientras sella hay dos `status` en la pantalla de fin: el modo estricto de Playwright lo marca |
 
 ---
 
@@ -228,5 +236,6 @@ Contra la API efímera de `qa.sh --e2e`, con Chromium y WebKit (WebKit es el que
 - [ ] Permisos o datos de una organización → el caso negativo (otro tenant 404, sin permiso 403)
 - [ ] Fixtures sintéticos; ningún dato de una persona real; correos en `example.com`
 - [ ] `./scripts/qa.sh` verde (o `--rapido` + el test del área para algo chico)
+- [ ] Cambio en la web → `./scripts/qa.sh --web`; pantalla nueva en un camino crítico → su test en `apps/web/e2e/`
 - [ ] Cambio grande, merge de ramas o cierre de una pasada de review → `./scripts/qa.sh --e2e`
 - [ ] Bajó alguna cuenta del trinquete → `node scripts/check-calidad.mjs --baseline` en el mismo commit

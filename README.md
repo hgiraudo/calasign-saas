@@ -91,10 +91,13 @@ Todo junto, en un comando (mapa de capas y qué test escribir para cada cambio e
 [`docs/estandares/tests-automatizados.md`](docs/estandares/tests-automatizados.md)):
 
 ```bash
-./scripts/qa.sh            # typecheck + reglas + unit + integraciones + SDKs (~5 min)
-./scripts/qa.sh --rapido   # typecheck + reglas (~45 s; lo corre deploy-dev.sh)
-./scripts/qa.sh --e2e      # lo anterior + las 23 suites e2e contra una API efímera en :4199 (~10 min)
-git config core.hooksPath scripts/hooks   # una vez por clon: hook de pre-commit (secretos y trinquete de calidad)
+./scripts/qa.sh            # typecheck + formato + lint + reglas + unit + integraciones + SDKs (~6 min)
+./scripts/qa.sh --rapido   # typecheck + formato + lint + reglas (~75 s; lo corre deploy-dev.sh)
+./scripts/qa.sh --web      # la web en navegador con Playwright (~1 min; ver apps/web/e2e/README.md)
+./scripts/qa.sh --e2e      # todo: lo anterior + las 23 suites e2e contra una API efímera en :4199 (~11 min)
+corepack pnpm format       # Prettier sobre todo el TS/JS (corepack pnpm lint: ESLint)
+git config core.hooksPath scripts/hooks                   # una vez por clon: hook de pre-commit
+git config blame.ignoreRevsFile .git-blame-ignore-revs    # git blame saltea el commit de formato
 ```
 
 Las suites por separado:

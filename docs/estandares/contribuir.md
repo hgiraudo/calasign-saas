@@ -28,7 +28,8 @@ free -g                             # la máquina tiene 14 GB: un vitest complet
 | **Cada rama reserva su número de migración al empezar** | Dos ramas tomaron la `0052` (ver [`codigo-sql-y-migraciones.md` §4.2](codigo-sql-y-migraciones.md#42-reglas-lo-que-verifica-scriptscheck-calidadmjs-está-marcado-con-)) |
 | **El merge se resuelve en un worktree aparte** y entra a `main` con `git merge --ff-only` | Un conflicto resuelto en el checkout compartido deja marcas de conflicto en el código que otra sesión está corriendo |
 | Después de cada merge: `./scripts/qa.sh --e2e` | Dos ramas verdes por separado no garantizan un merge verde |
-| No reformatear ni reescribir en masa sin avisar | Conflicto garantizado con lo que esté en vuelo (ver [decisiones §7](decisiones-de-diseno.md#7-prettier-no-se-adopta-como-gate-)) |
+| No reformatear ni reescribir en masa sin avisar | Conflicto garantizado con lo que esté en vuelo. El reformateo de Prettier se hizo una vez, en un commit propio y sin otras sesiones (ver [decisiones §7](decisiones-de-diseno.md#7-prettier-adoptado-con-un-único-commit-de-reformateo-)) |
+| Una rama vieja (anterior al 29-Oct) antes de mergear: `corepack pnpm format` en la rama | Tiene el formato anterior a Prettier: sin eso, cada línea es un conflicto |
 
 ---
 
@@ -74,18 +75,20 @@ La convención del repo (no es Conventional Commits), en castellano, diciendo **
 
 ### 3.3 Secretos y el hook de pre-commit
 
-`scripts/hooks/pre-commit` corre en ~0,15 s sobre lo que está en stage y **bloquea el commit** si encuentra:
+`scripts/hooks/pre-commit` corre en ~1,5 s sobre lo que está en stage y **bloquea el commit** si encuentra:
 
 - un secreto en texto plano en una línea agregada (claves de AWS, privadas, de Anthropic, Stripe, Mercado Pago, Slack,
   GitHub, Google, Telegram, API keys `cs_live_`);
 - un archivo que nunca se versiona (`.env`, `*.tfstate`, `*.tfvars`, `var/`, `.p12`);
+- un archivo TS/JS sin el formato de Prettier (`corepack pnpm format` lo arregla) o con errores de ESLint;
 - una cuenta del trinquete que sube, o una migración con número repetido o ya versionada editada;
 - un script de shell que no pasa `bash -n`.
 
-Activarlo (una vez por clon; los worktrees lo heredan):
+Activarlo (una vez por clon; los worktrees lo heredan), junto con el `git blame` que saltea el commit de formato:
 
 ```bash
 git config core.hooksPath scripts/hooks
+git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
 Se saltea con `git commit --no-verify` **sólo** ante un falso positivo, diciéndolo en el mensaje. Una clave falsa de un
@@ -125,7 +128,8 @@ Los de cada capa están en su doc ([backend](codigo-backend.md#11-checklist-pre-
 [SQL y migraciones](codigo-sql-y-migraciones.md#6-checklist-antes-de-commitear-sql-o-una-migración) ·
 [tests](tests-automatizados.md#7-checklist-de-testing-antes-de-commitear)). Este es el transversal:
 
-- [ ] `./scripts/qa.sh` verde (`--e2e` si es un cambio grande o un merge)
+- [ ] `corepack pnpm format` sobre lo que tocaste (o el hook activado, que lo verifica)
+- [ ] `./scripts/qa.sh` verde (`--web` si tocaste la web; `--e2e` si es un cambio grande o un merge)
 - [ ] El test de mi fila de [`tests-automatizados.md` §2](tests-automatizados.md#2-qué-test-escribir-para-cada-cambio), y lo vi fallar con el bug inyectado
 - [ ] `git add` de mis archivos, uno por uno, y `git commit` en el mismo paso
 - [ ] Mensaje con el formato de §3.1

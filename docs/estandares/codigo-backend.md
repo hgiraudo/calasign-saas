@@ -228,6 +228,9 @@ commit que la lógica. `check-calidad.mjs` avisa (sin fallar) de un archivo **nu
 
 ## 10. Comentarios — el estilo de la casa
 
+> El **formato** lo decide Prettier (`.prettierrc.json`: ancho 150, comillas dobles, punto y coma): no se discute en
+> la revisión. Lo de abajo es lo que Prettier no puede decidir.
+
 El repo documenta **el por qué dentro del código**, con la medición o el caso cuando lo hay. No es verborragia: es la
 única forma de que el próximo que pase no «arregle» algo deliberado. Se mantiene.
 
@@ -252,7 +255,7 @@ la que se puede quitar); el trinquete cuenta los que no la tienen.
 
 ## 11. Checklist pre-commit (backend)
 
-- [ ] `./scripts/qa.sh` verde (o, para un cambio chico, `--rapido` + los tests del área)
+- [ ] `corepack pnpm format` y `./scripts/qa.sh` verde (o, para un cambio chico, `--rapido` + los tests del área)
 - [ ] Endpoint nuevo → contrato en `shared`, OpenAPI, permisos, `tenant_id`, texto de errores (§7)
 - [ ] Ningún `throw new Error` que llegue al cliente: `AppError` con código estable y mensaje que dice qué hacer
 - [ ] Ningún `catch` vacío sin comentario, ningún `any` nuevo sobre datos de afuera (el trinquete no sube)

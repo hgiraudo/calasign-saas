@@ -5,7 +5,8 @@
 #   ./scripts/qa.sh            typecheck (7 paquetes) + calidad + códigos de error + unit (vitest) + integraciones + SDKs
 #   ./scripts/qa.sh --rapido   sin vitest ni integraciones (~1 min; es lo que corre deploy-dev.sh)
 #   ./scripts/qa.sh --e2e      completo + API efímera sobre PGlite temporal + las 23 suites scripts/e2e*.mjs + SDKs
-#   ./scripts/qa.sh --solo-e2e sólo la parte e2e
+#   ./scripts/qa.sh --solo-e2e sólo la parte e2e (API y navegador)
+#   ./scripts/qa.sh --web      sólo los tests en navegador (Playwright: compila la web y la sirve una API efímera en :4197)
 #
 # Variables:
 #   QA_WORKERS=N     hilos de vitest en apps/api (por defecto, los de vitest: núcleos − 1). Con poca RAM, 2 o 3.
@@ -28,6 +29,7 @@ case "${1:-}" in
   --rapido) MODE=rapido ;;
   --e2e) MODE=e2e ;;
   --solo-e2e) MODE=solo-e2e ;;
+  --web) MODE=web ;;
   -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
   *) echo "opción desconocida: $1 (ver ./scripts/qa.sh --help)" >&2; exit 2 ;;
 esac
@@ -77,6 +79,7 @@ static_checks() {
   for p in packages/shared packages/pdf packages/xades packages/firmador packages/sdk-node apps/api apps/web; do
     run "tsc $(basename "$p")" "$p" ./node_modules/.bin/tsc --noEmit
   done
+  run "tsc web e2e" apps/web ./node_modules/.bin/tsc -p e2e
   echo "▶ reglas"
   run "prettier --check" . ./node_modules/.bin/prettier --check . --log-level warn
   # Errores: cero. Avisos (react-hooks/exhaustive-deps): el total no sube del medido. Si un arreglo lo baja, bajá
@@ -174,12 +177,21 @@ e2e_tests() {
   done
 }
 
+# ───────────────────────────── navegador ─────────────────────────────
+web_tests() {
+  echo "▶ web en navegador (Playwright)"
+  run "build web" . env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @calasign/web build
+  # Chromium de escritorio y de celular; WebKit con E2E_WEBKIT=1 (necesita las librerías del sistema).
+  run "playwright" apps/web ./node_modules/.bin/playwright test --reporter=line
+}
+
 echo "QA $MODE — $(git rev-parse --short HEAD)$([ -z "$(git status --porcelain --untracked-files=no)" ] || echo ' (con cambios sin commitear)') — logs en $RUN/"
 case $MODE in
   rapido) static_checks ;;
   completo) static_checks; unit_tests ;;
-  e2e) static_checks; unit_tests; e2e_tests ;;
-  solo-e2e) e2e_tests ;;
+  e2e) static_checks; unit_tests; e2e_tests; web_tests ;;
+  solo-e2e) e2e_tests; web_tests ;;
+  web) web_tests ;;
 esac
 
 TOTAL=$(( $(date +%s) - T0 ))

@@ -94,54 +94,61 @@ peritaje, la defensa va en la capa más baja posible.
 
 ---
 
-## 7. Prettier **no** se adopta como gate 🔴
+## 7. Prettier: adoptado con un único commit de reformateo ✅
 
-**Decisión.** No hay `.prettierrc` ni `prettier --check` en el QA.
+**Decisión (29-Oct-2026, pedida por el usuario).** Prettier 3.3.3 con `printWidth` 150, comillas dobles, punto y
+coma y `trailingComma: "all"` (`.prettierrc.json`), **sólo sobre TypeScript y JavaScript** (`.prettierignore`).
+Es gate: `prettier --check` en `qa.sh` y en el hook de pre-commit.
 
-**Por qué, con el costo medido (29-Oct-2026, Prettier 3.3.3 sobre los 538 `.ts/.tsx/.mts/.mjs` versionados).**
+**El costo medido antes de decidir.**
 
-| Configuración | Archivos que cambian |
+| Configuración | Archivos que cambian (de 538 `.ts/.tsx/.mts/.mjs`) |
 |---|---|
-| `printWidth` 100 (cerca del default) | **509 de 538** |
-| `printWidth` 150 (el ancho que usa el repo) | 422 |
+| `printWidth` 100 (cerca del default) | 509 |
+| `printWidth` 150 (el ancho que ya usaba el repo) | 422 |
 | `printWidth` 160 | 409 |
 
-El estilo de la casa es deliberadamente compacto (líneas de hasta ~150, un `if` corto en una línea, objetos chicos en
-una línea) y Prettier lo expande. No hay configuración que haga que el repo ya cumpla.
+Se eligió 150 porque es el estilo que ya tenía el código. El reformateo final tocó **438 archivos** (los 538 más los
+`.js`), en **un solo commit sin otros cambios** (`e93f8fc`), con el QA completo verde antes de commitearlo.
 
-Y «formatear sólo lo que tocás» **no es barato**: Prettier trabaja por archivo. Tocar una función de
-`modules/openapi.ts` reformatearía 1.769 líneas, en un working tree donde trabajan **varias sesiones y agentes en
-paralelo** (§12): conflicto de merge garantizado y un `git blame` inútil.
+**Cómo se hizo para que no doliera** (lo que esta sección pedía cuando Prettier estaba descartado):
+- Un commit que **sólo** formatea, separado de la configuración y del resto.
+- `.git-blame-ignore-revs` con ese commit, y `git config blame.ignoreRevsFile .git-blame-ignore-revs` en el clon:
+  `git blame` sigue mostrando al autor real de cada línea.
+- Sin otra sesión trabajando en el repo en ese momento.
 
-**Lo que queda en su lugar.** El estilo está escrito (2 espacios, comillas dobles, punto y coma, líneas ≤ ~150) y se
-revisa leyendo el diff. `tsc` caza lo que importa.
+**Fuera de Prettier, a propósito.** Markdown (las tablas de los docs están alineadas a mano), CSS (reglas de una
+línea), JSON, SQL y HTML.
 
-**Si alguna vez se adopta**, la única forma sana es **un commit único de reformateo** con todas las sesiones avisadas
-y sin ramas abiertas, agregando la config, el gate y `.git-blame-ignore-revs` en el mismo commit. Es una decisión del
-usuario, no de una sesión.
+⚠️ **Ramas viejas.** Los worktrees de agentes de hace 10-12 días (`.claude/worktrees/`) quedaron con el formato
+anterior: uno tiene 7 commits sin mergear. Si alguna vez se mergea, primero `corepack pnpm format` en esa rama.
+
+**Una rareza conocida.** Prettier no siempre deja el archivo estable en una pasada (pasó con `app.ts`, cadenas
+de métodos): si `--check` falla justo después de un `--write`, se corre `--write` otra vez.
 
 ---
 
-## 8. ESLint: pendiente de decisión ⚠️
+## 8. ESLint: sin reglas de tipos, errores en cero ✅
 
-**Estado.** No hay ESLint en ningún paquete. Lo que más se le pediría ya está cubierto de otra forma:
+**Decisión (29-Oct-2026).** ESLint 9 con `@eslint/js` + `typescript-eslint` (recomendadas, **sin** reglas que
+necesiten información de tipos: `tsc` ya es el gate de tipos) + `eslint-plugin-react-hooks` en la web
+(`eslint.config.mjs`). Tarda ~15 s sobre todo el repo.
 
-| Regla típica de ESLint | Cómo se cubre hoy |
+| Qué | Cómo quedó |
 |---|---|
-| `no-explicit-any` | El trinquete (`check-calidad.mjs`): no sube por archivo |
-| `no-empty` (catch vacío) | El trinquete |
-| `no-console` en la API | El trinquete |
-| `no-unused-vars` | No se cubre. **Medido**: `tsc --noUnusedLocals` da **12** avisos (10 api, 2 web) y `--noUnusedParameters`, 3 |
-| `react-hooks/exhaustive-deps` | No se cubre. Es la que más bugs encontraría (efectos con datos viejos) y la que más ruido haría |
+| Errores | **0**. El hook rechaza un commit con errores en lo que está en stage |
+| `react-hooks/exhaustive-deps` | En **aviso**: 4 hoy (`BillingExtras`, `embed`, `Billing`, `Branding`). No se tocaron a ciegas: agregar una dependencia cambia cuándo corre el efecto. `qa.sh` corre con `--max-warnings 4`: el total no sube; si se arregla uno, se baja el número el mismo día |
+| `no-explicit-any`, `catch` vacíos | Apagadas: las mide el trinquete por archivo (§9), con baseline |
+| `no-control-regex` | Apagada: filtrar `\x00-\x1f` en cabeceras y nombres de archivo es deliberado |
+| Entornos | Declarados por carpeta: Apps Script (un scope global compartido entre archivos), Zapier en CommonJS, widget AMD de Kommo, Office/Word, service worker |
 
-**Las dos salidas, las dos razonables:**
+**La primera pasada.** 456 hallazgos, de los cuales 413 eran de entorno (los de arriba). Los reales: 16 imports,
+constantes y funciones sin uso (los mismos 12 + 3 que había medido `tsc --noUnusedLocals/--noUnusedParameters`), 4
+`eslint-disable` de más, dos escapes de más en un regex de `packages/pdf/src/sanitize.ts` y expresiones sueltas en
+scripts. Verificado: 188 tests de `pdf`, integraciones, y los tipos del SDK idénticos con el script viejo y el nuevo.
 
-- **A — sin ESLint, `tsc` más estricto.** Arreglar los 12 + 3 y activar `noUnusedLocals`/`noUnusedParameters` en
-  `tsconfig.base.json`. Costo: una pasada chica. Gana el `no-unused-vars` sin herramienta nueva.
-- **B — ESLint con config mínima** (`typescript-eslint` + `eslint-plugin-react-hooks`, sólo `exhaustive-deps` en
-  `warn` y por delta como el trinquete). Costo: una dependencia más y una medición del ruido de `exhaustive-deps`.
-
-Mientras no se decida, **no se escribe en ningún doc que «el lint pasa»**.
+**Descartado.** *Reglas con información de tipos* (`recommendedTypeChecked`): minutos por paquete y mucho de lo que
+cazan ya lo caza `tsc` con `strict`.
 
 ---
 
@@ -158,7 +165,7 @@ archivo (no total) para que nadie «pague» su `any` nuevo con el arreglo de otr
 **El costo que se acepta.** Un renombre de archivo cuenta como archivo nuevo: se regenera el baseline en ese commit.
 
 **Descartado.** *`"noImplicitAny"` más estricto o una regla de lint en `error`*: rompe con el código existente.
-*Arreglar todo de una*: mismo problema que §7.
+*Arreglar todo de una*: cientos de cambios de código (no sólo de formato, como el de §7) sin ninguna corrección de comportamiento.
 
 ---
 
@@ -176,20 +183,25 @@ el `PATH` no traía `node`, el script moría antes de correr un test, y el silen
 exporta su propio `PATH`, y si se agrega un timer (propuesta en `tests-automatizados.md` §4.4), **la señal de que corre
 es el estado del servicio, no la ausencia de aviso**.
 
-**Descartado.** *GitHub Actions*: no hay remoto en GitHub. *Un runner local en Docker*: compite por la RAM (§12).
+**Descartado por ahora.** *GitHub Actions*: el repo sí tiene remoto en GitHub (`origin`), así que es posible; no se
+armó todavía porque la verificación que importa (las 23 suites e2e, los tests en navegador) necesita levantar la API
+y bajar navegadores, y conviene primero tener `qa.sh` estable un tiempo. Es el candidato natural para el QA nocturno
+(`tests-automatizados.md` §4.4). *Un runner local en Docker*: compite por la RAM (§12).
 
 ---
 
-## 11. Los e2e son scripts Node contra una API real, no Playwright 🟡
+## 11. e2e: scripts Node contra la API, y un smoke en navegador con Playwright 🟡
 
 **Decisión.** `scripts/e2e-*.mjs` ejercitan la API de punta a punta (crear sobre, firmar, sellar, webhooks, CRM…)
-contra una API corriendo, local o `dev.calasign.com`. No hay e2e en navegador.
+contra una API corriendo, local o `dev.calasign.com`. Desde el 29-Oct-2026, además, **Playwright** prueba la web en
+navegador (`apps/web/e2e/`): el firmante de punta a punta en escritorio y celular, el login y las páginas públicas.
 
 **Por qué.** El riesgo grande está en la API (evidencia, sellado, permisos), que es además lo que usan los
 integradores. Un script con `fetch` es rápido, no se rompe por un cambio de CSS y corre contra dev igual que en local.
 
-**El costo que se acepta.** Nada prueba que la **web** funcione: un error de render del firmante en Safari pasa todos
-los tests. La propuesta acotada está en [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador--propuesta-acotada-no-vigente).
+**El costo que se acepta.** El smoke en navegador es chico a propósito (10 tests): cubre los caminos que no pueden
+romperse, no cada pantalla. WebKit (Safari) es opcional porque necesita librerías del sistema que se instalan con
+`sudo`. Ver [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador-playwright).
 
 ---
 
@@ -203,7 +215,8 @@ con su número de migración reservado. El merge se resuelve en un worktree apar
 trabajando en el checkout principal con `tsx watch`: un merge con conflictos ahí deja marcas de conflicto en el código
 que esa sesión está corriendo.
 
-**Consecuencias.** Las reglas que reescriben en masa (§7, §9) chocan de frente con esto: por eso están como están.
+**Consecuencias.** Todo lo que reescribe en masa choca de frente con esto: el reformateo de Prettier (§7) se hizo
+en un único commit con el repo sin otras sesiones, y el trinquete (§9) mide el delta en vez de exigir cero.
 
 ---
 

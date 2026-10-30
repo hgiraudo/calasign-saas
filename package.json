@@ -14,6 +14,7 @@
     "qa": "bash scripts/qa.sh",
     "qa:rapido": "bash scripts/qa.sh --rapido",
     "qa:e2e": "bash scripts/qa.sh --e2e",
+    "qa:web": "bash scripts/qa.sh --web",
     "calidad": "node scripts/check-calidad.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

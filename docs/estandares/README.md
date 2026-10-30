@@ -52,17 +52,18 @@ review. Varias reglas son **nuevas** y el código existente no las cumple: la di
 
 | Regla | Estado | Cómo se verifica |
 |---|---|---|
-| `tsc --noEmit` sin errores en los 7 paquetes | ✅ Vigente: **0 errores** | `scripts/qa.sh` (también lo corre `deploy-dev.sh`) |
+| `tsc --noEmit` sin errores en los 7 paquetes (y en `apps/web/e2e`) | ✅ Vigente: **0 errores** | `scripts/qa.sh` (también lo corre `deploy-dev.sh`) |
 | Tests unitarios verdes (api, pdf, xades, firmador, sdk-node, integraciones) | ✅ Vigente: **1.215 tests verdes** (954 de la API) | `scripts/qa.sh` |
 | Todo código de error de la API con texto en PT-BR y EN | ✅ Vigente: 411 códigos, 0 faltantes | `scripts/check-error-codes.mjs` (en `qa.sh` y en un test) |
 | Cada ruta registrada está en el OpenAPI | ✅ Vigente | `apps/api/test/openapi-contract.test.ts` |
 | Trinquete de calidad: no sube la cuenta de `any`, `catch` vacíos, `console.log` en la API, `TODO` sin fecha, `@ts-ignore` | 🟡 **Nuevo**: baseline 1.164 `any` · 109 `catch` vacíos · 2 `console` · 1 `TODO` · 0 `@ts-ignore` | `scripts/check-calidad.mjs` (en `qa.sh` y en el hook) |
 | Ningún secreto en texto plano en un commit | 🟡 **Nuevo**: hook escrito, se activa con `git config core.hooksPath scripts/hooks` | `scripts/hooks/pre-commit` |
-| QA antes del deploy a dev | 🟡 **Nuevo**: `deploy-dev.sh` corre `qa.sh --rapido` (~45 s); `SKIP_QA=1` lo saltea | `scripts/deploy-dev.sh` |
+| QA antes del deploy a dev | 🟡 **Nuevo**: `deploy-dev.sh` corre `qa.sh --rapido` (~75 s); `SKIP_QA=1` lo saltea | `scripts/deploy-dev.sh` |
 | e2e en un comando, contra una API efímera | 🟡 **Nuevo**: `qa.sh --e2e` | `scripts/qa.sh` |
-| Formateador (Prettier) como gate | 🔴 **No adoptado a propósito**: reformatearía 422 de 538 archivos. Ver [decisiones §7](decisiones-de-diseno.md#7-prettier-no-se-adopta-como-gate-) | — |
-| ESLint | 🔴 No existe. Pendiente de decisión: [decisiones §8](decisiones-de-diseno.md#8-eslint-pendiente-de-decisión-️) | — |
-| e2e de la web en navegador (Playwright) | 🔴 No existe. Plan acotado en [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador--propuesta-acotada-no-vigente) | — |
+| Formato con Prettier (ancho 150, sólo TS/JS) | ✅ **Adoptado el 29-Oct-2026**: todo el repo reformateado en `e93f8fc` (ignorado por `git blame`). Ver [decisiones §7](decisiones-de-diseno.md#7-prettier-adoptado-con-un-único-commit-de-reformateo-) | `prettier --check` en `qa.sh` y en el hook |
+| ESLint (typescript-eslint + react-hooks) | ✅ **Adoptado el 29-Oct-2026**: 0 errores; 4 avisos de `exhaustive-deps` que no pueden subir. Ver [decisiones §8](decisiones-de-diseno.md#8-eslint-sin-reglas-de-tipos-errores-en-cero-) | `eslint --max-warnings 4` en `qa.sh`; errores en el hook |
+| e2e de la web en navegador (Playwright) | 🟡 **Nuevo**: 10 tests en Chromium de escritorio y de celular (~1 min); WebKit opcional. Ver [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador-playwright) | `qa.sh --web` (y dentro de `--e2e`) |
+| Mutation testing | 🔴 No existe. Candidato acotado en [decisiones §14](decisiones-de-diseno.md#14-no-hay-mutation-testing-) | — |
 | QA nocturno automático | 🔴 No existe. Propuesta en [`tests-automatizados.md` §4.4](tests-automatizados.md#44-qa-nocturno--propuesta) | — |
 
 Lo que está en 🟡 o 🔴 se escribe igual, con el costo medido, para que la decisión de adoptarlo sea del usuario y no se

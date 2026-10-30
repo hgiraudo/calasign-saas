@@ -1,5 +1,5 @@
 // Redacción de secretos en logs: los links de firma, invitaciones, códigos del Firmador, descargas, negociaciones,
-// workflows públicos y resets de contraseña llevan el secreto en la ruta; OAuth y SSO lo llevan en la query.
+// workflows públicos, pases de firma del celular y resets de contraseña llevan el secreto en la ruta; OAuth y SSO lo llevan en la query.
 // Nada de eso puede terminar en journald / CloudWatch.
 
 const REDACTED = "[redactado]";
@@ -15,6 +15,9 @@ const SECRET_AFTER: string[][] = [
   ["invite"],
   ["v1", "public", "negotiations"],
   ["v1", "public", "workflow-runs"],
+  // Pase de firma (firma dibujada en el celular): la página /h/<token> y su endpoint público.
+  ["v1", "public", "signature-handoffs"],
+  ["h"],
   ["n"],
   ["w"],
   ["reset"],

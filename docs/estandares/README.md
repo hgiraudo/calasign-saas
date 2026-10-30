@@ -62,7 +62,7 @@ review. Varias reglas son **nuevas** y el código existente no las cumple: la di
 | e2e en un comando, contra una API efímera | 🟡 **Nuevo**: `qa.sh --e2e` | `scripts/qa.sh` |
 | Formato con Prettier (ancho 150, sólo TS/JS) | ✅ **Adoptado el 29-Oct-2026**: todo el repo reformateado en `e93f8fc` (ignorado por `git blame`). Ver [decisiones §7](decisiones-de-diseno.md#7-prettier-adoptado-con-un-único-commit-de-reformateo-) | `prettier --check` en `qa.sh` y en el hook |
 | ESLint (typescript-eslint + react-hooks) | ✅ **Adoptado el 29-Oct-2026**: 0 errores; 4 avisos de `exhaustive-deps` que no pueden subir. Ver [decisiones §8](decisiones-de-diseno.md#8-eslint-sin-reglas-de-tipos-errores-en-cero-) | `eslint --max-warnings 4` en `qa.sh`; errores en el hook |
-| e2e de la web en navegador (Playwright) | 🟡 **Nuevo**: 10 tests en Chromium de escritorio y de celular (~1 min); WebKit opcional. Ver [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador-playwright) | `qa.sh --web` (y dentro de `--e2e`) |
+| e2e de la web en navegador (Playwright) | 🟡 **Nuevo**: 15 tests en Chromium de escritorio y de celular (~1 min); WebKit opcional. Ver [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador-playwright) | `qa.sh --web` (y dentro de `--e2e`) |
 | Mutation testing (Stryker) | 🟡 **Nuevo**: `signatures.ts` de pdf (98 % sobre lo cubierto), `redact.ts` y `totp.ts` de la API; piso por paquete. Ver [`tests-automatizados.md` §8](tests-automatizados.md#8-mutation-testing-stryker) | `scripts/mutacion.sh` (no va en `qa.sh`: tarda minutos) |
 | QA nocturno automático | 🔴 No existe. Propuesta en [`tests-automatizados.md` §4.4](tests-automatizados.md#44-qa-nocturno--propuesta) | — |
 

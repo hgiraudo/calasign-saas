@@ -341,6 +341,10 @@ function linkOwnerLookup(path: string): ((db: Db) => Promise<string | null>) | n
     const hash = sha256Hex(seg[4]);
     return (db) => tenantOf(db, `SELECT tenant_id FROM workflow_runs WHERE public_token_hash = $1`, hash);
   }
+  if (under(path, "/v1/public/signature-handoffs") && seg[4] && tokenOk(seg[4])) {
+    const hash = sha256Hex(seg[4]);
+    return (db) => tenantOf(db, `SELECT tenant_id FROM signature_handoffs WHERE token_hash = $1`, hash);
+  }
   if (under(path, "/v1/payments/return") && seg[4] && uuid(seg[4])) {
     const id = seg[4];
     return (db) => tenantOf(db, `SELECT e.tenant_id FROM envelope_payments p JOIN envelopes e ON e.id = p.envelope_id WHERE p.id = $1`, id);

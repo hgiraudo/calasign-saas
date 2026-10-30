@@ -199,7 +199,7 @@ navegador (`apps/web/e2e/`): el firmante de punta a punta en escritorio y celula
 **Por qué.** El riesgo grande está en la API (evidencia, sellado, permisos), que es además lo que usan los
 integradores. Un script con `fetch` es rápido, no se rompe por un cambio de CSS y corre contra dev igual que en local.
 
-**El costo que se acepta.** El smoke en navegador es chico a propósito (10 tests): cubre los caminos que no pueden
+**El costo que se acepta.** El smoke en navegador es chico a propósito (15 tests): cubre los caminos que no pueden
 romperse, no cada pantalla. WebKit (Safari) es opcional porque necesita librerías del sistema que se instalan con
 `sudo`. Ver [`tests-automatizados.md` §6](tests-automatizados.md#6-e2e-de-la-web-en-navegador-playwright).
 

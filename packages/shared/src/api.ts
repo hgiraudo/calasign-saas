@@ -453,11 +453,19 @@ export interface EnvelopeEvent {
 
 // ───────────────────────────── Firma ─────────────────────────────
 
+/** Cómo se hizo la firma: dibujada (en esta pantalla o en el celular), escrita con teclado o importada de un archivo. */
+export const SIGNATURE_KINDS = ["drawn", "typed", "uploaded"] as const;
+
 export const SignatureImageInput = z.object({
-  kind: z.enum(["drawn", "typed"]),
+  kind: z.enum(SIGNATURE_KINDS),
   /** PNG en base64 (sin prefijo data:), máx ~700 KB. */
   imagePng: z.string().min(16).max(1_000_000),
   text: z.string().max(200).optional().nullable(),
+  /**
+   * Firma dibujada en el celular: id del pase de firma (POST /v1/signing/{token}/signature-handoffs) cuya imagen se
+   * adopta. La imagen tiene que ser exactamente la que llegó del celular; la evidencia registra ese dispositivo.
+   */
+  handoffId: z.string().uuid().optional().nullable(),
 });
 export type SignatureImageInput = z.infer<typeof SignatureImageInput>;
 

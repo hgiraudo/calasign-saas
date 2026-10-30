@@ -6,6 +6,10 @@ import { z, ZodEffects, type AnyZodObject, type ZodTypeAny } from "zod";
 import {
   AnchorFieldInput,
   CompleteSigningInput,
+  CreateSignatureHandoffInput,
+  SendSignatureHandoffInput,
+  SubmitSignatureHandoffInput,
+  HANDOFF_CHANNELS,
   CorrectEnvelopeInput,
   CreateApiKeyInput,
   CreateBulkSendInput,
@@ -1162,9 +1166,11 @@ const OPS: Op[] = [
     operationId: "completeSigning",
     tag: "Firmante",
     summary: "Completar y firmar",
+    description:
+      "`signature.kind`: drawn (dibujada, también en el celular con `handoffId`), typed (escrita) o uploaded (importada de una imagen). La imagen es un PNG de hasta 700 KB con trazo visible (400 invalid_image, blank_signature). Con `handoffId`, la imagen tiene que ser la que llegó del celular por ese pase (400 invalid_handoff).",
     body: CompleteSigningInput,
     auth: "token",
-    errors: ["payment_required", "identity_required"],
+    errors: ["payment_required", "identity_required", "invalid_handoff"],
   },
   {
     method: "post",
@@ -1345,6 +1351,96 @@ const OPS: Op[] = [
     tag: "Firmante",
     summary: "Si la página de firma se muestra en modo embebido (y para qué orígenes)",
     auth: "token",
+  },
+
+  // Firma dibujada en el celular (pase de firma)
+  {
+    method: "post",
+    path: "/v1/signing/{token}/signature-handoffs",
+    operationId: "createSignatureHandoff",
+    tag: "Firmante",
+    summary: "Pedir un link para dibujar la firma en el celular",
+    description:
+      "Crea un pase de un solo uso que vence a los 10 minutos, atado a este destinatario y sobre, y devuelve la URL corta (/h/<token>) para abrir en el celular; un pase nuevo deja sin efecto los anteriores sin usar. Mismas guardas que completar la firma (código OTP, identidad, consentimiento, turno; 409 consent_required, not_your_turn, not_signable; 410 envelope_closed). Con `channel` además manda el link (ver …/send). La firma se adopta después desde esta sesión: POST …/complete con `signature.handoffId`. 429 handoff_too_many (20 por hora).",
+    body: CreateSignatureHandoffInput,
+    response: z.object({
+      id: z.string().uuid(),
+      url: z.string().describe("URL para abrir en el celular: lleva el secreto del pase."),
+      purpose: z.enum(["signature", "initials"]),
+      expiresAt: iso,
+      channels: z.array(z.enum(HANDOFF_CHANNELS)).describe("Canales por los que se puede mandar el link (Telegram, solo con el chat vinculado)."),
+      sent: z.object({ channel: z.enum(HANDOFF_CHANNELS), destination: z.string(), resendInSeconds: z.number().int() }).nullable(),
+    }),
+    auth: "token",
+    errors: [
+      "envelope_closed",
+      "handoff_too_many",
+      "handoff_channel_unavailable",
+      "handoff_cooldown",
+      "handoff_send_limit",
+      "handoff_destination_limit",
+      "handoff_delivery_failed",
+    ],
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/signature-handoffs/{id}/send",
+    operationId: "sendSignatureHandoff",
+    tag: "Firmante",
+    summary: "Mandar el link del pase por SMS, WhatsApp o Telegram",
+    description:
+      "SMS y WhatsApp al teléfono indicado; Telegram, al chat que el firmante ya vinculó (409 handoff_channel_unavailable si no lo vinculó o el canal no está configurado: copiar el link). Espera de 30 s entre envíos y topes por destinatario (5 por hora, 10 por día) y por destino (los del código OTP): 429 handoff_cooldown (details.resendInSeconds), handoff_send_limit, handoff_destination_limit; 502 handoff_delivery_failed; 410 handoff_expired si el pase venció o ya se usó.",
+    body: SendSignatureHandoffInput,
+    auth: "token",
+    errors: [
+      "handoff_channel_unavailable",
+      "handoff_cooldown",
+      "handoff_send_limit",
+      "handoff_destination_limit",
+      "handoff_delivery_failed",
+      "handoff_expired",
+    ],
+  },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/signature-handoffs/{id}",
+    operationId: "getSignatureHandoff",
+    tag: "Firmante",
+    summary: "Estado del pase (la computadora espera la firma del celular)",
+    description:
+      "status pending, submitted (con `imagePng`, el PNG en base64 que llegó del celular) o expired. Un pase de otro destinatario o sobre da 404.",
+    response: z.object({
+      id: z.string().uuid(),
+      status: z.enum(["pending", "submitted", "expired"]),
+      expiresAt: iso,
+      imagePng: z.string().nullable(),
+    }),
+    auth: "token",
+  },
+  {
+    method: "get",
+    path: "/v1/public/signature-handoffs/{token}",
+    operationId: "getPublicSignatureHandoff",
+    tag: "Firmante",
+    summary: "Página del celular: datos del pase",
+    description:
+      "Sin datos del sobre ni del firmante: para qué es (firma o iniciales), vencimiento e idioma. 404 si el link no existe; 409 handoff_used; 410 handoff_expired.",
+    response: z.object({ purpose: z.enum(["signature", "initials"]), expiresAt: iso, locale: z.enum(LOCALES) }),
+    auth: "none",
+    errors: ["handoff_used", "handoff_expired"],
+  },
+  {
+    method: "post",
+    path: "/v1/public/signature-handoffs/{token}",
+    operationId: "submitPublicSignatureHandoff",
+    tag: "Firmante",
+    summary: "Página del celular: enviar la firma dibujada",
+    description:
+      "PNG en base64 con el mismo criterio que una firma dibujada (hasta 700 KB, 400 invalid_image; sin trazo, 400 blank_signature). Una sola vez por pase (409 handoff_used); la evidencia del sobre registra la IP y el navegador del celular. 20 pedidos por minuto por IP.",
+    body: SubmitSignatureHandoffInput,
+    response: z.object({ submitted: z.literal(true) }),
+    auth: "none",
+    errors: ["handoff_used", "handoff_expired"],
   },
 
   // Firma en persona

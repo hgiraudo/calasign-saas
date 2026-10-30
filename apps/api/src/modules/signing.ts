@@ -32,6 +32,13 @@ const SIGNATURE_MAX_PIXELS = 2000 * 1000;
 const SIGNATURE_MIN_INK_PIXELS = 24;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+interface SubmittedHandoffRow {
+  id: string;
+  submitted_ip: string | null;
+  submitted_user_agent: string | null;
+  submitted_at: string | Date;
+}
+
 interface Resolved {
   recipient: any;
   envelope: any;
@@ -73,13 +80,36 @@ export function assertLinkCurrent(r: any, resolved: { access_token_hash?: string
 }
 
 /** Estado del sobre y del destinatario que permite completar; `groupOrder`: el turno de firma en curso. */
-function assertCanComplete(e: any, r: any, groupOrder: number | null) {
+export function assertCanComplete(e: any, r: any, groupOrder: number | null) {
   if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
   if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
   if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
   if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés firmar este sobre");
   if (groupOrder !== r.routing_order) throw conflict("not_your_turn", "Todavía no es tu turno de firmar");
   if (!r.consented_at) throw conflict("consent_required", "Primero hay que aceptar el uso de medios electrónicos");
+}
+
+/** Tope del PNG de una firma o iniciales (en bytes, ya decodificado el base64). */
+export const SIGNATURE_PNG_MAX_BYTES = 700 * 1024;
+
+/**
+ * PNG de una firma o iniciales (base64 sin prefijo), con el mismo criterio para la dibujada, la escrita, la importada y
+ * la que llega del celular: firma PNG, tope de bytes y de píxeles (un PNG dañado o que declara dimensiones enormes haría
+ * fallar, o tumbar, el sellado después de que el firmante ya figura como firmado) y trazo visible (una imagen
+ * transparente, toda blanca o de un punto no es una firma). `what`: "Firma" / "Iniciales", para el mensaje.
+ */
+export async function decodeSignaturePng(b64: string, what: string): Promise<Buffer> {
+  const buf = Buffer.from(b64, "base64");
+  if (buf.length < 67 || !buf.subarray(0, 8).equals(PNG_MAGIC)) throw badRequest("invalid_image", `${what}: se esperaba una imagen PNG`);
+  if (buf.length > SIGNATURE_PNG_MAX_BYTES) throw badRequest("invalid_image", `${what}: imagen demasiado grande`);
+  let ink: number;
+  try {
+    ink = await pngInkPixels(new Uint8Array(buf), SIGNATURE_MAX_PIXELS);
+  } catch {
+    throw badRequest("invalid_image", `${what}: la imagen está dañada o es demasiado grande`);
+  }
+  if (ink < SIGNATURE_MIN_INK_PIXELS) throw badRequest("blank_signature", `${what}: la imagen no tiene trazo visible`);
+  return buf;
 }
 
 export function recipientActor(req: FastifyRequest, r: any): Actor {
@@ -302,31 +332,9 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     // sube imágenes de firma.
     assertCanComplete(e0, r0, e0.status === "sent" ? (await currentSignerGroup(s.db, e0.id)).order : null);
 
-    const decodePng = (b64: string | undefined, what: string) => {
-      if (!b64) return null;
-      const buf = Buffer.from(b64, "base64");
-      if (buf.length < 67 || !buf.subarray(0, 8).equals(PNG_MAGIC)) throw badRequest("invalid_image", `${what}: se esperaba una imagen PNG`);
-      if (buf.length > 700 * 1024) throw badRequest("invalid_image", `${what}: imagen demasiado grande`);
-      return buf;
-    };
-    const sigPng = decodePng(input.signature?.imagePng, "Firma");
-    const iniPng = decodePng(input.initials?.imagePng, "Iniciales");
-    // Se decodifica ahora (con tope de píxeles): un PNG dañado o que declara dimensiones enormes haría fallar (o tumbar)
-    // el sellado del sobre después de que el firmante ya figura como firmado.
-    // Además, una firma transparente, toda blanca o de un punto no es una firma: se rechaza antes de guardarla.
-    for (const [png, what] of [
-      [sigPng, "Firma"],
-      [iniPng, "Iniciales"],
-    ] as const) {
-      if (!png) continue;
-      let ink: number;
-      try {
-        ink = await pngInkPixels(new Uint8Array(png), SIGNATURE_MAX_PIXELS);
-      } catch {
-        throw badRequest("invalid_image", `${what}: la imagen está dañada o es demasiado grande`);
-      }
-      if (ink < SIGNATURE_MIN_INK_PIXELS) throw badRequest("blank_signature", `${what}: la imagen no tiene trazo visible`);
-    }
+    // Se decodifica ahora (con tope de píxeles y de trazo): ver decodeSignaturePng.
+    const sigPng = input.signature ? await decodeSignaturePng(input.signature.imagePng, "Firma") : null;
+    const iniPng = input.initials ? await decodeSignaturePng(input.initials.imagePng, "Iniciales") : null;
 
     // Subir imágenes antes de la transacción (no se bloquea el sobre durante I/O externa).
     const stored: { purpose: "signature" | "initials"; kind: string; text: string | null; fileId: string; key: string; png: Buffer }[] = [];
@@ -438,6 +446,29 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing, fields: missingFields });
         if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid, fields: invalidFields });
 
+        // Firma dibujada en el celular: el pase es de este destinatario y sobre, ya recibió la firma y la imagen es
+        // exactamente la que llegó (si no, cualquiera podía decir que su firma se dibujó en otro dispositivo).
+        const devices = new Map<string, { handoffId: string; ip: string | null; userAgent: string | null; submittedAt: string }>();
+        for (const x of stored) {
+          const meta = x.purpose === "signature" ? input.signature : input.initials;
+          if (!meta?.handoffId) continue;
+          const h = await t.one<SubmittedHandoffRow>(
+            `SELECT id, submitted_ip, submitted_user_agent, submitted_at FROM signature_handoffs
+              WHERE id = $1 AND recipient_id = $2 AND envelope_id = $3 AND purpose = $4 AND submitted_at IS NOT NULL AND image_sha256 = $5`,
+            [meta.handoffId, r.id, e.id, x.purpose, sha256Hex(x.png)],
+          );
+          if (!h || meta.kind !== "drawn")
+            throw badRequest("invalid_handoff", "La firma del celular no corresponde a este pase: volvé a dibujarla o pedí otro link");
+          devices.set(x.purpose, {
+            handoffId: h.id,
+            ip: h.submitted_ip,
+            userAgent: h.submitted_user_agent,
+            submittedAt: new Date(h.submitted_at).toISOString(),
+          });
+          // La imagen ya queda en el archivo de la firma adoptada: el pase no la guarda más.
+          await t.query(`UPDATE signature_handoffs SET image_png = NULL WHERE id = $1`, [h.id]);
+        }
+
         for (const x of stored) {
           await t.query(
             `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signature_image',$3,'image/png',$4,$5)`,
@@ -463,7 +494,13 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           data: {
             documents: docs.map((d) => ({ id: d.id, sha256: d.sha256 })),
             fields: fields.length,
-            signature: stored.map((x) => ({ purpose: x.purpose, kind: x.kind, sha256: sha256Hex(x.png) })),
+            // `device`: se dibujó en otro dispositivo (el celular del pase), con su IP y navegador; sin el token del pase.
+            signature: stored.map((x) => ({
+              purpose: x.purpose,
+              kind: x.kind,
+              sha256: sha256Hex(x.png),
+              ...(devices.has(x.purpose) ? { device: devices.get(x.purpose) } : {}),
+            })),
           },
         });
         await advanceRouting(t, e.tenant_id, e.id, { type: "system", label: "Sistema" });

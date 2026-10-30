@@ -23,7 +23,7 @@ dependencias instaladas.
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
 | 6 | **e2e locales** | `qa.sh --solo-e2e` | **~5 min** · 23 suites | flujos de punta a punta contra una API de verdad: firmar, sellar, CRM, conectores, certificado propio, SDKs | la web en un navegador; B-LT/B-LTA (sin PKI de laboratorio) |
 | 7 | **e2e contra dev** | `node scripts/<suite>.mjs https://dev.calasign.com` | minutos | lo mismo sobre Postgres, S3, KMS y Caddy reales | las suites que sólo existen en local (§5.1) |
-| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 10 tests (build 19 s + 31 s) | el firmante de punta a punta en Chromium de escritorio y de celular (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | Safari (WebKit opcional), pantallas fuera del smoke |
+| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 15 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | Safari (WebKit opcional), pantallas fuera del smoke |
 
 **`qa.sh` las agrupa:**
 
@@ -186,7 +186,7 @@ y `e2e-password` usan funciones que sólo existen con `APP_ENV=local` (buzón si
 
 ## 6. e2e de la web en navegador (Playwright)
 
-**Estado (29-Oct-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 10 tests, ~31 s
+**Estado (29-Oct-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 15 tests, ~50 s
 más ~19 s de compilar la web. Corren en `qa.sh --web` y dentro de `qa.sh --e2e`.
 
 **Por qué.** Hay regresiones que **sólo** se ven en un navegador y que la pasada 147 tuvo que arreglar a mano: el
@@ -199,6 +199,7 @@ ya no existe, la barra del firmante ilegible con colores de marca claros.
 |---|---|---|
 | `firmante.e2e.ts` | Chromium escritorio **y celular** (Pixel 7) | Consentimiento obligatorio, PDF dibujado por pdf.js, adoptar la firma escrita, finalizar, pantalla de fin, **descarga byte a byte igual al PDF sellado**; idioma portugués; link inválido |
 | `consola.e2e.ts` | Chromium | Login por la pantalla, el sobre en la lista y en el detalle, contraseña equivocada |
+| `firma-importar-celular.e2e.ts` | Chromium | Firma **importada** de una imagen (SVG rechazado) y firma **dibujada en el celular** (link `/h/…` en otra página, un solo uso, la computadora la recibe y finaliza), con la evidencia de cada una |
 | `publicas.e2e.ts` | Chromium | `/verify` con el PDF sellado («Documento válido»), con **un byte cambiado** y con un PDF ajeno («No coincide»); `/developers` y cambio de idioma |
 
 Todos fallan además si la página tira una excepción de JavaScript. Visto fallar con un bug inyectado: con la traba

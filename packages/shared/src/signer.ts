@@ -80,6 +80,77 @@ export const ReassignInput = z
   });
 export type ReassignInput = z.infer<typeof ReassignInput>;
 
+// ───────────── Firma dibujada en el celular (pase de firma) ─────────────
+
+/** Minutos que dura un pase de firma (el link /h/<token> que se abre en el celular). */
+export const SIGNATURE_HANDOFF_TTL_MINUTES = 10;
+/** Canales por los que la API puede mandar el link del pase (los configurados en el entorno, ver `channels`). */
+export const HANDOFF_CHANNELS = ["sms", "whatsapp", "telegram"] as const;
+export type HandoffChannel = (typeof HANDOFF_CHANNELS)[number];
+
+const HandoffSend = {
+  /** Canal por el que mandar el link. Telegram va al chat que el firmante ya vinculó (no hace falta el teléfono). */
+  channel: z.enum(HANDOFF_CHANNELS),
+  /** Teléfono en E.164 (+5491122334455): obligatorio para SMS y WhatsApp. */
+  phone: z
+    .string()
+    .trim()
+    .regex(/^\+[1-9]\d{6,14}$/)
+    .optional()
+    .nullable(),
+};
+const phoneForChannel = (d: { channel?: HandoffChannel; phone?: string | null }) => !d.channel || d.channel === "telegram" || Boolean(d.phone);
+const phoneMessage = { message: "phone requerido para SMS y WhatsApp", path: ["phone"] };
+
+/** Crear un pase (POST /v1/signing/{token}/signature-handoffs). Con `channel` además manda el link. */
+export const CreateSignatureHandoffInput = z
+  .object({
+    purpose: z.enum(["signature", "initials"]).default("signature"),
+    channel: HandoffSend.channel.optional(),
+    phone: HandoffSend.phone,
+  })
+  .refine(phoneForChannel, phoneMessage);
+export type CreateSignatureHandoffInput = z.infer<typeof CreateSignatureHandoffInput>;
+
+/** Mandar (o reenviar) el link de un pase existente. */
+export const SendSignatureHandoffInput = z.object(HandoffSend).refine(phoneForChannel, phoneMessage);
+export type SendSignatureHandoffInput = z.infer<typeof SendSignatureHandoffInput>;
+
+export interface SignatureHandoff {
+  id: string;
+  /** URL para abrir en el celular (/h/<token>): lleva el secreto del pase; se muestra solo al firmante. */
+  url: string;
+  purpose: "signature" | "initials";
+  expiresAt: string;
+  /** Canales por los que se puede mandar el link desde la API (Telegram, solo si el firmante ya vinculó su chat). */
+  channels: HandoffChannel[];
+  /** Último envío del link (destino enmascarado), si hubo. */
+  sent: { channel: HandoffChannel; destination: string; resendInSeconds: number } | null;
+}
+
+/** Estado del pase que consulta la computadora mientras espera la firma del celular. */
+export interface SignatureHandoffStatus {
+  id: string;
+  /** pending: esperando el celular · submitted: llegó la firma · expired: venció sin firma o se reemplazó por otro. */
+  status: "pending" | "submitted" | "expired";
+  expiresAt: string;
+  /** PNG en base64 (sin prefijo data:) dibujado en el celular, solo con status submitted. */
+  imagePng: string | null;
+}
+
+/** Lo que ve el celular al abrir /h/<token> (sin datos del sobre ni del firmante). */
+export interface PublicSignatureHandoff {
+  purpose: "signature" | "initials";
+  expiresAt: string;
+  locale: "es" | "pt-BR" | "en";
+}
+
+export const SubmitSignatureHandoffInput = z.object({
+  /** PNG en base64 (sin prefijo data:), con el mismo tope que la firma dibujada (~700 KB). */
+  imagePng: z.string().min(16).max(1_000_000),
+});
+export type SubmitSignatureHandoffInput = z.infer<typeof SubmitSignatureHandoffInput>;
+
 // ───────────── Verificación pública ─────────────
 
 export interface VerifyResponse {

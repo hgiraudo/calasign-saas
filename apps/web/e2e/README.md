@@ -18,6 +18,7 @@ cd apps/web && ./node_modules/.bin/playwright test
 |---|---|
 | `firmante.e2e.ts` | Consentimiento (sin él no se avanza), PDF dibujado, adoptar la firma escrita, finalizar, pantalla de fin y **descarga byte a byte igual al PDF sellado del servidor**; cambio de idioma a portugués; link inválido. Corre también como **celular** (Pixel 7) |
 | `consola.e2e.ts` | Login por la pantalla; el sobre enviado por la API aparece en la lista y en el detalle; contraseña equivocada |
+| `firma-importar-celular.e2e.ts` | «Adoptá tu firma»: **importar** una imagen PNG (y un SVG rechazado) y firmar; **dibujar en el celular**: pide el link, lo abre en otra página, dibuja con el mouse, envía (un segundo uso lo rechaza), la computadora muestra la firma y finaliza; la evidencia dice cómo se hizo cada una |
 | `publicas.e2e.ts` | `/verify` reconoce el PDF sellado y dice «No coincide» con **un byte cambiado** y con un PDF ajeno; `/developers` carga y cambia de idioma |
 
 Todos fallan si la página tira una excepción de JavaScript (`helpers/pagina.ts`).

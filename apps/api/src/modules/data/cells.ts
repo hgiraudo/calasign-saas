@@ -66,12 +66,14 @@ const SIGNING_RE = /^\/(?:v1\/signing|s|embed)\/([A-Za-z0-9_-]{20,100})(?:[/?]|$
 
 /**
  * Rutas públicas que no traen sesión ni token de firma pero sí identifican a la organización: formularios web (slug),
- * negociaciones (token de la contraparte), workflows con inicio público (slug) y sus ejecuciones (token).
+ * negociaciones (token de la contraparte), workflows con inicio público (slug) y sus ejecuciones (token), y el pase
+ * de firma del celular (token).
  */
 const PUBLIC_FORM_RE = /^\/v1\/public\/forms\/([^/?]{1,200})(?:[/?]|$)/;
 const PUBLIC_NEGOTIATION_RE = /^\/v1\/public\/negotiations\/([A-Za-z0-9_-]{20,100})(?:[/?]|$)/;
 const PUBLIC_WORKFLOW_RE = /^\/v1\/public\/workflows\/([^/?]{1,200})(?:[/?]|$)/;
 const PUBLIC_RUN_RE = /^\/v1\/public\/workflow-runs\/([A-Za-z0-9_-]{20,100})(?:[/?]|$)/;
+const PUBLIC_HANDOFF_RE = /^\/v1\/public\/signature-handoffs\/([A-Za-z0-9_-]{20,100})(?:[/?]|$)/;
 
 /** Rutas públicas que no dependen de la organización (o la resuelven por el Host): nunca se redirigen. */
 export function cellExemptPath(url: string): boolean {
@@ -114,6 +116,12 @@ async function tenantOfPublicPath(db: Db, url: string): Promise<string | null> {
   }
   m = PUBLIC_RUN_RE.exec(url);
   if (m) return (await db.one<any>(`SELECT tenant_id FROM workflow_runs WHERE public_token_hash = $1`, [sha256Hex(m[1])]))?.tenant_id ?? null;
+  // Pase de firma del celular (signature-handoff.ts): la organización del firmante que lo pidió.
+  m = PUBLIC_HANDOFF_RE.exec(url);
+  if (m)
+    return (
+      (await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM signature_handoffs WHERE token_hash = $1`, [sha256Hex(m[1])]))?.tenant_id ?? null
+    );
   return null;
 }
 

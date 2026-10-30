@@ -21,6 +21,7 @@ import { sessionRoutes } from "./modules/sessions";
 import { authenticate, bearerCredentialTenant } from "./modules/context";
 import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
+import { signatureHandoffRoutes } from "./modules/signature-handoff";
 import { signerFeatureRoutes } from "./modules/signer-features";
 import { telegramRoutes } from "./modules/telegram";
 import { sesFeedbackRoutes } from "./notifications/ses-feedback";
@@ -301,6 +302,8 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await signerFeatureRoutes(app, services);
   await identityRoutes(app, services);
   await signingRoutes(app, services);
+  // Después de los hooks de OTP (signerFeatureRoutes) y de identidad (identityRoutes): se aplican a sus rutas del link.
+  await signatureHandoffRoutes(app, services);
   await telegramRoutes(app, services);
   await sesFeedbackRoutes(app, services);
   await webhookRoutes(app, services);

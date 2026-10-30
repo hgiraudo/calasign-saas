@@ -440,6 +440,43 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   },
   xml_sign_failed: { "pt-BR": "Não foi possível assinar o XML.", en: "Couldn't sign the XML." },
 
+  // ── Firmante: firma dibujada en el celular (pase de firma) ──
+  invalid_handoff: {
+    "pt-BR": "A assinatura do celular não corresponde a este link: desenhe de novo ou peça outro link.",
+    en: "The signature from the phone doesn't match this link: draw it again or request another link.",
+  },
+  handoff_expired: {
+    "pt-BR": "O link para desenhar a assinatura expirou ou não vale mais: peça outro na tela onde você está assinando.",
+    en: "The link to draw your signature expired or is no longer valid: request another one from the screen where you're signing.",
+  },
+  handoff_used: {
+    "pt-BR": "Esta assinatura já foi enviada: continue na tela onde você está assinando.",
+    en: "This signature was already sent: continue on the screen where you're signing.",
+  },
+  handoff_too_many: {
+    "pt-BR": "Você pediu links demais para o celular: tente mais tarde ou desenhe a assinatura nesta tela.",
+    en: "You requested too many phone links: try again later or draw your signature on this screen.",
+  },
+  handoff_channel_unavailable: {
+    "pt-BR": "Esse canal não está disponível (no Telegram, só se você já vinculou seu chat): copie o link ou escolha outro canal.",
+    en: "That channel isn't available (Telegram only works if you already linked your chat): copy the link or choose another channel.",
+  },
+  handoff_cooldown: {
+    "pt-BR": "Aguarde alguns segundos para enviar o link de novo.",
+    en: "Wait a few seconds before sending the link again.",
+  },
+  handoff_send_limit: {
+    "pt-BR": "Você já enviou o link vezes demais: copie e cole no chat, ou tente mais tarde.",
+    en: "You've sent the link too many times: copy and paste it into the chat, or try again later.",
+  },
+  handoff_destination_limit: {
+    "pt-BR": "Foram enviadas mensagens demais para esse destino: copie o link ou tente mais tarde.",
+    en: "Too many messages were sent to that destination: copy the link or try again later.",
+  },
+  handoff_delivery_failed: {
+    "pt-BR": "Não foi possível enviar o link: copie e cole no chat, ou tente de novo em alguns segundos.",
+    en: "The link couldn't be sent: copy and paste it into the chat, or try again in a few seconds.",
+  },
   // ── Formularios web y envíos masivos ──
   captcha_failed: {
     "pt-BR": "Não foi possível verificar que você não é um robô: conclua a verificação e envie novamente.",

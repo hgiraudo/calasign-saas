@@ -18,11 +18,11 @@ __DOMAIN__ {
 		output file /var/log/caddy-access.log {
 			mode 0640
 		}
-		# Los links de firma, invitaciones, descargas, callbacks OAuth y los webhooks de conectores (/hook/<secreto>)
+		# Los links de firma, invitaciones, pases de firma del celular (/h/), descargas, callbacks OAuth y los webhooks de conectores (/hook/<secreto>)
 		# llevan el secreto en la ruta o en la query:
 		# no se escriben en el log (Authorization y Cookie Caddy ya los oculta por defecto).
 		format filter {
-			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads|negotiations|workflow-runs|reset|hook)/)[^/?]+|\?.*" "${1}[redacted]"
+			request>uri regexp "(/(?:s|signing|embed|invite|n|w|h|sessions|downloads|negotiations|workflow-runs|signature-handoffs|reset|hook)/)[^/?]+|\?.*" "${1}[redacted]"
 			request>headers>Referer delete
 			# Secretos que llegan en encabezados propios (Caddy solo oculta Authorization y Cookie).
 			request>headers>X-Telegram-Bot-Api-Secret-Token delete

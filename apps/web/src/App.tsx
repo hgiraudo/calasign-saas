@@ -26,6 +26,7 @@ const EnvelopeEditPage = page(() => import("./pages/EnvelopeEdit"), "EnvelopeEdi
 const EnvelopeDetailPage = page(() => import("./pages/EnvelopeDetail"), "EnvelopeDetailPage");
 const ApiKeysPage = page(() => import("./pages/ApiKeys"), "ApiKeysPage");
 const SignerPage = page(() => import("./pages/Signer"), "SignerPage");
+const SignatureHandoffPage = page(() => import("./pages/SignatureHandoff"), "SignatureHandoffPage");
 const DevMailboxPage = page(() => import("./pages/DevMailbox"), "DevMailboxPage");
 const IntegrationsPage = page(() => import("./pages/Integrations"), "IntegrationsPage");
 const VerifyPage = page(() => import("./pages/Verify"), "VerifyPage");
@@ -93,6 +94,7 @@ export function App() {
         <Route path="/forgot" element={<ForgotPasswordPage />} />
         <Route path="/reset/:token" element={<ResetPasswordPage />} />
         <Route path="/s/:token" element={<SignerPage />} />
+        <Route path="/h/:token" element={<SignatureHandoffPage />} />
         <Route path="/developers/*" element={<DevelopersPage />} />
         <Route path="/verify" element={<VerifyPage />} />
         <Route path="/firmador" element={<FirmadorPage />} />

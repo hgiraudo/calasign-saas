@@ -855,7 +855,7 @@ function SigningFlow({
                 : (values[f.id] ?? "").trim(),
       })),
     };
-    const strip = (a: Adopted): SignatureImageInput => ({ kind: a.kind, imagePng: a.imagePng, text: a.text ?? null });
+    const strip = (a: Adopted): SignatureImageInput => ({ kind: a.kind, imagePng: a.imagePng, text: a.text ?? null, handoffId: a.handoffId ?? null });
     if (signature) body.signature = strip(signature);
     if (initials) body.initials = strip(initials);
     try {
@@ -1206,6 +1206,7 @@ function SigningFlow({
         <SignaturePad
           purpose={pad}
           defaultText={pad === "initials" ? initialsText : recipient.name}
+          base={base}
           onClose={() => setPad(null)}
           onAdopt={(a) => {
             if (pad === "signature") setSignature(a);

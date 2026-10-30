@@ -34,7 +34,8 @@ jobs · idempotency_keys   (infraestructura, sin FK al negocio)
 | `documents` | PDF dentro del sobre, ordenados. | Se guardan las dimensiones de cada página para validar y ubicar campos sin abrir el PDF. |
 | `recipients` | Firmantes y copias. | `routing_order` modela secuencial, paralelo y mixto con un solo número. `channels` (email, WhatsApp). Documento de identidad declarado (cédula, CPF…). Token del link en hash (búsqueda) y cifrado (reenvío). Evidencia del momento de firma (IP, user agent). |
 | `fields` | Campos ubicados en una página. | Coordenadas **normalizadas 0–1** desde arriba a la izquierda (como las ve el navegador); se convierten a puntos PDF solo al estampar. |
-| `adopted_signatures` | La firma (dibujada o tipeada) que adoptó cada firmante. | Se guarda como imagen PNG; una de firma y una de iniciales por firmante. |
+| `adopted_signatures` | La firma que adoptó cada firmante: `kind` dibujada (`drawn`, también en el celular), escrita (`typed`) o importada de una imagen (`uploaded`). | Se guarda como imagen PNG; una de firma y una de iniciales por firmante. |
+| `signature_handoffs` | Pase de firma: link `/h/<token>` para dibujar la firma en el celular (10 minutos, un solo uso, atado al destinatario, al sobre y a su link vigente). | Token como hash (y cifrado para reenviarlo); la imagen del celular espera ahí hasta que se adopta (se borra al completar) y el barrido borra las filas de más de un día. Sus envíos por SMS/WhatsApp/Telegram, en `signature_handoff_sends` (espera entre envíos y topes por destino). |
 | `envelope_events` | Registro de auditoría del sobre. | `seq` + `prev_hash` + `hash`. Sin FK a propósito: el registro sobrevive aunque se purguen datos del sobre por retención. Particionado mensual en producción. |
 | `jobs` | Cola de trabajos en Postgres. | `SKIP LOCKED`, reintentos con backoff, `dedupe_key` para que un mismo trabajo no se encole dos veces. Reemplazable por SQS. |
 | `notifications` | Cada mensaje enviado. | Estado y id del proveedor: sirve para soporte ("¿le llegó el correo?") y como evidencia de entrega. |
@@ -44,6 +45,8 @@ jobs · idempotency_keys   (infraestructura, sin FK al negocio)
 
 `envelope.created`, `envelope.updated`, `document.added`, `document.removed`, `envelope.sent`,
 `notification.sent`, `recipient.viewed`, `recipient.consented`, `recipient.signed`, `recipient.declined`,
+`recipient.signature_handoff_sent` (link del celular mandado: canal y destino enmascarado),
+`recipient.signature_handoff_submitted` (firma dibujada en el celular: IP y navegador del celular en el actor),
 `envelope.reminded`, `envelope.voided`, `envelope.expired`, `envelope.finalizing`, `envelope.completed`.
 
 Cada evento: actor (`user`, `api_key`, `recipient`, `system`), IP, user agent, datos propios y la marca de tiempo del servidor.
@@ -188,6 +191,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0121_storage_connections_account_sub` | `sub` de la cuenta de Google de una conexión de Drive: al desconectar se revoca en Google solo si ninguna otra conexión usa la misma cuenta |
 | `0122_staff_auth_sessions_lockout` | Sesiones del personal: id visible, `authenticated_at` (re-autenticación), `last_seen_at` (cierre por inactividad), «recordarme»; bloqueo de login por red (`login_attempts.scope`, `password_resets.ip_key`) |
 | `0123_tenants_time_zone` | `tenants.time_zone` (IANA, `UTC` por defecto): huso de la organización con el que se escriben las horas del certificado de finalización (con su desfase, «2026-10-29 18:03:12 UTC−03:00») y la fecha de los campos «fecha de firma». Se configura en Ajustes → Organización (`/v1/settings/organization`); el alta por la web toma el del navegador. Las existentes quedan en UTC |
+| `0124_signature_handoffs` | Firma importada (`adopted_signatures.kind` acepta `uploaded`) y pases de firma del celular (`signature_handoffs`, `signature_handoff_sends`). |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

@@ -14,6 +14,16 @@ describe("redactUrl", () => {
     expect(redactUrl(`/reset/${TOKEN}`)).toBe("/reset/[redactado]");
     expect(redactUrl(`/v1/public/negotiations/${TOKEN}/pdf`)).toBe("/v1/public/negotiations/[redactado]/pdf");
   });
+  it("redacta el pase de firma del celular (página /h/<token> y su endpoint público), también con un token corto", () => {
+    expect(redactUrl(`/h/${TOKEN}`)).toBe("/h/[redactado]");
+    expect(redactUrl("/h/corto")).toBe("/h/[redactado]");
+    expect(redactUrl(`/v1/public/signature-handoffs/${TOKEN}`)).toBe("/v1/public/signature-handoffs/[redactado]");
+    expect(redactUrl("/v1/public/signature-handoffs/corto?x=1")).toBe("/v1/public/signature-handoffs/[redactado]?x=1");
+    // El id del pase (UUID) que consulta la computadora no es un secreto; el token de firma sí.
+    expect(redactUrl(`/v1/signing/${TOKEN}/signature-handoffs/0192f0e0-0000-7000-8000-000000000001`)).toBe(
+      "/v1/signing/[redactado]/signature-handoffs/0192f0e0-0000-7000-8000-000000000001",
+    );
+  });
   it("redacta segmentos con forma de token aunque la ruta no esté listada, pero no los UUID", () => {
     expect(redactUrl(`/v1/algo/${TOKEN}`)).toBe("/v1/algo/[redactado]");
     expect(redactUrl("/v1/envelopes/0192f0e0-0000-7000-8000-000000000001/send")).toBe("/v1/envelopes/0192f0e0-0000-7000-8000-000000000001/send");

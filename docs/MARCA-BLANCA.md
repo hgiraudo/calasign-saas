@@ -35,6 +35,11 @@ blanca de este documento, la pantalla final, los correos y el PDF quedan con la 
 renombrar el subdominio `onespan.formularios.biz` y configurar en OneSpan la URL de retorno ("handover URL") hacia una
 página propia reduce lo que se ve, pero el iframe de OneSpan sigue mostrando su marca hasta migrar.
 
+**Estado (2026-10-30)**: migrado para **argos-seguros** (organización `argos-seguros` en dev, con su marca, API key,
+`frameAncestors` de `argos-seguros.calasign.com` / `.formularios.biz` y webhook `envelope.completed`). dynamic-form
+elige el proveedor por empresa (`"signingProvider": "calasign"` en su `company.json`); el resto de sus clientes sigue
+con OneSpan. Detalle del lado de dynamic-form: `docs/ref/calasign.md` de ese repo.
+
 ### Inventario
 
 | Lugar | Antes | Ahora |

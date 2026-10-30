@@ -205,7 +205,7 @@ registra `envelope.finalize_failed` con el `code` y avisa al remitente y a los a
 
 ## 9. Integraciones previstas (no son dependencias)
 
-- **dynamic-form**: pasa a ser un cliente de la API. Crea sobres por API con el PDF ya llenado, usa **firma embebida** (URL de firma con vencimiento corto para un iframe, eventos por `postMessage`) y recibe **webhooks** al completarse. Reemplaza a OneSpan sin cambiar su experiencia.
+- **dynamic-form**: pasa a ser un cliente de la API. Crea sobres por API con el PDF ya llenado, usa **firma embebida** (URL de firma con vencimiento corto para un iframe, eventos por `postMessage`) y recibe **webhooks** al completarse. Reemplaza a OneSpan sin cambiar su experiencia. **En uso** desde el 2026-10-30 para argos-seguros (dynamic-form elige el proveedor por empresa; ver su `docs/ref/calasign.md`).
 - **Autoridad Certificante de Calasign**: conector `calasign-ca` del `SignatureProvider`. El firmante elige "firmar con certificado" y la firma se arma con un certificado emitido por la CA en vez del sello de la plataforma.
 
 ## 10. Cómo evoluciona sin reescribir

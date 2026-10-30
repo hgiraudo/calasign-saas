@@ -28,7 +28,7 @@ export * from "./signatures";
 export * from "./ltv";
 export * from "./validate";
 export * from "./csc";
-export { certUrls, hasRevocationInfo, parseCert, fingerprint, nameToString, commonName, serialHex } from "./pki";
+export { certUrls, hasRevocationInfo, parseCert, fingerprint, isSelfSigned, nameToString, commonName, serialHex } from "./pki";
 export { fetchOcsp, fetchCrl, statusFromOcsp, statusFromCrl, type Fetcher, type RevocationResult } from "./pki";
 export { extractPdfText, substringBox, type PageText, type TextLine } from "./text";
 export { renderDocumentPdf, type DocBlock, type DocRun, type DocMarkKind, type DocMarkPosition, type RenderDocOptions } from "./docgen";

@@ -1,6 +1,6 @@
 // Verificación pública de un PDF sellado (sin sesión).
 import { useEffect, useRef, useState } from "react";
-import type { PdfValidationResponse, PublicBrandTheme, VerifyResponse } from "@calasign/shared";
+import type { PdfValidationResponse, PublicBrandTheme, TrustCertificatesResponse, VerifyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, interpolate, useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
@@ -183,8 +183,69 @@ export function VerifyPage() {
             <ValidationReportView report={report} />
           </div>
         )}
+        <TrustCertificates />
       </main>
       <BrandFooter />
     </div>
+  );
+}
+
+/**
+ * Certificado raíz (y las intermedias) de CalaSign para importar en Adobe Acrobat: sin eso Acrobat muestra la firma
+ * del sello como «validez DESCONOCIDA» mientras la cadena no cuelgue de una raíz de la Adobe Approved Trust List.
+ */
+function TrustCertificates() {
+  const { locale } = useI18n();
+  const sx = useSignerText();
+  const [data, setData] = useState<TrustCertificatesResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    api<TrustCertificatesResponse>("/v1/public/trust-certificates")
+      .then((r) => vivo && setData(r))
+      .catch((e) => vivo && setError(errorText(e)));
+    return () => {
+      vivo = false;
+    };
+  }, []);
+  return (
+    <section className="card pad stack" aria-labelledby="trust-title">
+      <h2 id="trust-title">{sx("trust.title")}</h2>
+      <p className="muted">{sx("trust.intro")}</p>
+      <ErrorBox error={error} />
+      {!data && !error && <Spinner />}
+      {data && data.items.length === 0 && <p className="muted small">{sx("trust.none")}</p>}
+      {data?.items.map((c) => (
+        <div key={c.sha256} className="stack">
+          <p>
+            <strong>{c.commonName ?? c.subject}</strong> <span className="badge">{c.root ? sx("trust.root") : sx("trust.intermediate")}</span>{" "}
+            <span className="muted small">{sx("trust.validUntil", { date: formatDateTime(c.notAfter, locale) })}</span>
+          </p>
+          <p className="row-wrap">
+            <a className="btn btn-primary btn-sm" href={c.cerUrl} download>
+              ⬇ {sx("trust.download", { name: c.commonName ?? "CalaSign" })}
+            </a>
+            <a className="btn btn-ghost btn-sm" href={c.pemUrl} download>
+              {sx("trust.pem")}
+            </a>
+          </p>
+          <p className="small mono break">
+            {sx("trust.fingerprint")}: {c.sha256}
+          </p>
+        </div>
+      ))}
+      {data && data.items.length > 0 && (
+        <>
+          <p className="small">{sx("trust.steps")}</p>
+          <ol className="small">
+            <li>{sx("trust.step1")}</li>
+            <li>{sx("trust.step2")}</li>
+            <li>{sx("trust.step3")}</li>
+            <li>{sx("trust.step4")}</li>
+          </ol>
+          <p className="muted small">{sx("trust.check")}</p>
+        </>
+      )}
+    </section>
   );
 }

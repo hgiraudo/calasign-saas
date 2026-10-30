@@ -1428,6 +1428,25 @@ const OPS: Op[] = [
   // Evidencia
   {
     method: "get",
+    path: "/v1/public/trust-certificates",
+    operationId: "listTrustCertificates",
+    tag: "Evidencia",
+    summary:
+      "Certificados de las autoridades de CalaSign (raíz e intermedias del sello), para confiar en sus firmas en Adobe Acrobat u otro validador",
+    auth: "none",
+  },
+  {
+    method: "get",
+    path: "/v1/public/trust-certificates/{file}",
+    operationId: "downloadTrustCertificate",
+    tag: "Evidencia",
+    summary: "Descargar un certificado de autoridad: `{sha256}.cer` (DER, el que importa Acrobat) o `{sha256}.pem`",
+    auth: "none",
+    response: "none",
+    errors: ["not_found"],
+  },
+  {
+    method: "get",
     path: "/v1/settings/evidence",
     operationId: "getEvidenceSettings",
     tag: "Evidencia",

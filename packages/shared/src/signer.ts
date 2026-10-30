@@ -125,3 +125,25 @@ export function signingDateForDisplay(value: string, timeZone: string = DEFAULT_
   if (!v || /\bUTC([+−-]\d{2}:\d{2})?$/.test(v)) return v;
   return `${v} ${utcOffsetLabel(new Date(), timeZone)}`;
 }
+
+/**
+ * Certificado de una autoridad de la cadena del sello de CalaSign (la raíz y las intermedias, nunca el del sello):
+ * GET /v1/public/trust-certificates. Se importa en Adobe Acrobat como certificado de confianza para que reconozca las
+ * firmas de CalaSign mientras el sello no cuelgue de una raíz de la Adobe Approved Trust List (AATL).
+ */
+export interface TrustCertificate {
+  sha256: string;
+  commonName: string | null;
+  subject: string;
+  notBefore: string;
+  notAfter: string;
+  /** true: es la raíz (autofirmada). */
+  root: boolean;
+  /** Descarga en DER (.cer, lo que importa Acrobat) y en PEM. */
+  cerUrl: string;
+  pemUrl: string;
+}
+
+export interface TrustCertificatesResponse {
+  items: TrustCertificate[];
+}

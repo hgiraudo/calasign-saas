@@ -5,9 +5,11 @@ import type { Services } from "./context";
 import { otpRoutes } from "./otp";
 import { participantRoutes } from "./participants";
 import { verifyRoutes } from "./verify";
+import { trustCertificateRoutes } from "./trust-certificates";
 
 export async function signerFeatureRoutes(app: FastifyInstance, s: Services) {
   await otpRoutes(app, s);
   await participantRoutes(app, s);
   await verifyRoutes(app, s);
+  await trustCertificateRoutes(app);
 }

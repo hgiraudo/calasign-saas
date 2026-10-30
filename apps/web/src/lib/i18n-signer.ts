@@ -93,6 +93,23 @@ const es = {
   "verify.brokenText":
     "El PDF coincide con un sobre de la plataforma, pero su registro de eventos no está íntegro. No lo des por válido sin consultar al remitente.",
   "verify.hash": "SHA-256 del archivo",
+  "trust.title": "Que Adobe Acrobat reconozca la firma como válida",
+  "trust.intro":
+    "Acrobat muestra «la validez de la firma es DESCONOCIDA» cuando no conoce a la autoridad que emitió el certificado del sello. Importá una vez el certificado raíz de CalaSign como certificado de confianza y Acrobat va a mostrar la firma como válida en todos los documentos sellados por CalaSign.",
+  "trust.download": "Descargar {name} (.cer)",
+  "trust.pem": "PEM",
+  "trust.root": "Raíz",
+  "trust.intermediate": "Intermedia",
+  "trust.validUntil": "Vence el {date}",
+  "trust.fingerprint": "Huella SHA-256",
+  "trust.steps": "En Adobe Acrobat o Acrobat Reader:",
+  "trust.step1": "Abrí Edición → Preferencias → Firmas y, en «Identidades y certificados de confianza», tocá Más…",
+  "trust.step2": "Elegí «Certificados de confianza» → Importar, buscá el archivo .cer que descargaste e importalo.",
+  "trust.step3":
+    "Seleccioná el certificado importado → Editar confianza y marcá «Usar este certificado como raíz de confianza» y «Documentos certificados». Aceptá.",
+  "trust.step4": "Volvé a abrir el PDF: la firma aparece como válida.",
+  "trust.check": "Antes de confiar, compará la huella SHA-256 del archivo con la que figura acá: tiene que ser exactamente la misma.",
+  "trust.none": "Este entorno no publica certificados de autoridad.",
   "verify.another": "Verificar otro",
   "role.approver": "Aprobador",
 } as const;
@@ -188,6 +205,23 @@ const ptBR: Dict = {
   "verify.brokenText":
     "O PDF corresponde a um envelope da plataforma, mas o registro de eventos não está íntegro. Não o considere válido sem consultar o remetente.",
   "verify.hash": "SHA-256 do arquivo",
+  "trust.title": "Para o Adobe Acrobat reconhecer a assinatura como válida",
+  "trust.intro":
+    "O Acrobat mostra «a validade da assinatura é DESCONHECIDA» quando não conhece a autoridade que emitiu o certificado do selo. Importe uma vez o certificado raiz da CalaSign como certificado confiável e o Acrobat vai mostrar a assinatura como válida em todos os documentos selados pela CalaSign.",
+  "trust.download": "Baixar {name} (.cer)",
+  "trust.pem": "PEM",
+  "trust.root": "Raiz",
+  "trust.intermediate": "Intermediária",
+  "trust.validUntil": "Vence em {date}",
+  "trust.fingerprint": "Impressão digital SHA-256",
+  "trust.steps": "No Adobe Acrobat ou Acrobat Reader:",
+  "trust.step1": "Abra Editar → Preferências → Assinaturas e, em «Identidades e certificados confiáveis», clique em Mais…",
+  "trust.step2": "Escolha «Certificados confiáveis» → Importar, localize o arquivo .cer baixado e importe.",
+  "trust.step3":
+    "Selecione o certificado importado → Editar confiança e marque «Usar este certificado como raiz confiável» e «Documentos certificados». Confirme.",
+  "trust.step4": "Abra o PDF de novo: a assinatura aparece como válida.",
+  "trust.check": "Antes de confiar, compare a impressão digital SHA-256 do arquivo com a mostrada aqui: tem que ser exatamente a mesma.",
+  "trust.none": "Este ambiente não publica certificados de autoridade.",
   "verify.another": "Verificar outro",
   "role.approver": "Aprovador",
 };
@@ -279,6 +313,23 @@ const en: Dict = {
   "verify.brokenText":
     "The PDF matches an envelope on the platform, but its event log is not intact. Don't treat it as valid without checking with the sender.",
   "verify.hash": "File SHA-256",
+  "trust.title": "Make Adobe Acrobat recognize the signature as valid",
+  "trust.intro":
+    "Acrobat shows “signature validity is UNKNOWN” when it doesn't know the authority that issued the seal certificate. Import CalaSign's root certificate once as a trusted certificate and Acrobat will show the signature as valid on every document sealed by CalaSign.",
+  "trust.download": "Download {name} (.cer)",
+  "trust.pem": "PEM",
+  "trust.root": "Root",
+  "trust.intermediate": "Intermediate",
+  "trust.validUntil": "Valid until {date}",
+  "trust.fingerprint": "SHA-256 fingerprint",
+  "trust.steps": "In Adobe Acrobat or Acrobat Reader:",
+  "trust.step1": "Open Edit → Preferences → Signatures and, under “Identities & Trusted Certificates”, click More…",
+  "trust.step2": "Choose “Trusted Certificates” → Import, find the .cer file you downloaded and import it.",
+  "trust.step3":
+    "Select the imported certificate → Edit Trust and check “Use this certificate as a trusted root” and “Certified documents”. Click OK.",
+  "trust.step4": "Open the PDF again: the signature now shows as valid.",
+  "trust.check": "Before trusting it, compare the file's SHA-256 fingerprint with the one shown here: it must match exactly.",
+  "trust.none": "This environment doesn't publish authority certificates.",
   "verify.another": "Verify another",
   "role.approver": "Approver",
 };

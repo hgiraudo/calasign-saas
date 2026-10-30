@@ -38,6 +38,30 @@ test.describe("páginas públicas", () => {
     sinErrores();
   });
 
+  test("/verify ofrece descargar la raíz de CalaSign para Acrobat, con su huella y los pasos", async ({ page, request }) => {
+    const sinErrores = vigilarErrores(page);
+    const { items } = await (await request.get("/v1/public/trust-certificates")).json();
+    const raiz = items.find((c: { root: boolean }) => c.root);
+    expect(raiz).toBeTruthy();
+    await page.goto("/verify");
+    await expect(page.getByRole("heading", { name: "Que Adobe Acrobat reconozca la firma como válida" })).toBeVisible();
+    await expect(page.getByText(raiz.sha256)).toBeVisible();
+    await expect(page.getByText("Usar este certificado como raíz de confianza", { exact: false })).toBeVisible();
+    const [descarga] = await Promise.all([
+      page.waitForEvent("download"),
+      page
+        .getByRole("link", { name: /Descargar .*\(\.cer\)/ })
+        .first()
+        .click(),
+    ]);
+    expect(descarga.suggestedFilename()).toMatch(/\.cer$/);
+    const partes: Buffer[] = [];
+    for await (const p of await descarga.createReadStream()) partes.push(p as Buffer);
+    const { createHash } = await import("node:crypto");
+    expect(createHash("sha256").update(Buffer.concat(partes)).digest("hex")).toBe(raiz.sha256);
+    sinErrores();
+  });
+
   test("alta de cuenta: las regiones de datos, agrupadas, con las próximas deshabilitadas", async ({ page }) => {
     const sinErrores = vigilarErrores(page);
     await page.goto("/signup");

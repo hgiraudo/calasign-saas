@@ -151,4 +151,55 @@ describe("huso horario de la organización", () => {
     expect(utc).toContain("2026-03-05 01:30:00 UTC");
     expect(utc).not.toContain("UTC−");
   }, 60_000);
+
+  it("la firma registra el huso con el que escribió su fecha; si la organización lo cambia después, el rótulo no cambia", async () => {
+    const { randomToken, sha256Hex, uuidv7 } = await import("../src/lib/util");
+    const { loadSigningMoments, toStampFields } = await import("../src/modules/stamp-fields");
+    await db.query(`UPDATE tenants SET time_zone = 'America/Argentina/Buenos_Aires' WHERE id = $1`, [tenant]);
+    const envelope = uuidv7();
+    const recipient = uuidv7();
+    const token = randomToken();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Contrato', 'sent')`, [envelope, tenant]);
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, access_token_hash, consented_at, auth_method)
+       VALUES ($1,$2,$3,'signer','Ana','ana@x.test','viewed',$4,now(),'link')`,
+      [recipient, tenant, envelope, sha256Hex(token)],
+    );
+    // PNG de 20 × 10 negro opaco (escala de grises con alfa): trazo de sobra para que la API lo acepte.
+    const ink = "iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAQAAAAeXLZtAAAAEUlEQVR4nGNg+E8kHFVIX4UALyfHOX97J7sAAAAASUVORK5CYII=";
+    const r = await app.inject({
+      method: "POST",
+      url: `/v1/signing/${token}/complete`,
+      payload: { fields: [], signature: { kind: "typed", imagePng: ink, text: "Ana" } },
+    });
+    expect(r.statusCode).toBe(200);
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.signed'`, [envelope]);
+    expect(ev.data.timeZone).toBe("America/Argentina/Buenos_Aires");
+
+    // La organización se muda a UTC antes del sellado: la fecha que se escribió en Buenos Aires se rotula con ese huso.
+    await db.query(`UPDATE tenants SET time_zone = 'UTC' WHERE id = $1`, [tenant]);
+    const moments = await loadSigningMoments(db, envelope);
+    expect(moments.get(recipient)?.timeZone).toBe("America/Argentina/Buenos_Aires");
+    const [f] = toStampFields(
+      [
+        {
+          document_id: "d",
+          page: 0,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          recipient_id: recipient,
+          type: "date_signed",
+          value: "04/03/2026",
+          read_only: false,
+        },
+      ],
+      [{ id: "d" }],
+      new Map(),
+      "UTC",
+      moments,
+    );
+    expect(f!.value).toBe("04/03/2026 UTC−03:00");
+  }, 60_000);
 });

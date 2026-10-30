@@ -16,7 +16,7 @@ import { isUnverifiedSelfRegistered } from "./otp";
 import { normLocale, render, type TemplateKind } from "../notifications/templates";
 import { isSecurityNoticeKind, type SecurityNoticeKind } from "./security-notices";
 import { loadDocuments } from "./mappers";
-import { loadSignatureImages, toStampFields } from "./stamp-fields";
+import { loadSignatureImages, loadSigningMoments, toStampFields } from "./stamp-fields";
 import { finalizeFieldLogic } from "./logic";
 import { bulkJobGaveUp, handleBulkJob } from "./bulk";
 import { embeddedAuthLabel } from "./embed";
@@ -540,7 +540,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const docBytes = await Promise.all(docs.map((x) => d.blobs.get(x.storage_key)));
   // Huso de la organización: la fecha de firma estampada y las horas del certificado (UTC si no se configuró).
   const timeZone = normalizeTimeZone(org?.time_zone);
-  const stampFields: StampField[] = toStampFields(fields, docs, sigImages, timeZone);
+  const stampFields: StampField[] = toStampFields(fields, docs, sigImages, timeZone, await loadSigningMoments(d.db, e.id));
 
   // IP del certificado sin signed_ip: la de la última apertura ANTERIOR a la firma (la sesión desde la que firmó), no la
   // de la primera (otro dispositivo, días antes) ni una posterior (volvió a abrir el link después de firmar). Sin

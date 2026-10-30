@@ -41,6 +41,8 @@ export function PhoneHandoff({ base, purpose, onReceived, onBack }: Props) {
     setExpired(false);
     setCopied(null);
     setSendError(null);
+    // Un envío del pase anterior todavía en curso ya no toca el estado (gen): sin esto «Mandando…» quedaba fijo.
+    setSending(false);
     try {
       const h = await api<SignatureHandoff>(`${base}/signature-handoffs`, { method: "POST", body: { purpose } });
       if (my !== gen.current) return;

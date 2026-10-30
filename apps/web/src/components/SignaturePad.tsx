@@ -174,7 +174,8 @@ export function SignaturePad({ purpose, defaultText, base, onAdopt, onClose }: P
     setImporting(true);
     setImportError(null);
     setImported(null);
-    const res = await signatureFromFile(file);
+    // Leer el archivo puede fallar (se borró o movió después de elegirlo): sin esto quedaba «Importando…» para siempre.
+    const res = await signatureFromFile(file).catch(() => ({ ok: false as const, error: { code: "unreadable" as const } }));
     if (my !== importGen.current) return;
     setImporting(false);
     if (!res.ok) return setImportError(importErrorText(gx, res.error));

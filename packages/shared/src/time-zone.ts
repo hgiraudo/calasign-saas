@@ -46,18 +46,27 @@ interface Parts {
   second: number;
 }
 
+/** Un formateador por huso: crearlo cuesta, y el certificado formatea una hora por evento del registro. */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
 function partsIn(d: Date, tz: string): Parts {
-  const f = new Intl.DateTimeFormat("en-US", {
-    timeZone: normalizeTimeZone(tz),
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const get = (type: string) => Number(f.formatToParts(d).find((p) => p.type === type)?.value ?? 0);
+  const zone = normalizeTimeZone(tz);
+  let f = formatters.get(zone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    formatters.set(zone, f);
+  }
+  const parts = f.formatToParts(d);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
   return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour") % 24, minute: get("minute"), second: get("second") };
 }
 

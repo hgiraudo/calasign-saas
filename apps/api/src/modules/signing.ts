@@ -13,7 +13,7 @@ import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, receivesSignerNotices, sendPdf } from "./envelopes";
 import { recordSignerDownload } from "./download-evidence";
 import { toDocument, toField, loadDocuments } from "./mappers";
-import { loadSignatureImages, toStampFields } from "./stamp-fields";
+import { loadSignatureImages, loadSigningMoments, toStampFields } from "./stamp-fields";
 import { pngInkPixels, renderProgressCopyPdf } from "@calasign/pdf";
 import { canDelegate, isEmbeddedSigner, isSignerAuthenticated, isUnverifiedSelfRegistered, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
@@ -496,6 +496,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           data: {
             documents: docs.map((d) => ({ id: d.id, sha256: d.sha256 })),
             fields: fields.length,
+            // Huso en el que se escribió la fecha de firma: el sellado la rotula con él aunque la organización lo cambie.
+            timeZone,
             // `device`: se dibujó en otro dispositivo (el celular del pase), con su IP y navegador; sin el token del pase.
             signature: stored.map((x) => ({
               purpose: x.purpose,
@@ -584,7 +586,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       ]);
       const pdf = await renderProgressCopyPdf({
         documents: await Promise.all(docs.map(async (d) => ({ name: d.name, bytes: await s.blobs.get(d.storage_key) }))),
-        fields: toStampFields(fields, docs, sigImages, await tenantTimeZone(s.db, e.tenant_id)),
+        fields: toStampFields(fields, docs, sigImages, await tenantTimeZone(s.db, e.tenant_id), await loadSigningMoments(s.db, e.id)),
         envelopeId: e.id,
         subject: e.subject,
         locale: r.locale ?? e.locale ?? "es",

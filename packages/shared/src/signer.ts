@@ -189,12 +189,13 @@ export function formatSigningDate(d: Date, locale: string, timeZone: string = DE
 
 /**
  * Fecha de firma guardada → texto visible (PDF, vista previa): con el huso, " UTC" o " UTC−03:00" (sin duplicarlo en
- * valores que ya lo traen).
+ * valores que ya lo traen). `at`: el instante de la firma; el desfase es el de ese momento (con horario de verano, el
+ * del día del sellado puede ser otro).
  */
-export function signingDateForDisplay(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
+export function signingDateForDisplay(value: string, timeZone: string = DEFAULT_TIME_ZONE, at: Date = new Date()): string {
   const v = value.trim();
   if (!v || /\bUTC([+−-]\d{2}:\d{2})?$/.test(v)) return v;
-  return `${v} ${utcOffsetLabel(new Date(), timeZone)}`;
+  return `${v} ${utcOffsetLabel(at, timeZone)}`;
 }
 
 /**

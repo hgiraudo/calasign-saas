@@ -115,8 +115,21 @@ function HandoffCanvas({
       const w = Math.max(1, Math.round(r.width * dpr));
       const h = Math.max(1, Math.round(r.height * dpr));
       if (c.width === w && c.height === h) return;
+      // Sólo cambió el alto (la barra del navegador del celular aparece o se esconde al mover la página, y el lienzo
+      // ocupa el alto visible): el trazo se conserva en su lugar, sin estirarlo. Girar el celular cambia el ancho: se borra.
+      let keep: HTMLCanvasElement | null = null;
+      if (c.width === w && c.height > 0) {
+        keep = document.createElement("canvas");
+        keep.width = c.width;
+        keep.height = c.height;
+        keep.getContext("2d")?.drawImage(c, 0, 0);
+      }
       c.width = w;
       c.height = h;
+      if (keep) {
+        c.getContext("2d")?.drawImage(keep, 0, 0);
+        return;
+      }
       setHasInk(false);
       setTooShort(false);
     };

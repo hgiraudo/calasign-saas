@@ -415,6 +415,31 @@ describe("fecha de firma", () => {
     const out = toStampFields([{ ...base, type: "date_signed", value: "04/03/2026", read_only: false }], [{ id: "d" }], new Map(), tz);
     expect(out[0].value).toBe("04/03/2026 UTC−03:00");
   });
+
+  it("el desfase es el del día de la firma y el huso, el que registró su evento (no los del sellado)", async () => {
+    const { toStampFields } = await import("../src/modules/stamp-fields");
+    const base = { document_id: "d", page: 0, x: 0, y: 0, width: 10, height: 10, read_only: false, type: "date_signed" };
+    const out = toStampFields(
+      [
+        { ...base, recipient_id: "ny", value: "2026-01-15" },
+        { ...base, recipient_id: "ba", value: "15/01/2026" },
+        { ...base, recipient_id: "viejo", value: "15/01/2026" },
+      ],
+      [{ id: "d" }],
+      new Map(),
+      // Huso actual de la organización: en julio Nueva York está en horario de verano (UTC−04:00).
+      "America/New_York",
+      new Map([
+        // Firmó en enero en Nueva York: UTC−05:00, aunque el sellado sea en julio (UTC−04:00).
+        ["ny", { at: new Date("2026-01-15T15:00:00Z"), timeZone: "America/New_York" }],
+        // La organización estaba en Buenos Aires cuando firmó y después cambió de huso.
+        ["ba", { at: new Date("2026-01-15T15:00:00Z"), timeZone: "America/Argentina/Buenos_Aires" }],
+        // Firmado antes de que el evento registrara el huso: el actual de la organización, en el día de la firma.
+        ["viejo", { at: new Date("2026-07-15T15:00:00Z"), timeZone: null }],
+      ]),
+    );
+    expect(out.map((f) => f.value)).toEqual(["2026-01-15 UTC−05:00", "15/01/2026 UTC−03:00", "15/01/2026 UTC−04:00"]);
+  });
 });
 
 describe("auditoría", () => {

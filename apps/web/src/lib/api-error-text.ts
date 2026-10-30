@@ -32,7 +32,7 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "You can't sign in from a custom domain: use the service's main address.",
   },
   wrong_cell: { "pt-BR": "Os dados desta organização estão em outra região.", en: "This organization's data is in another region." },
-  cell_unavailable: { "pt-BR": "Essa região ainda não está disponível.", en: "That region isn't available yet." },
+  cell_unavailable: { "pt-BR": "Região desconhecida: escolha uma das que aparecem na lista.", en: "Unknown region: pick one from the list." },
   bad_origin: { "pt-BR": "Origem não permitida.", en: "Origin not allowed." },
   shutting_down: {
     "pt-BR": "O servidor está reiniciando: tente novamente em alguns segundos.",

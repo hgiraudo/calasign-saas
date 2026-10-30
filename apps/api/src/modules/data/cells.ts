@@ -25,21 +25,24 @@ export function publicCells(): CellInfo[] {
     available: true,
     default: c.default,
   }));
-  // Las del catálogo que este despliegue no atiende: «Próximamente», en el orden del catálogo.
+  // Las del catálogo que este despliegue no atiende (available: false; la web igual las ofrece), en el orden del catálogo.
   for (const c of CELL_CATALOG)
     if (!out.some((x) => x.id === c.id))
       out.push({ id: c.id, label: c.label, region: c.region, country: c.country, city: c.city, area: c.area, available: false, default: false });
   return out;
 }
 
-/** Celda para una organización nueva: la pedida (si está configurada) o la por defecto. */
-export function cellForSignup(requested: string | undefined | null): string {
-  if (!requested) return defaultCell().id;
-  if (!isConfiguredCell(requested)) {
-    const known = CELL_CATALOG.some((c) => c.id === requested);
-    throw badRequest("cell_unavailable", known ? "Esa región todavía no está disponible (próximamente)" : "Región desconocida");
-  }
-  return requested;
+/**
+ * Celda para una organización nueva y la región que pidió. Una región configurada se respeta. Una del catálogo que
+ * este despliegue todavía no tiene configurada se acepta (pedido del usuario del 30-Oct-2026: el alta ofrece todas
+ * como disponibles): la organización queda en la celda por defecto y `requested` guarda la que eligió, para migrarla
+ * cuando exista (tenants.requested_cell). Una región fuera del catálogo da 400.
+ */
+export function cellForSignup(requested: string | undefined | null): { cell: string; requested: string | null } {
+  if (!requested) return { cell: defaultCell().id, requested: null };
+  if (isConfiguredCell(requested)) return { cell: requested, requested: null };
+  if (CELL_CATALOG.some((c) => c.id === requested)) return { cell: defaultCell().id, requested };
+  throw badRequest("cell_unavailable", "Región desconocida: elegí una de las que lista GET /v1/public/cells");
 }
 
 /** Alta en el directorio global (en la misma transacción que crea la organización). */

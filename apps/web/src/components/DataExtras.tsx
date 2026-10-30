@@ -8,7 +8,7 @@ import { ErrorBox } from "./ui";
 
 const AREAS = ["americas", "europe", "asia_pacific", "middle_east_africa"] as const;
 
-/** «Dónde se guardan tus documentos»: las regiones disponibles y las próximas (deshabilitadas), agrupadas por zona. */
+/** «Dónde se guardan tus documentos»: todas las regiones del catálogo, habilitadas y agrupadas por zona. */
 export function CellPicker({ value, onChange }: { value: string; onChange: (cell: string) => void }) {
   const dt = useDataText();
   const { locale } = useI18n();
@@ -42,9 +42,8 @@ export function CellPicker({ value, onChange }: { value: string; onChange: (cell
     return c.city && c.city !== country ? `${country} (${c.city})` : country;
   };
   const option = (c: CellInfo) => (
-    <option key={c.id} value={c.id} disabled={!c.available}>
+    <option key={c.id} value={c.id}>
       {name(c)}
-      {c.available ? "" : ` — ${dt("cells.soon")}`}
     </option>
   );
   const sinZona = cells.filter((c) => !c.area);
@@ -58,8 +57,7 @@ export function CellPicker({ value, onChange }: { value: string; onChange: (cell
           if (!items.length) return null;
           return (
             <optgroup key={a} label={dt(`cells.area.${a}`)}>
-              {/* Las disponibles primero dentro de cada zona. */}
-              {[...items.filter((c) => c.available), ...items.filter((c) => !c.available)].map(option)}
+              {items.map(option)}
             </optgroup>
           );
         })}

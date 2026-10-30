@@ -51,7 +51,7 @@ export interface CellInfo {
   country: string | null;
   city: string | null;
   area: "americas" | "europe" | "asia_pacific" | "middle_east_africa" | null;
-  /** false: se muestra como «Próximamente». */
+  /** false: este despliegue no la tiene configurada (el alta la acepta y usa la celda por defecto). */
   available: boolean;
   default: boolean;
 }

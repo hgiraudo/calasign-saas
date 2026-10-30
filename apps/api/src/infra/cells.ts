@@ -46,7 +46,8 @@ export interface CellCatalogEntry {
 }
 
 /**
- * Celdas que se ofrecen aunque no estén configuradas (se muestran como «Próximamente»): todas las regiones comerciales
+ * Celdas que se ofrecen aunque no estén configuradas (el alta las acepta y la organización queda en la celda por
+ * defecto, ver cellForSignup): todas las regiones comerciales
  * de AWS (34, lista de docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html al 29-Oct-2026) y
  * Chile, que AWS anunció para fines de 2026 (Santiago) sin código publicado todavía. "us" y "br" conservan sus ids
  * (son las de siempre); el resto usa el código de la región. Una celda se habilita configurándola en CELLS.

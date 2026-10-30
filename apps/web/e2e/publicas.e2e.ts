@@ -62,24 +62,27 @@ test.describe("páginas públicas", () => {
     sinErrores();
   });
 
-  test("alta de cuenta: las regiones de datos, agrupadas, con las próximas deshabilitadas", async ({ page }) => {
+  test("alta de cuenta: las regiones de datos, agrupadas y todas habilitadas", async ({ page }) => {
     const sinErrores = vigilarErrores(page);
     await page.goto("/signup");
     const region = page.getByRole("combobox", { name: "Dónde se guardan tus documentos" });
     await expect(region).toBeVisible();
-    // La del despliegue (Estados Unidos) elegida y habilitada; Chile, Canadá y el resto de AWS, «Próximamente».
+    // La del despliegue (Estados Unidos) elegida; Chile, Canadá, Brasil y el resto de AWS, elegibles y sin «Próximamente».
     await expect(region).toHaveValue("us");
-    await expect(region.locator(`option[value="us"]`)).not.toHaveAttribute("disabled");
     for (const [id, nombre] of [
+      ["us", "Estados Unidos (Virginia)"],
       ["cl", "Chile (Santiago)"],
       ["ca-central-1", "Canadá (Montreal)"],
       ["ca-west-1", "Canadá (Calgary)"],
       ["br", "Brasil (São Paulo)"],
     ]) {
       const op = region.locator(`option[value="${id}"]`);
-      await expect(op).toHaveAttribute("disabled", "");
-      await expect(op).toHaveText(`${nombre} — Próximamente`);
+      await expect(op).not.toHaveAttribute("disabled");
+      await expect(op).toHaveText(nombre);
     }
+    await expect(region.locator("option[disabled]")).toHaveCount(0);
+    await region.selectOption("cl");
+    await expect(region).toHaveValue("cl");
     await expect(region.locator("optgroup")).toHaveCount(4);
     expect(await region.locator("option").count()).toBeGreaterThanOrEqual(35);
     sinErrores();

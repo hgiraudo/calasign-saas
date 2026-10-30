@@ -47,7 +47,10 @@ simula una clave caída. Nunca disponible en producción.
 
 Cada organización tiene una celda (`tenant_directory.cell`, el directorio global tenant → celda) que fija
 dónde se guardan sus archivos. Se elige al darse de alta («Dónde se guardan tus documentos»,
-`GET /v1/public/cells`); las celdas del catálogo que no están configuradas se muestran «Próximamente».
+`GET /v1/public/cells`). La web ofrece **todas** las del catálogo como disponibles (decisión del 30-Oct-2026); si se
+elige una que el despliegue no tiene configurada (`available: false` en la API), la organización queda en la celda
+por defecto y la región pedida se guarda en `tenants.requested_cell` (migración 0125) para migrarla cuando esa celda
+exista. Una región fuera del catálogo da `400 cell_unavailable`.
 El catálogo (`CELL_CATALOG` en `apps/api/src/infra/cells.ts`) tiene **todas las regiones comerciales de AWS** (34 al
 29-Oct-2026: Estados Unidos ×4, Canadá ×2, México, Brasil, Europa ×8, Asia-Pacífico ×14, Medio Oriente y África ×4) y
 **Chile** (Santiago), que AWS anunció para fines de 2026 y todavía no tiene código de región (`region: null`). La web

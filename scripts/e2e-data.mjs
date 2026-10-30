@@ -173,13 +173,18 @@ if (br.available) {
   assert(b.doc.sha256 && sha(back) === b.doc.sha256 && back.subarray(0, 5).toString() === "%PDF-", "el documento de Brasil se lee desde su celda");
   ok(`celdas: alta en ${usCell} y en br; cada organización guarda en su celda${DATA_DIR ? " (verificado en disco)" : ""}; región inexistente → 400`);
 } else {
-  await new Client().api(
-    "POST",
-    "/v1/auth/signup",
-    { name: "Y", email: `y-${stamp}@example.com`, password: "una-clave-segura-123", organization: "Y", cell: "br" },
-    { expect: 400 },
-  );
-  ok("celdas: Brasil figura como «Próximamente» y no se puede elegir; región inexistente → 400");
+  // Brasil no está configurada en este despliegue: el alta la acepta y la organización queda en la por defecto.
+  const B = new Client();
+  await signup(B, "Organizacion B", "br");
+  const b = await draftWithDoc(B, "Doc celda BR sin configurar");
+  if (DATA_DIR) {
+    const meB = await B.api("GET", "/v1/me");
+    assert(
+      b.doc.id && existsSync(join(DATA_DIR, "blobs", "tenants", meB.tenant.id)) && !existsSync(join(DATA_DIR, "blobs-br", "tenants", meB.tenant.id)),
+      "la organización que eligió Brasil (sin configurar) guarda en la celda por defecto",
+    );
+  }
+  ok("celdas: Brasil sin configurar se puede elegir y queda en la celda por defecto; región inexistente → 400");
 }
 
 // ───────────────────────────── BYOK ─────────────────────────────

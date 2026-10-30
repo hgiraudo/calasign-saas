@@ -70,7 +70,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const tenantId = uuidv7();
     const pw = existing ? null : await hashPassword(input.password);
     const locale = input.locale ?? "es";
-    const cell = cellForSignup(input.cell);
+    const { cell, requested: requestedCell } = cellForSignup(input.cell);
     await s.db.tx(async (t) => {
       if (existing) {
         // Con la cuenta bloqueada: una invitación aceptada a la vez la habría sumado a otra organización.
@@ -80,7 +80,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       }
       let slug = slugify(input.organization);
       if (await t.one(`SELECT 1 FROM tenants WHERE slug = $1`, [slug])) slug = `${slug}-${tenantId.slice(-6)}`;
-      await t.query(`INSERT INTO tenants (id, slug, name, default_locale, cell, time_zone) VALUES ($1,$2,$3,$4,$5,$6)`, [
+      await t.query(`INSERT INTO tenants (id, slug, name, default_locale, cell, time_zone, requested_cell) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
         tenantId,
         slug,
         input.organization,
@@ -88,6 +88,8 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         cell,
         // El de la persona que da de alta la cuenta (lo manda la web); un valor inválido no frena el alta: UTC.
         normalizeTimeZone(input.timeZone),
+        // La región elegida si todavía no está configurada (quedó en la por defecto): ver cellForSignup.
+        requestedCell,
       ]);
       await registerTenantCell(t, tenantId, slug, cell);
       if (!existing) {

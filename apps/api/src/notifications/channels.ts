@@ -350,6 +350,15 @@ export async function sendTelegram(m: Pick<OutboundMessage, "to" | "text" | "lin
 
 const telegramReady = () => Boolean(config.telegram.botToken);
 
+/**
+ * Dirección en un dominio reservado para pruebas (RFC 2606 y 6761): example.com/.net/.org y sus subdominios, o los TLD
+ * .test, .example, .invalid y .localhost. Nunca reciben correo.
+ */
+export function isReservedTestAddress(to: string): boolean {
+  const domain = (addressOf(to).split("@").pop() ?? "").trim().toLowerCase().replace(/\.$/, "");
+  return /(^|\.)example\.(com|net|org)$/.test(domain) || /\.(test|example|invalid|localhost)$/.test(domain);
+}
+
 export async function deliver(m: OutboundMessage & { cta?: string | null }): Promise<SendResult> {
   if (m.channel === "sms") {
     const sms = getSmsProvider();
@@ -365,8 +374,9 @@ export async function deliver(m: OutboundMessage & { cta?: string | null }): Pro
   }
   if (config.devMailbox) {
     const r = await toMailbox(m);
-    // En desarrollo, si además hay proveedor real configurado, se envía también.
-    if (m.channel === "email" && config.mail.smtpUrl) return sendEmail(m).catch(() => r);
+    // En desarrollo, si además hay proveedor real configurado, se envía también. Salvo a los dominios reservados para
+    // pruebas (los de las suites e2e): no reciben correo y cada envío sería un rebote duro en la reputación de SES.
+    if (m.channel === "email" && config.mail.smtpUrl && !isReservedTestAddress(m.to)) return sendEmail(m).catch(() => r);
     if (m.channel === "whatsapp" && config.whatsapp.token && config.whatsapp.phoneNumberId) return sendWhatsApp(m).catch(() => r);
     if (m.channel === "telegram" && telegramReady()) return sendTelegram(m).catch(() => r);
     return r;

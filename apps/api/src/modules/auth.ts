@@ -1,5 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import { CreateApiKeyInput, LoginInput, SignupInput, type ApiKey, type MeResponse, type ResetPasswordResponse } from "@calasign/shared";
+import {
+  CreateApiKeyInput,
+  LoginInput,
+  normalizeTimeZone,
+  SignupInput,
+  type ApiKey,
+  type MeResponse,
+  type ResetPasswordResponse,
+} from "@calasign/shared";
 import { conflict, notFound, unauthorized } from "../lib/errors";
 import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassword } from "../lib/util";
 import { forgetCredentialHash } from "../lib/ip";
@@ -72,12 +80,14 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       }
       let slug = slugify(input.organization);
       if (await t.one(`SELECT 1 FROM tenants WHERE slug = $1`, [slug])) slug = `${slug}-${tenantId.slice(-6)}`;
-      await t.query(`INSERT INTO tenants (id, slug, name, default_locale, cell) VALUES ($1,$2,$3,$4,$5)`, [
+      await t.query(`INSERT INTO tenants (id, slug, name, default_locale, cell, time_zone) VALUES ($1,$2,$3,$4,$5,$6)`, [
         tenantId,
         slug,
         input.organization,
         locale,
         cell,
+        // El de la persona que da de alta la cuenta (lo manda la web); un valor inválido no frena el alta: UTC.
+        normalizeTimeZone(input.timeZone),
       ]);
       await registerTenantCell(t, tenantId, slug, cell);
       if (!existing) {

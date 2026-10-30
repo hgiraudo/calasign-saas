@@ -395,8 +395,25 @@ describe("fecha de firma", () => {
       ],
       [{ id: "d" }],
       new Map(),
+      "UTC",
     );
     expect(out.map((f) => f.value)).toEqual(["04/03/2026 UTC", "1 de marzo", "04/03/2026"]);
+  });
+
+  it("en el huso de la organización: la fecha es la de ese huso y se estampa con su desfase", async () => {
+    const { formatSigningDate, signingDateForDisplay } = await import("@calasign/shared");
+    const { toStampFields } = await import("../src/modules/stamp-fields");
+    const tz = "America/Argentina/Buenos_Aires";
+    // 23:30 UTC del 4 de marzo: en Buenos Aires (UTC−03:00) todavía son las 20:30 del 4; a la 01:30 UTC del 5, las
+    // 22:30 del 4. La fecha UTC sería el 5: con el huso de la organización, sigue siendo el 4.
+    expect(formatSigningDate(new Date("2026-03-04T23:30:00Z"), "es", tz)).toBe("04/03/2026");
+    expect(formatSigningDate(new Date("2026-03-05T01:30:00Z"), "es", tz)).toBe("04/03/2026");
+    expect(formatSigningDate(new Date("2026-03-05T01:30:00Z"), "es")).toBe("05/03/2026");
+    expect(signingDateForDisplay("04/03/2026", tz)).toBe("04/03/2026 UTC−03:00");
+    expect(signingDateForDisplay("04/03/2026 UTC−03:00", tz)).toBe("04/03/2026 UTC−03:00");
+    const base = { document_id: "d", page: 0, x: 0, y: 0, width: 10, height: 10, recipient_id: "r" };
+    const out = toStampFields([{ ...base, type: "date_signed", value: "04/03/2026", read_only: false }], [{ id: "d" }], new Map(), tz);
+    expect(out[0].value).toBe("04/03/2026 UTC−03:00");
   });
 });
 

@@ -130,6 +130,15 @@ certificado de finalización ya está dentro del PDF de trabajo, así que solo a
 Los datos del certificado quedan en los eventos `recipient.certificate_signed` y `recipient.certificate_rejected`
 y en los reportes de `/verify` y `/v1/validate`. Detalle en [`FIRMA-CON-CERTIFICADO.md`](FIRMA-CON-CERTIFICADO.md).
 
+### Horas del certificado y fecha de firma
+
+El certificado de finalización escribe todas las horas en el **huso de la organización** (`tenants.time_zone`,
+Ajustes → Organización), con el desfase a la vista («2026-10-29 18:03:12 UTC−03:00») y una línea «Huso horario» que
+dice cuál es. La fecha de los campos «fecha de firma» se calcula en ese mismo huso y se estampa con su desfase
+(«29/10/2026 UTC−03:00»). Nunca se usa el huso del navegador del firmante: lo elige el cliente y no sirve como
+evidencia. Sin configurar, UTC (como antes). Los eventos de la cadena se guardan siempre en UTC; el huso sólo cambia
+cómo se imprimen.
+
 ## 7. Desarrollo y pruebas
 
 ```bash

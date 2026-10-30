@@ -11,6 +11,7 @@ import { assertPngSize } from "./images";
 import { findLastStartXref } from "./incremental";
 import { newByteRangePlaceholder, signPlaceholder } from "./placeholder";
 import { sanitizeForSealing, type OptionalContentState } from "./sanitize";
+import { formatDateTimeInZone, normalizeTimeZone, utcOffsetLabel } from "@calasign/shared";
 
 export type StampFieldType =
   | "signature"
@@ -101,6 +102,11 @@ export interface CertificateData {
   timestamped?: boolean | null;
   /** URL pública de verificación (se imprime al pie del certificado). */
   verifyUrl?: string | null;
+  /**
+   * Huso horario IANA de la organización: todas las horas del certificado se escriben en él, con su desfase
+   * ("2026-10-29 18:03:12 UTC−03:00"). Sin valor: UTC, como antes.
+   */
+  timeZone?: string;
   /** Archivos que subieron los firmantes (se listan con su hash). */
   attachments?: { name: string; recipientName: string; sha256: string; appended: boolean }[];
   /**
@@ -858,13 +864,8 @@ async function drawCertificate(
     page.drawLine({ start: { x: M, y }, end: { x: A4.w - M, y }, thickness: 0.6, color: LINE });
     y -= 8;
   };
-  const fmt = (iso: string | null | undefined) =>
-    iso
-      ? new Date(iso)
-          .toISOString()
-          .replace("T", " ")
-          .replace(/\.\d+Z$/, " UTC")
-      : null;
+  const tz = normalizeTimeZone(c.timeZone);
+  const fmt = (iso: string | null | undefined) => (iso ? formatDateTimeInZone(new Date(iso), tz) : null);
 
   // Encabezado
   page.drawRectangle({ x: 0, y: A4.h - 6, width: A4.w, height: 6, color: accent });
@@ -895,6 +896,8 @@ async function drawCertificate(
   kv(L.created, fmt(c.createdAt));
   kv(L.sent, fmt(c.sentAt));
   kv(L.completed, fmt(c.completedAt));
+  // Qué huso tienen las horas de este certificado (también va en cada hora, como desfase).
+  kv(L.timeZone, tz === "UTC" ? "UTC" : `${tz} (${utcOffsetLabel(new Date(c.completedAt), tz)})`);
   if (c.signatureLevel)
     kv(L.signatureLevel, c.signatureLevel === "qualified" ? L.level_qualified : c.signatureLevel === "advanced" ? L.level_advanced : L.level_simple);
   if (c.companySeal) kv(L.companySeal, c.companySeal.commonName ?? c.companySeal.name);

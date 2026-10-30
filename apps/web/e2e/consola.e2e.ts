@@ -23,6 +23,32 @@ test.describe("consola", () => {
     sinErrores();
   });
 
+  test("Ajustes → Organización: cambia el huso horario y lo muestra con su desfase", async ({ page, request }) => {
+    const sinErrores = vigilarErrores(page);
+    const cuenta = await altaDeCuenta(request);
+    await page.goto("/login");
+    await page.getByRole("textbox", { name: "Email" }).fill(cuenta.email);
+    await page.getByRole("textbox", { name: "Contraseña" }).fill(cuenta.password);
+    await page.getByRole("button", { name: "Ingresar" }).click();
+    await expect(page).toHaveURL(/\/app/);
+
+    await page.goto("/app/settings");
+    await page.getByRole("link", { name: /Organización/ }).click();
+    await expect(page.getByRole("heading", { name: "Organización", level: 1 })).toBeVisible();
+    const huso = page.getByRole("combobox", { name: "Huso horario" });
+    // El alta por API no manda huso: queda en UTC.
+    await expect(huso).toHaveValue("UTC");
+    await huso.selectOption("America/Bogota");
+    await expect(page.getByRole("status").first()).toContainText("UTC−05:00");
+    await page.getByRole("button", { name: "Guardar" }).click();
+    await expect(page.getByText("Guardado.")).toBeVisible();
+
+    // Quedó guardado en la organización (lo lee la misma sesión del alta).
+    const res = await request.get("/v1/settings/organization");
+    expect(await res.json()).toEqual({ timeZone: "America/Bogota" });
+    sinErrores();
+  });
+
   test("una contraseña equivocada no entra y lo dice", async ({ page, request }) => {
     const cuenta = await altaDeCuenta(request);
     await page.goto("/login");

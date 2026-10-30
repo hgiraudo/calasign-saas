@@ -48,6 +48,7 @@ import {
   UpdateBrandingInput,
   UpdateEnvelopeInput,
   UpdateEvidenceSettingsInput,
+  UpdateOrganizationSettingsInput,
   UpdateGroupInput,
   UpdateRoleInput,
   UpdateSecuritySettingsInput,
@@ -1405,6 +1406,23 @@ const OPS: Op[] = [
     ],
     response: "csv",
     errors: ["invalid_range", "invalid_query"],
+  },
+
+  // Organización
+  {
+    method: "get",
+    path: "/v1/settings/organization",
+    operationId: "getOrganizationSettings",
+    tag: "Organización",
+    summary: "Ajustes generales de la organización: el huso horario de las horas del certificado y de la fecha de firma",
+  },
+  {
+    method: "patch",
+    path: "/v1/settings/organization",
+    operationId: "updateOrganizationSettings",
+    tag: "Organización",
+    summary: "Cambiar el huso horario (IANA, p. ej. America/Argentina/Buenos_Aires); se aplica a los sobres que se completen después",
+    body: UpdateOrganizationSettingsInput,
   },
 
   // Evidencia

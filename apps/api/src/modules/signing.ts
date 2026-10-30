@@ -1,6 +1,6 @@
 // Experiencia del firmante: autenticado por el token del link, sin cuenta.
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { AUTO_FIELD_TYPES, CompleteSigningInput, DeclineInput, formatSigningDate, type SigningSession } from "@calasign/shared";
+import { AUTO_FIELD_TYPES, CompleteSigningInput, DeclineInput, formatSigningDate, normalizeTimeZone, type SigningSession } from "@calasign/shared";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import type { Db } from "../infra/db";
@@ -24,6 +24,7 @@ import { identityBlocking, signingIdentityFor } from "./identity/kyc";
 import { certificateStepFor } from "./certsign";
 import { deleteBlobsQuietly } from "./file-cleanup";
 import { purgedOriginal } from "./retention";
+import { tenantTimeZone } from "./organization-settings";
 
 /** Tope de píxeles de la imagen de firma o iniciales (el lienzo de la web es mucho menor). */
 const SIGNATURE_MAX_PIXELS = 2000 * 1000;
@@ -158,7 +159,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
   const [docs, fields, org, sender, group] = await Promise.all([
     loadDocuments(db, e.id),
     db.query(`SELECT * FROM fields WHERE recipient_id = $1 ORDER BY page, y, x`, [r.id]),
-    db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]),
+    db.one<any>(`SELECT name, time_zone FROM tenants WHERE id = $1`, [e.tenant_id]),
     e.created_by ? db.one<any>(`SELECT name FROM users WHERE id = $1`, [e.created_by]) : Promise.resolve(null),
     currentSignerGroup(db, e.id),
   ]);
@@ -184,6 +185,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       organizationName: rebrands(wl) || e.brand_id ? wl.name : (org?.name ?? ""),
       expiresAt: e.expires_at ? new Date(e.expires_at).toISOString() : null,
       locale: e.locale ?? "es",
+      timeZone: normalizeTimeZone(org?.time_zone),
     },
     recipient: {
       id: r.id,
@@ -373,6 +375,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         for (const id of values.keys()) if (!fields.some((f) => f.id === id)) throw badRequest("invalid_field", "Campo desconocido");
         const now = new Date();
         const locale = r.locale ?? e.locale;
+        // La fecha de firma, en el huso de la organización (no en el del navegador del firmante: no es evidencia).
+        const timeZone = await tenantTimeZone(t, e.tenant_id);
         const missing: string[] = [];
         // Ids y tipos de los campos que faltan o son inválidos: la web los ubica y los nombra en el idioma del firmante.
         const missingFields: { id: string; type: string; label: string | null }[] = [];
@@ -386,7 +390,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
 
         const invalid: string[] = [];
         // Lógica (Fase 4): campos ocultos por sus condiciones no se exigen ni se estampan; los calculados los fija el servidor.
-        const autoValue = (type: string) => (type === "name" ? r.name : type === "email" ? (r.email ?? "") : formatSigningDate(now, locale));
+        const autoValue = (type: string) =>
+          type === "name" ? r.name : type === "email" ? (r.email ?? "") : formatSigningDate(now, locale, timeZone);
         const logic = await prepareCompletionLogic(t, e.id, r.id, values, { hasSig, hasIni, autoValue });
         for (const f of fields) {
           if (logic.hidden.has(f.id)) continue;
@@ -540,7 +545,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       ]);
       const pdf = await renderProgressCopyPdf({
         documents: await Promise.all(docs.map(async (d) => ({ name: d.name, bytes: await s.blobs.get(d.storage_key) }))),
-        fields: toStampFields(fields, docs, sigImages),
+        fields: toStampFields(fields, docs, sigImages, await tenantTimeZone(s.db, e.tenant_id)),
         envelopeId: e.id,
         subject: e.subject,
         locale: r.locale ?? e.locale ?? "es",

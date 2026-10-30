@@ -1,6 +1,7 @@
 export * from "./api";
 export * from "./integrations";
 export * from "./signer";
+export * from "./time-zone";
 export * from "./productivity";
 export * from "./teams";
 export * from "./experience";

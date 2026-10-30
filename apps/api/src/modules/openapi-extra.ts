@@ -1614,6 +1614,10 @@ export const TAGS: [string, string][] = [
   ["Firma en persona", "Firma en el dispositivo de un anfitrión de la organización."],
   ["Verificación de identidad", "Verificación de identidad (KYC) del firmante antes de ver los documentos."],
   ["Firma con certificado", "Firma con el certificado digital propio del firmante mediante el Firmador CalaSign."],
+  [
+    "Organización",
+    "Ajustes generales de la organización: el huso horario con el que se escriben las horas del certificado de finalización y la fecha de firma.",
+  ],
   ["Evidencia", "Nivel PAdES, certificados de la organización, sello de empresa y validación/verificación pública de PDFs."],
   ["Firma XML", "Firma y verificación XML para facturación electrónica (DGII, DIAN, SUNAT, XAdES)."],
   ["IA", "Detección de campos, resúmenes, preguntas y revisión contra un playbook."],

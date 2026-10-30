@@ -41,6 +41,7 @@ import { storageRoutes } from "./modules/storage-export";
 import { customDomainRoutes } from "./modules/custom-domains";
 import { identityRoutes } from "./modules/identity";
 import { evidenceRoutes } from "./modules/evidence";
+import { organizationSettingsRoutes } from "./modules/organization-settings";
 import { billingRoutes } from "./modules/billing";
 import { mcpRoutes } from "./modules/mcp";
 import { aiRoutes } from "./modules/ai";
@@ -317,6 +318,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await storageRoutes(app, services);
   await customDomainRoutes(app, services);
   await evidenceRoutes(app, services);
+  await organizationSettingsRoutes(app, services);
   await billingRoutes(app, services);
   await mcpRoutes(app, services);
   await aiRoutes(app, services);

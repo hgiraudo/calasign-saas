@@ -1,6 +1,7 @@
 // Contrato del bloque "firmante y evidencia": OTP, aprobador, delegación/reasignación,
 // recordatorios automáticos y verificación pública. Sin dependencias de api.ts (api.ts importa de acá).
 import { z } from "zod";
+import { DEFAULT_TIME_ZONE, datePartsInZone, utcOffsetLabel } from "./time-zone";
 
 /** cedula (RD, CO), cpf (BR), dni (HN, PE), ce = carné de extranjería (PE, CO), passport, other. */
 export const ID_DOCUMENT_TYPES = ["cedula", "cpf", "dni", "passport", "other", "ce"] as const;
@@ -102,21 +103,25 @@ export interface VerifyResponse {
 }
 
 /**
- * Fecha de firma tal como se guarda en el campo (dd/mm/aaaa, o aaaa-mm-dd en inglés), en UTC. El valor guardado no
- * lleva sufijo (es el que devuelven la API, las exportaciones y los webhooks, como siempre); al estampar en el PDF y en
- * la vista previa del firmante se le agrega " UTC" (signingDateForDisplay): cerca de la medianoche la fecha UTC no es
- * la local del firmante y sin decirlo parecía la local. No hay zona horaria por organización ni por firmante, y la del
- * navegador no sirve como evidencia (la elige el cliente).
+ * Fecha de firma tal como se guarda en el campo (dd/mm/aaaa, o aaaa-mm-dd en inglés), en el huso de la organización
+ * (`tenants.time_zone`, UTC si no se configuró). El valor guardado no lleva sufijo (es el que devuelven la API, las
+ * exportaciones y los webhooks, como siempre); al estampar en el PDF y en la vista previa del firmante se le agrega el
+ * huso (signingDateForDisplay): cerca de la medianoche la fecha de un huso no es la de otro y sin decirlo se leía mal.
+ * La del navegador no se usa: la elige el cliente y no sirve como evidencia.
  */
-export function formatSigningDate(d: Date, locale: string) {
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
+export function formatSigningDate(d: Date, locale: string, timeZone: string = DEFAULT_TIME_ZONE) {
+  const { year, month, day } = datePartsInZone(d, timeZone);
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month).padStart(2, "0");
+  return locale === "en" ? `${year}-${mm}-${dd}` : `${dd}/${mm}/${year}`;
 }
 
-/** Fecha de firma guardada → texto visible (PDF, vista previa): con " UTC" (sin duplicarlo en valores que ya lo traen). */
-export function signingDateForDisplay(value: string): string {
+/**
+ * Fecha de firma guardada → texto visible (PDF, vista previa): con el huso, " UTC" o " UTC−03:00" (sin duplicarlo en
+ * valores que ya lo traen).
+ */
+export function signingDateForDisplay(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
   const v = value.trim();
-  return !v || /\bUTC$/.test(v) ? v : `${v} UTC`;
+  if (!v || /\bUTC([+−-]\d{2}:\d{2})?$/.test(v)) return v;
+  return `${v} ${utcOffsetLabel(new Date(), timeZone)}`;
 }

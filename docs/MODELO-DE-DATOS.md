@@ -187,6 +187,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0120_jobs_cell_claim_priority_idx` | Como 0119, para las prioridades altas (`cell, priority, run_at, id`) |
 | `0121_storage_connections_account_sub` | `sub` de la cuenta de Google de una conexión de Drive: al desconectar se revoca en Google solo si ninguna otra conexión usa la misma cuenta |
 | `0122_staff_auth_sessions_lockout` | Sesiones del personal: id visible, `authenticated_at` (re-autenticación), `last_seen_at` (cierre por inactividad), «recordarme»; bloqueo de login por red (`login_attempts.scope`, `password_resets.ip_key`) |
+| `0123_tenants_time_zone` | `tenants.time_zone` (IANA, `UTC` por defecto): huso de la organización con el que se escriben las horas del certificado de finalización (con su desfase, «2026-10-29 18:03:12 UTC−03:00») y la fecha de los campos «fecha de firma». Se configura en Ajustes → Organización (`/v1/settings/organization`); el alta por la web toma el del navegador. Las existentes quedan en UTC |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

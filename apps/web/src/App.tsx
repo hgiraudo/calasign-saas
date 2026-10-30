@@ -37,6 +37,7 @@ const BillingNoAccess = page(() => import("./pages/Billing"), "BillingNoAccess")
 const BillingPage = page(() => import("./pages/Billing"), "BillingPage");
 const TeamPage = page(() => import("./pages/Team"), "TeamPage");
 const SettingsHomePage = page(() => import("./pages/SettingsHome"), "SettingsHomePage");
+const OrganizationSettingsPage = page(() => import("./pages/OrganizationSettings"), "OrganizationSettingsPage");
 const CertificatesPage = page(() => import("./pages/Certificates"), "CertificatesPage");
 const XmlSignPage = page(() => import("./pages/XmlSign"), "XmlSignPage");
 const AuditLogPage = page(() => import("./pages/AuditLog"), "AuditLogPage");
@@ -136,6 +137,7 @@ export function App() {
             }
           />
           <Route path="/app/settings" element={<SettingsHomePage />} />
+          <Route path="/app/settings/organization" element={<OrganizationSettingsPage />} />
           <Route path="/app/settings/certificates" element={<CertificatesPage />} />
           <Route path="/app/settings/ai" element={<AiSettingsPage />} />
           <Route path="/app/xml" element={<XmlSignPage />} />

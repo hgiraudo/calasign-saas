@@ -15,7 +15,7 @@ export async function loadSignatureImages(db: Db, blobs: BlobStore, envelopeId: 
   return new Map(sigs.map((s, i) => [`${s.recipient_id}:${s.purpose}`, images[i]]));
 }
 
-export function toStampFields(fields: any[], docs: any[], sigImages: Map<string, Uint8Array>): StampField[] {
+export function toStampFields(fields: any[], docs: any[], sigImages: Map<string, Uint8Array>, timeZone: string): StampField[] {
   const docIndex = new Map(docs.map((x, i) => [x.id, i]));
   return fields.map((f) => ({
     documentIndex: docIndex.get(f.document_id)!,
@@ -25,8 +25,9 @@ export function toStampFields(fields: any[], docs: any[], sigImages: Map<string,
     width: f.width,
     height: f.height,
     type: f.type,
-    // La fecha de firma se guarda sin zona; en el PDF se aclara que es UTC (los valores fijos del remitente, tal cual).
-    value: f.type === "date_signed" && !f.read_only && typeof f.value === "string" ? signingDateForDisplay(f.value) : f.value,
+    // La fecha de firma se guarda sin zona, en el huso de la organización; en el PDF se aclara cuál ("… UTC−03:00").
+    // Los valores fijos del remitente, tal cual.
+    value: f.type === "date_signed" && !f.read_only && typeof f.value === "string" ? signingDateForDisplay(f.value, timeZone) : f.value,
     imagePng:
       f.type === "signature"
         ? (sigImages.get(`${f.recipient_id}:signature`) ?? null)

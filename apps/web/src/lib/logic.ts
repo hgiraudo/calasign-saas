@@ -32,7 +32,7 @@ export function useFieldLogic(session: SigningSession, values: Record<string, st
               ? session.recipient.name
               : t === "email"
                 ? (session.recipient.email ?? "")
-                : formatSigningDate(new Date(), session.recipient.locale),
+                : formatSigningDate(new Date(), session.recipient.locale, session.envelope.timeZone),
         });
         if (fixed !== undefined) return fixed;
         if (f.type === "checkbox") return values[id] === "true" ? "true" : "false";
@@ -42,7 +42,7 @@ export function useFieldLogic(session: SigningSession, values: Record<string, st
     };
     // Igual que el servidor: las condiciones sobre un campo calculado miran el valor calculado.
     return computeLogic(all, valueOf);
-  }, [session.fields, session.logicFields, session.recipient, values, hasSignature, hasInitials]);
+  }, [session.fields, session.logicFields, session.recipient, session.envelope.timeZone, values, hasSignature, hasInitials]);
 }
 
 /** Muestra un número calculado con el formato local. */

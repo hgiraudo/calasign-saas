@@ -98,6 +98,8 @@ export const SignupInput = z.object({
   password: z.string().min(10).max(200),
   organization: z.string().trim().min(1).max(200),
   locale: z.enum(LOCALES).optional(),
+  /** Huso horario IANA de la organización (la web manda el del navegador). Inválido o ausente: UTC. */
+  timeZone: z.string().trim().max(64).optional(),
   /** Celda donde se guardan los datos (ver GET /v1/public/cells). Sin valor: la celda por defecto. */
   cell: z
     .string()
@@ -480,6 +482,8 @@ export interface SigningSession {
     expiresAt: string | null;
     /** Idioma del sobre: el del certificado y los rótulos estampados en el PDF (p. ej. "Adjunto: …"). */
     locale: Locale;
+    /** Huso horario de la organización: el de la fecha de firma y las horas del certificado (UTC si no se configuró). */
+    timeZone: string;
   };
   recipient: {
     id: string;

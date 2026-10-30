@@ -159,7 +159,13 @@ export function SignupPage() {
     setBusy(true);
     setError(null);
     try {
-      const m = await api<MeResponse>("/v1/auth/signup", { method: "POST", body: { ...form, locale, ...(cell ? { cell } : {}) } });
+      // El huso del navegador es el punto de partida de la organización (horas del certificado y fecha de firma); se
+      // cambia en Ajustes → Organización.
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const m = await api<MeResponse>("/v1/auth/signup", {
+        method: "POST",
+        body: { ...form, locale, ...(timeZone ? { timeZone } : {}), ...(cell ? { cell } : {}) },
+      });
       setMe(m);
       announceLogin(m);
       nav("/app", { replace: true });

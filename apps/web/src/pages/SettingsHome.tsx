@@ -15,6 +15,7 @@ import { useBillingText } from "../lib/i18n-billing";
 import { useAiText } from "../lib/i18n-ai";
 import { useDataText } from "../lib/i18n-data";
 import { useTitle } from "../lib/white-label";
+import { useOrganizationText } from "../lib/i18n-organization";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
@@ -30,6 +31,7 @@ export function SettingsHomePage() {
   const bl = useBillingText();
   const ai = useAiText();
   const dt = useDataText();
+  const org = useOrganizationText();
   const { can, access, hasFeature } = useAccess();
   // feature: función del plan que hace falta para usar la sección (sin ella, la tarjeta lo avisa; adentro se puede ver y
   // quitar lo configurado).
@@ -39,6 +41,7 @@ export function SettingsHomePage() {
     { to: "/app/settings/ai", title: ai("nav.ai"), desc: ai("settings.ai"), perm: "settings:manage" },
     { to: "/app/settings/certificates", title: evt("nav.certificates"), desc: evt("settings.certificates"), perm: "settings:manage" },
     { to: "/app/forms", title: sc("nav.forms"), desc: sc("forms.intro"), perm: "envelopes:create", feature: "web_forms" },
+    { to: "/app/settings/organization", title: org("org.card"), desc: org("org.cardDesc") },
     { to: "/app/settings/team", title: tm("nav.team"), desc: tm("settings.team") },
     { to: "/app/settings/branding", title: t("nav.branding"), desc: tm("settings.branding"), perm: "settings:manage", feature: "branding" },
     { to: "/app/settings/api-keys", title: t("nav.apiKeys"), desc: tm("settings.apiKeys"), perm: "api_keys:manage", feature: "api" },

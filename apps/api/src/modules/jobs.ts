@@ -1,4 +1,5 @@
 import { addCadesSignatureIncremental, finalizeEnvelopePdf, InvalidPdfError, type CertificateRecipient, type StampField } from "@calasign/pdf";
+import { normalizeTimeZone } from "@calasign/shared";
 import { certsignStage, discardCertsignFiles, sweepCertsignPrepared } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
@@ -531,13 +532,15 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     d.db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1 AND NOT hidden`, [e.id]),
     d.db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at`, [e.id]),
     loadSignatureImages(d.db, d.blobs, e.id),
-    d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]),
+    d.db.one<any>(`SELECT name, time_zone FROM tenants WHERE id = $1`, [e.tenant_id]),
     e.created_by ? d.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [e.created_by]) : Promise.resolve(null),
     d.db.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [e.id]),
   ]);
 
   const docBytes = await Promise.all(docs.map((x) => d.blobs.get(x.storage_key)));
-  const stampFields: StampField[] = toStampFields(fields, docs, sigImages);
+  // Huso de la organización: la fecha de firma estampada y las horas del certificado (UTC si no se configuró).
+  const timeZone = normalizeTimeZone(org?.time_zone);
+  const stampFields: StampField[] = toStampFields(fields, docs, sigImages, timeZone);
 
   // IP del certificado sin signed_ip: la de la última apertura ANTERIOR a la firma (la sesión desde la que firmó), no la
   // de la primera (otro dispositivo, días antes) ni una posterior (volvió a abrir el link después de firmar). Sin
@@ -621,6 +624,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       })),
       chainHead,
       // ?b=: la página de verificación muestra la marca aunque se abra desde el dominio de la plataforma.
+      timeZone,
       verifyUrl: rebrands(wl) || e.brand_id ? `${wl.baseUrl}/verify?b=${encodeURIComponent(wl.key)}` : `${wl.baseUrl}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
       payments: await paymentsForCertificate(d.db, e.id, e.locale),

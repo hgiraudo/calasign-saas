@@ -20,6 +20,10 @@ test.describe("firmante", () => {
     await page.getByRole("checkbox", { name: /Acepto firmar electrónicamente/ }).check();
     await continuar.click();
 
+    // Antes de firmar no se ofrece descargar el documento: recién en la pantalla de fin.
+    await expect(page.getByRole("group", { name: "contrato.pdf — 1" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Descargar documento/ })).toHaveCount(0);
+
     // El PDF se dibujó (pdf.js) y el campo de firma está sobre la página.
     await expect(page.getByRole("group", { name: "contrato.pdf — 1" })).toContainText("Contrato de prueba web - pagina 1");
     await expect(page.getByRole("main").getByText("0 de 1 campos")).toBeVisible();

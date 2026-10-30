@@ -473,7 +473,11 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     // Un sobre en curso vencido (aunque el barrido todavía no lo marcó) no consume cuota de IA.
     const expired = (e.status === "sent" && pastExpiry(e)) || Boolean(e.purged_at); // sin originales no hay qué resumir
     const enabled = Boolean(aiUsable && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked && !expired);
-    return { r, e, enabled, blocked, locale: (r.locale ?? e.locale ?? "es") as string };
+    // El idioma que el firmante eligió en la página (?locale=) manda sobre el del destinatario: si no, el aviso, el
+    // resumen y las respuestas salían en el idioma del envío aunque la página estuviera en otro. Solo uno soportado.
+    const asked = (req.query as { locale?: unknown } | undefined)?.locale;
+    const pageLocale = typeof asked === "string" && Object.hasOwn(SIGNER_NOTICE, asked) ? asked : null;
+    return { r, e, enabled, blocked, locale: (pageLocale ?? r.locale ?? e.locale ?? "es") as string };
   };
 
   app.get<TP>("/v1/signing/:token/ai", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req) => {

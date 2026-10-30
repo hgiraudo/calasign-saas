@@ -1052,18 +1052,38 @@ const legacyFileName = (subject: string, envelopeId: string) => `${legacySafeBas
 
 // ───────────────────────────── Job de exportación ─────────────────────────────
 
+/**
+ * ¿La copia subida es la del PDF vigente del sobre? Una renovación del sello de archivo cambia el PDF (y su sha256):
+ * la copia anterior queda con el sello que vence. Sin sha anotado (exportaciones anteriores a 0057) se da por vigente;
+ * la renovación las marca con '' para que no pasen por vigentes (queueStorageReexports).
+ */
+const exportIsCurrent = (ex: { pdf_sha256: string | null }, signedSha: string | null) =>
+  ex.pdf_sha256 === null || signedSha === null || ex.pdf_sha256 === signedSha;
+
 export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectionId: string; envelopeId: string }) {
   const c = await db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [p.connectionId]);
-  const ex = await db.one<any>(`SELECT * FROM storage_exports WHERE connection_id = $1 AND envelope_id = $2`, [p.connectionId, p.envelopeId]);
-  if (!c || !ex || ex.status === "succeeded") return;
-  if (!c.active) {
-    await db.query(`UPDATE storage_exports SET status = 'failed', error = 'conexión desactivada', updated_at = now() WHERE id = $1`, [ex.id]);
-    return;
-  }
+  let ex = await db.one<any>(`SELECT * FROM storage_exports WHERE connection_id = $1 AND envelope_id = $2`, [p.connectionId, p.envelopeId]);
+  if (!c || !ex) return;
   const e = await db.one<any>(
     `SELECT e.subject, e.status, f.storage_key, f.sha256 FROM envelopes e JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
     [p.envelopeId],
   );
+  if (ex.status === "succeeded") {
+    if (!e || e.status !== "completed" || exportIsCurrent(ex, e.sha256)) return;
+    // Exportada con un PDF anterior a una renovación del sello: se vuelve a subir. Condicionado al sha leído: si otro
+    // trabajo ya la reabrió (o la volvió a subir), este no la pisa.
+    const reopened = await db.query(
+      `UPDATE storage_exports SET status = 'pending', pdf_ref = NULL, pdf_sha256 = NULL, error = NULL, updated_at = now()
+        WHERE id = $1 AND status = 'succeeded' AND pdf_sha256 IS NOT DISTINCT FROM $2 RETURNING id`,
+      [ex.id, ex.pdf_sha256],
+    );
+    if (!reopened.length) return;
+    ex = { ...ex, status: "pending", pdf_ref: null, pdf_sha256: null, error: null };
+  }
+  if (!c.active) {
+    await db.query(`UPDATE storage_exports SET status = 'failed', error = 'conexión desactivada', updated_at = now() WHERE id = $1`, [ex.id]);
+    return;
+  }
   if (!e || e.status !== "completed") return;
   // Reclamo con vencimiento (por si el proceso muere a mitad): si otro trabajo ya la está subiendo, este no hace nada.
   // El valor del reclamo identifica a este intento (como texto: un Date de JS pierde los microsegundos): al terminar se
@@ -1092,7 +1112,9 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
   try {
     let cur = await withResolvedFolder(db, c);
     // El PDF ya subido en un intento anterior (falló solo el certificado de evidencia) no se vuelve a subir.
+    // Si entre medio una renovación del sello cambió el PDF, el subido ya no sirve: se sube el vigente.
     const prev = await db.one<any>(`SELECT pdf_ref, pdf_sha256 FROM storage_exports WHERE id = $1`, [ex.id]);
+    if (prev?.pdf_ref && !exportIsCurrent(prev, e.sha256 ?? null)) prev.pdf_ref = null;
     let ref: string = prev?.pdf_ref ?? null;
     let pdfSha: string | null = prev?.pdf_ref ? (prev.pdf_sha256 ?? null) : null;
     if (!ref) {
@@ -1158,6 +1180,29 @@ export async function queueStorageExports(db: Db, tenantId: string, envelopeId: 
       [uuidv7(), tenantId, c.id, envelopeId],
     );
     await enqueue(db, "platform", { kind: "export", connectionId: c.id, envelopeId }, { dedupeKey: `exp:${c.id}:${envelopeId}` });
+  }
+}
+
+/**
+ * Al renovarse el sello de archivo: las copias ya exportadas se vuelven a subir con el PDF renovado (si no, quedaban
+ * con el sello que vence). Solo las de conexiones activas que ya tenían este sobre. El trabajo decide por el sha256
+ * (exportEnvelopeJob), así que una subida del PDF anterior todavía en curso no la deja como vigente. Clave por
+ * renovación (seq del evento), no permanente: la de la exportación original ya se usó.
+ */
+export async function queueStorageReexports(db: Db, tenantId: string, envelopeId: string, seq: number) {
+  // Las anteriores a 0057 no tienen sha: '' para que no pasen por vigentes.
+  const rows = await db.query<{ connection_id: string }>(
+    `UPDATE storage_exports x SET pdf_sha256 = COALESCE(x.pdf_sha256, '') FROM storage_connections c
+      WHERE c.id = x.connection_id AND c.active AND x.tenant_id = $1 AND x.envelope_id = $2 RETURNING x.connection_id`,
+    [tenantId, envelopeId],
+  );
+  for (const r of rows) {
+    await enqueue(
+      db,
+      "platform",
+      { kind: "export", connectionId: r.connection_id, envelopeId },
+      { dedupeKey: `exp:${r.connection_id}:${envelopeId}:renewal:${seq}` },
+    );
   }
 }
 

@@ -537,6 +537,9 @@ export function AiMetadataPanel({ envelopeId, completed, canManage = true }: { e
 
 export function AiSignerAssist({ base }: { base: string }) {
   const ai = useAiText();
+  // El idioma elegido en la página: el aviso, el resumen y las respuestas lo siguen (si no, salían en el del envío).
+  const { locale } = useI18n();
+  const localeQs = `?locale=${encodeURIComponent(locale)}`;
   const [info, setInfo] = useState<SignerAiInfo | null>(null);
   const [summary, setSummary] = useState<AiSummaryResponse | null>(null);
   const [answers, setAnswers] = useState<{ q: string; a: AiAnswerResponse }[]>([]);
@@ -545,10 +548,10 @@ export function AiSignerAssist({ base }: { base: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<SignerAiInfo>(`${base}/ai`)
+    api<SignerAiInfo>(`${base}/ai${localeQs}`)
       .then(setInfo)
       .catch(() => setInfo(null));
-  }, [base]);
+  }, [base, localeQs]);
 
   if (!info?.enabled) return null;
 
@@ -556,7 +559,7 @@ export function AiSignerAssist({ base }: { base: string }) {
     setBusy("summary");
     setError(null);
     try {
-      setSummary(await api<AiSummaryResponse>(`${base}/ai/summary`, { method: "POST", body: {} }));
+      setSummary(await api<AiSummaryResponse>(`${base}/ai/summary${localeQs}`, { method: "POST", body: {} }));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -571,7 +574,7 @@ export function AiSignerAssist({ base }: { base: string }) {
     setBusy("ask");
     setError(null);
     try {
-      const a = await api<AiAnswerResponse>(`${base}/ai/ask`, { method: "POST", body: { question: q } });
+      const a = await api<AiAnswerResponse>(`${base}/ai/ask${localeQs}`, { method: "POST", body: { question: q } });
       setAnswers([{ q, a }, ...answers]);
       setQuestion("");
     } catch (err) {

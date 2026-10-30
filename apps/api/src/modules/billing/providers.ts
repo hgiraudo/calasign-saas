@@ -250,13 +250,25 @@ export async function mpCreatePreference(p: {
 }
 
 /** Vence una preferencia de Checkout Pro: el link deja de aceptar pagos. */
-export async function mpExpirePreference(id: string) {
-  // Mercado Pago documenta las fechas con offset ("2026-10-18T05:35:00.000-03:00"): se manda "+00:00" en vez de "Z".
-  await mp(
-    `/checkout/preferences/${encodeURIComponent(id)}`,
-    { expires: true, expiration_date_to: new Date().toISOString().replace("Z", "+00:00") },
-    "PUT",
-  );
+export async function mpExpirePreference(id: string): Promise<"expired" | "already_expired"> {
+  const path = `/checkout/preferences/${encodeURIComponent(id)}`;
+  try {
+    // Mercado Pago documenta las fechas con offset ("2026-10-18T05:35:00.000-03:00"): se manda "+00:00" en vez de "Z".
+    await mp(path, { expires: true, expiration_date_to: new Date().toISOString().replace("Z", "+00:00") }, "PUT");
+    return "expired";
+  } catch (err) {
+    // No está documentado si una preferencia que no existe da 404 o 400 al actualizarla. Ante un 400 se la consulta:
+    // si no existe (404) se informa como 404, que los barridos sueltan; si ya está vencida, no queda nada que cerrar.
+    // Si no, el barrido la reintentaba para siempre.
+    if (!(err instanceof ProviderError) || err.status !== 400) throw err;
+    const pref = await mp(path, null, "GET").catch((e) => {
+      if (e instanceof ProviderError && e.status === 404) throw e;
+      throw err;
+    });
+    const until = Date.parse(pref?.expiration_date_to ?? "");
+    if (pref?.expires && Number.isFinite(until) && until <= Date.now()) return "already_expired";
+    throw err;
+  }
 }
 
 /**

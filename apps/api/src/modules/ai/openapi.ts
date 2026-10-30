@@ -49,6 +49,14 @@ const TAG = "IA";
 const NOTE =
   "Requiere IA habilitada para la organización (403 ai_disabled), el aviso de tratamiento de datos vigente aceptado (403 ai_notice_required), un plan que incluya IA (402 plan_limit, limit ai_tokens_per_month), proveedor configurado en el servidor (503 ai_unavailable; no se resuelve reintentando) y presupuesto mensual disponible (429 ai_budget_exceeded; el efectivo es min(presupuesto de la organización, tope del plan)). Fallas del proveedor, reintentables: 503 ai_rate_limited (saturado: repetir en unos segundos), 502 ai_unavailable (no se pudo contactar) y 504 ai_timeout (no respondió a tiempo; el consumo estimado se descuenta igual). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
 const SIGNER_NOTE = `Requiere IA habilitada para la organización (403 ai_disabled), con el aviso vigente aceptado, y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
+/** Idioma de la página del firmante: el aviso, el resumen y las respuestas lo siguen (si no, el del destinatario). */
+const SIGNER_LOCALE = [
+  {
+    name: "locale",
+    description: "Idioma de la respuesta (es, pt-BR o en). Otro valor o ninguno: el del destinatario.",
+    schema: { type: "string", enum: ["es", "pt-BR", "en"] },
+  },
+];
 const AI_AVAILABILITY = [
   "ai_disabled",
   "ai_notice_required",
@@ -138,11 +146,19 @@ export const AI_OPS = [
     body: PutContractMetadataInput,
     response: EnvelopeAiMetadataSchema,
   },
-  { method: "get", path: "/v1/signing/{token}/ai", tag: TAG, summary: "Firmante: disponibilidad del asistente, aviso y descargo", auth: "token" },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/ai",
+    tag: TAG,
+    summary: "Firmante: disponibilidad del asistente, aviso y descargo",
+    query: SIGNER_LOCALE,
+    auth: "token",
+  },
   {
     method: "post",
     path: "/v1/signing/{token}/ai/summary",
     tag: TAG,
+    query: SIGNER_LOCALE,
     summary: "Firmante: resumen en lenguaje simple con citas",
     description: SIGNER_NOTE,
     auth: "token",
@@ -152,6 +168,7 @@ export const AI_OPS = [
     method: "post",
     path: "/v1/signing/{token}/ai/ask",
     tag: TAG,
+    query: SIGNER_LOCALE,
     summary: "Firmante: pregunta sobre el documento, respondida con citas y página",
     description: SIGNER_NOTE,
     body: AiAskInput,

@@ -264,6 +264,25 @@ describe("bloqueo de ingresos", () => {
     expect(r.statusCode).toBe(401);
     expect(await db.one(`SELECT 1 FROM login_attempts WHERE user_id = $1`, [u.id])).toBeNull();
   });
+
+  it("una cuenta solo SSO invitada a otra organización recibe la salida (restablecer), no 'contraseña incorrecta'", async () => {
+    const t = await newTenant();
+    const owner = await newUser(t);
+    const u = await newUser(null, { password: null });
+    const token = util.randomToken();
+    await db.query(
+      `INSERT INTO invitations (id, tenant_id, email, role, token_hash, invited_by, expires_at) VALUES ($1,$2,$3,'member',$4,$5, now() + interval '7 days')`,
+      [util.uuidv7(), t, u.email, util.sha256Hex(token), owner.id],
+    );
+    for (const payload of [{}, { password: "lo-que-sea-que-pruebe-1" }]) {
+      const r = await app.inject({ method: "POST", url: `/v1/invite/${token}/accept`, payload });
+      expect(r.statusCode).toBe(403);
+      expect(r.json().error.code).toBe("password_reset_required");
+    }
+    // No es un intento fallido: no cuenta para el bloqueo ni deja la membresía hecha.
+    expect(await db.one(`SELECT 1 FROM login_attempts WHERE user_id = $1`, [u.id])).toBeNull();
+    expect(await db.one(`SELECT 1 FROM memberships WHERE user_id = $1 AND tenant_id = $2`, [u.id, t])).toBeNull();
+  });
 });
 
 describe("sesiones", () => {

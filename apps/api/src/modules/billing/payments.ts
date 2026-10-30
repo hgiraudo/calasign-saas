@@ -300,7 +300,14 @@ export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object,
     try {
       let outcome = "expired";
       if (p.provider === "stripe") outcome = await stripeExpireCheckoutSession(p.checkout_id);
-      else if (p.provider === "mercadopago") await mpExpirePreference(p.checkout_id);
+      else if (p.provider === "mercadopago") {
+        // Una preferencia que Mercado Pago ya no conoce no se puede pagar: se da por cerrada (antes se reintentaba
+        // en cada barrido, para siempre).
+        outcome = await mpExpirePreference(p.checkout_id).catch((err) => {
+          if (err instanceof ProviderError && err.status === 404) return "not_found";
+          throw err;
+        });
+      }
       // "complete": se pagó antes de poder cerrarla; el webhook lo acredita y queda a la vista en la evidencia.
       // Marca y evento juntos, con el sobre bloqueado: sin el bloqueo, un webhook de pago simultáneo tomaba el mismo
       // número de evento, el de cierre fallaba (UNIQUE) y, ya marcado como cerrado, no se reintentaba nunca.

@@ -231,6 +231,24 @@ export interface RevocationResult {
   status: RevocationStatus;
   source: "ocsp" | "crl" | null;
   revokedAt?: string | null;
+  /** CRLReason (RFC 5280 §5.3.1) de una revocación, si la respuesta lo trae: 1 keyCompromise, 2 cACompromise, … */
+  reason?: number | null;
+}
+
+/**
+ * Motivos con los que la clave pudo estar en otras manos desde antes de la fecha de revocación: keyCompromise (1),
+ * cACompromise (2) y aACompromise (10). Para una TSA, con cualquiera de ellos un sello pudo emitirse antedatado.
+ */
+export const COMPROMISE_REASONS: ReadonlySet<number> = new Set([1, 2, 10]);
+
+/** Valor de un ENUMERATED (CRLReason) en DER, o null. */
+function enumeratedValue(der: ArrayBuffer | Uint8Array): number | null {
+  try {
+    const { result } = asn1js.fromBER(der instanceof Uint8Array ? toAB(der) : der);
+    return result instanceof asn1js.Enumerated ? result.valueBlock.valueDec : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Margen por diferencias de reloj entre la TSA y el respondedor OCSP / emisor de la CRL. */
@@ -306,7 +324,7 @@ export async function statusFromOcsp(
     const tag = st?.idBlock?.tagNumber;
     if (at && tag !== 1 && !goodCovers(single.thisUpdate, single.nextUpdate, at)) return null;
     if (tag === 0) return { status: "good", source: "ocsp" };
-    if (tag === 1) return { status: "revoked", source: "ocsp", revokedAt: ocspRevocationTime(st) };
+    if (tag === 1) return { status: "revoked", source: "ocsp", revokedAt: ocspRevocationTime(st), reason: ocspRevocationReason(st) };
     return { status: "unknown", source: "ocsp" };
   } catch {
     return null;
@@ -319,6 +337,22 @@ function ocspRevocationTime(st: any): string | null {
     const t = st?.valueBlock?.value?.[0];
     const d: Date | undefined = typeof t?.toDate === "function" ? t.toDate() : undefined;
     return d && !isNaN(d.getTime()) ? d.toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** revocationReason de un RevokedInfo ([0] EXPLICIT CRLReason), o null si no viene o no se puede leer. */
+function ocspRevocationReason(st: unknown): number | null {
+  try {
+    type Node = { idBlock?: { tagClass?: number; tagNumber?: number }; valueBlock?: { value?: Node[]; valueHexView?: Uint8Array } };
+    const tagged = ((st as Node | null)?.valueBlock?.value ?? []).find((v) => v?.idBlock?.tagClass === 3 && v?.idBlock?.tagNumber === 0);
+    if (!tagged) return null;
+    const inner = tagged.valueBlock?.value?.[0];
+    if (inner instanceof asn1js.Enumerated) return inner.valueBlock.valueDec;
+    // Si quedó sin interpretar (implícito o como bytes), se lee el ENUMERATED del contenido.
+    const hex = tagged.valueBlock?.valueHexView;
+    return hex?.length ? enumeratedValue(hex) : null;
   } catch {
     return null;
   }
@@ -415,7 +449,12 @@ export async function statusFromCrl(
     if (!byIssuer.get(key)) return null;
     const serial = serialHex(cert);
     const hit = (crl.revokedCertificates ?? []).find((r) => Buffer.from(r.userCertificate.valueBlock.valueHexView).toString("hex") === serial);
-    if (hit) return { status: "revoked", source: "crl", revokedAt: hit.revocationDate.value.toISOString() };
+    if (hit) {
+      // reasonCode (2.5.29.21) de la entrada, si lo trae.
+      const rc = hit.crlEntryExtensions?.extensions.find((e) => e.extnID === "2.5.29.21");
+      const reason = rc ? enumeratedValue(rc.extnValue.valueBlock.valueHexView) : null;
+      return { status: "revoked", source: "crl", revokedAt: hit.revocationDate.value.toISOString(), reason };
+    }
     if (at && !goodCovers(crl.thisUpdate.value, crl.nextUpdate?.value, at)) return null;
     return { status: "good", source: "crl" };
   } catch {

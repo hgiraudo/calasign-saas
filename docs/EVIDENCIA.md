@@ -57,6 +57,9 @@ junto a la búsqueda por hash). Por firma: integridad (CMS + messageDigest), cob
 revisiones posteriores), sello de tiempo (messageImprint + firma del token), cadena hasta una raíz de
 confianza (`TRUST_STORE_DIR` + la raíz del sello de plataforma), revocación (OCSP/CRL del DSS; online solo si
 `VALIDATE_ONLINE_REVOCATION=true`, con protección SSRF: solo http(s) a IPs públicas) y nivel PAdES detectado.
+La revocación también se mira para la cadena de la TSA de cada sello de tiempo: si estaba revocada al emitir el sello,
+o revocada por compromiso de clave (keyCompromise, cACompromise, aACompromise) en cualquier fecha, el sello queda
+`trusted: false` con un aviso, y la cadena del firmante ya no se valida a la fecha de ese sello sino a la de hoy.
 
 ### Rotación del sello de plataforma
 

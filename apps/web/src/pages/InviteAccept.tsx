@@ -1,7 +1,7 @@
 // Aceptar una invitación (pública): cuenta nueva, cuenta existente con contraseña, o sesión ya iniciada.
 import { redirectIfSsoRequired } from "../components/SsoLogin";
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import type { InvitationPreview, MeResponse, TwoFactorChallenge } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { usePasswordText } from "../lib/i18n-password";
@@ -36,8 +36,12 @@ export function InviteAcceptPage() {
   // Con la sesión de la persona invitada no se pide contraseña; pero si el servidor no la acepta (p. ej. una sesión SSO
   // de otra organización), se pide la contraseña en vez de quedar sin salida.
   const [needPassword, setNeedPassword] = useState(false);
+  // Cuenta creada por SSO o SCIM, sin contraseña (403 password_reset_required): se la manda a crearla.
+  const [resetRequired, setResetRequired] = useState(false);
   const pw = usePasswordText();
   const loggedAsInvitee = Boolean(me && inv && me.user.email.toLowerCase() === inv.email.toLowerCase()) && !needPassword;
+  // Con la sesión de otra persona: aceptar cambia de cuenta en este navegador. Antes pasaba sin avisar.
+  const otherSession = me && inv && me.user.email.toLowerCase() !== inv.email.toLowerCase() ? me.user.email : null;
 
   const done = (m: MeResponse) => {
     setMe(m);
@@ -50,6 +54,7 @@ export function InviteAcceptPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setResetRequired(false);
     try {
       const body = loggedAsInvitee ? {} : inv?.existingAccount ? { password } : { name, password };
       const r = await api<MeResponse | TwoFactorChallenge>(`/v1/invite/${encodeURIComponent(token ?? "")}/accept`, { method: "POST", body });
@@ -58,6 +63,10 @@ export function InviteAcceptPage() {
     } catch (err) {
       // Organización con SSO obligatorio: ya quedó como miembro; se ingresa por el IdP.
       if (redirectIfSsoRequired(err)) return;
+      if (err instanceof HttpError && err.code === "password_reset_required") {
+        setResetRequired(true);
+        return;
+      }
       const unauth = err instanceof HttpError && err.status === 401 && err.code === "unauthorized";
       if (unauth && loggedAsInvitee) setNeedPassword(true);
       else setError(unauth ? pw("badCredentials") : errorText(err));
@@ -75,6 +84,7 @@ export function InviteAcceptPage() {
     return (
       <form className="stack" onSubmit={submit}>
         <p>{inv.invitedByName ? tt("inv.body", vars) : tt("inv.bodyNoInviter", vars)}</p>
+        {otherSession && <div className="alert alert-warn">{tt("inv.otherSession", { current: otherSession, email: inv.email })}</div>}
         {loggedAsInvitee ? (
           <p className="muted">{tt("inv.loggedAs")}</p>
         ) : inv.existingAccount ? (
@@ -106,6 +116,15 @@ export function InviteAcceptPage() {
           </>
         )}
         <ErrorBox error={error} />
+        {resetRequired && (
+          <div className="alert alert-warn" role="alert">
+            {pw("resetRequired")}{" "}
+            <Link to="/forgot" state={{ email: inv.email }}>
+              {pw("resetRequiredAction")}
+            </Link>
+            . {tt("inv.reopenAfterReset")}
+          </div>
+        )}
         <button className="btn btn-primary btn-block" disabled={busy}>
           {tt("inv.accept")}
         </button>

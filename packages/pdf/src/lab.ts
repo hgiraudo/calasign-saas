@@ -29,6 +29,8 @@ export interface LabPki {
   sealChainPem: string;
   /** Números de serie (hex) revocados por la CA intermedia. */
   revoked: Set<string>;
+  /** Fecha y motivo (CRLReason) de una revocación de `revoked`; sin entrada: hace 30 s y sin motivo. */
+  revocationInfo: Map<string, { at: Date; reason?: number }>;
   issue(cn: string, opts?: LabIssueOptions): Promise<LabIdentity>;
 }
 
@@ -164,6 +166,7 @@ export async function createLabPki(baseUrl: string): Promise<LabPki> {
     tsa,
     sealChainPem: seal.certPem + intermediate.certPem + root.certPem,
     revoked: new Set(),
+    revocationInfo: new Map(),
     issue: (cn, opts) => leaf(cn, ["1.3.6.1.5.5.7.3.36", "1.3.6.1.5.5.7.3.4"], opts),
   };
 }
@@ -177,7 +180,17 @@ async function crlFor(pki: LabPki, which: "root" | "intermediate"): Promise<Uint
     issuer: caCert.subject,
     thisUpdate: new Date(Date.now() - 60_000),
     nextUpdate: new Date(Date.now() + 7 * 86400_000),
-    entries: which === "intermediate" ? [...pki.revoked].map((s) => ({ serialNumber: s, revocationDate: new Date(Date.now() - 30_000) })) : [],
+    entries:
+      which === "intermediate"
+        ? [...pki.revoked].map((s) => {
+            const info = pki.revocationInfo.get(s);
+            return {
+              serialNumber: s,
+              revocationDate: info?.at ?? new Date(Date.now() - 30_000),
+              ...(info?.reason !== undefined ? { reason: info.reason } : {}),
+            };
+          })
+        : [],
     signingKey: ca.key,
     signingAlgorithm: ALG,
   });
@@ -194,10 +207,17 @@ async function ocspResponse(pki: LabPki, body: Uint8Array): Promise<Uint8Array> 
     const single = new pkijs.SingleResponse();
     single.certID = r.reqCert;
     const s = Buffer.from(r.reqCert.serialNumber.valueBlock.valueHexView).toString("hex");
+    const info = pki.revocationInfo.get(s);
     single.certStatus = pki.revoked.has(s)
       ? new asn1js.Constructed({
           idBlock: { tagClass: 3, tagNumber: 1 },
-          value: [new asn1js.GeneralizedTime({ valueDate: new Date(Date.now() - 30_000) })],
+          value: [
+            new asn1js.GeneralizedTime({ valueDate: info?.at ?? new Date(Date.now() - 30_000) }),
+            // revocationReason [0] EXPLICIT CRLReason
+            ...(info?.reason !== undefined
+              ? [new asn1js.Constructed({ idBlock: { tagClass: 3, tagNumber: 0 }, value: [new asn1js.Enumerated({ value: info.reason })] })]
+              : []),
+          ],
         })
       : new asn1js.Primitive({ idBlock: { tagClass: 3, tagNumber: 0 }, lenBlockLength: 1 } as any);
     single.thisUpdate = new Date(Date.now() - 60_000);

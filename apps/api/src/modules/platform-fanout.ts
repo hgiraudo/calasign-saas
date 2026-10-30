@@ -1,13 +1,14 @@
 // Evidencia → integraciones de plataforma (en la misma transacción del evento, como el outbox de webhooks):
 //   · avisos a Slack/Teams según los eventos elegidos por cada integración
-//   · exportación del PDF sellado a las conexiones de almacenamiento al completarse el sobre
+//   · exportación del PDF sellado a las conexiones de almacenamiento al completarse el sobre (y de nuevo al renovarse
+//     su sello de archivo)
 // Y el handler de la cola "platform" que procesa esos trabajos.
 import type { NotificationEvent } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import { enqueue, type JobContext } from "../infra/queue";
 import type { BlobStore } from "../infra/storage";
 import { EVIDENCE_TO_NOTIFICATION, deliverNotificationJob } from "./notify-integrations";
-import { exportEnvelopeJob, notifyStorageMemberRemoved, queueStorageExports } from "./storage-export";
+import { exportEnvelopeJob, notifyStorageMemberRemoved, queueStorageExports, queueStorageReexports } from "./storage-export";
 import { handleCrmJob, queueCrmEvents } from "./crm";
 import { handleConnectorJob, queueConnectorEvents } from "./connectors";
 
@@ -35,6 +36,8 @@ export async function queuePlatformFanout(
     }
   }
   if (evidenceType === "envelope.completed") await queueStorageExports(db, tenantId, envelopeId);
+  // La renovación del sello de archivo cambia el PDF: las copias exportadas se reemplazan por el renovado.
+  if (evidenceType === "envelope.archive_renewed") await queueStorageReexports(db, tenantId, envelopeId, seq);
   await queueCrmEvents(db, tenantId, envelopeId, evidenceType);
   await queueConnectorEvents(db, tenantId, envelopeId, evidenceType);
 }

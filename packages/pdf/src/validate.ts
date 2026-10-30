@@ -1,7 +1,16 @@
 // Validador de firmas PDF: integridad criptográfica, cobertura, sello de tiempo, cadena hasta una raíz
 // de confianza, revocación (DSS incrustado u online) y nivel PAdES detectado.
 import { X509Certificate } from "node:crypto";
-import { fetchCrl, fetchOcsp, hasTimeStampingEku, statusFromCrl, statusFromOcsp, type Fetcher, type RevocationStatus } from "./pki";
+import {
+  COMPROMISE_REASONS,
+  fetchCrl,
+  fetchOcsp,
+  hasTimeStampingEku,
+  statusFromCrl,
+  statusFromOcsp,
+  type Fetcher,
+  type RevocationStatus,
+} from "./pki";
 import {
   asn1js,
   HASH_BY_OID,
@@ -197,7 +206,14 @@ function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate
   }
 }
 
-async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool: pkijs.Certificate[], anchors: Set<string>, weak: Set<string>) {
+async function verifyToken(
+  token: pkijs.SignedData,
+  imprintOf: Uint8Array,
+  pool: pkijs.Certificate[],
+  anchors: Set<string>,
+  weak: Set<string>,
+  rev: { dss: PdfDss | null; opts: ValidateOptions; warnings: string[] },
+) {
   const tst = tstInfoOf(token);
   weakCmsAlgorithms(token, "sello de tiempo", weak);
   const imprintWeak = WEAK_DIGESTS[tst.messageImprint.hashAlgorithm.algorithmId];
@@ -221,6 +237,16 @@ async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool:
     const chain = await buildChain(tsa, [...cmsCertificates(token), ...pool]);
     const last = chain[chain.length - 1];
     trusted = isSelfSigned(last) && anchors.has(fingerprint(certDer(last))) && chain.every((c) => c.notBefore.value <= at && at <= c.notAfter.value);
+    // Revocación de la TSA y su cadena (DSS y, con `online`, consulta): antes no se miraba, y un sello de una TSA
+    // revocada (o con la clave comprometida, que permite antedatar) fijaba la fecha con la que se valida la firma.
+    if (trusted) {
+      const rep = await chainReport(tsa, chain, anchors, rev.dss, rev.opts, at, new Set(), "tsa");
+      if (rep.revoked) {
+        trusted = false;
+        const name = commonName(tsa.subject) ?? nameToString(tsa.subject);
+        rev.warnings.push(`El sello de tiempo de "${name}" no es de confianza: el certificado de la TSA (o de su cadena) está revocado`);
+      }
+    }
   }
   return { time: tst.genTime.toISOString(), tsa: tsa ? (commonName(tsa.subject) ?? nameToString(tsa.subject)) : null, valid, trusted };
 }
@@ -250,6 +276,8 @@ async function chainReport(
   opts: ValidateOptions,
   at: Date,
   weak: Set<string>,
+  /** Cadena de una TSA: una revocación por compromiso de clave cuenta a cualquier fecha (ver más abajo). */
+  kind: "signer" | "tsa" = "signer",
 ): Promise<SignatureReport["chain"]> {
   const chain = await buildChain(leaf, pool);
   for (const c of chain) weakCertificate(c, weak);
@@ -257,6 +285,8 @@ async function chainReport(
   const last = chain[chain.length - 1];
   const trusted = isSelfSigned(last) && anchors.has(fingerprint(certDer(last)));
   const entries: ChainEntry[] = [];
+  // CRLReason de cada revocación (no va al informe: solo decide si cuenta).
+  const reasons: (number | null)[] = [];
   for (let i = 0; i < chain.length; i++) {
     const c = chain[i];
     const issuer = chain[i + 1];
@@ -274,6 +304,7 @@ async function chainReport(
           continue;
         }
         revocation = { status: r.status, source: "dss-ocsp", revokedAt: r.revokedAt ?? null };
+        reasons[i] = r.reason ?? null;
         if (r.status === "revoked") break;
       }
       if (revocation.status === "not_checked") {
@@ -281,6 +312,7 @@ async function chainReport(
           const r = await statusFromCrl(crl, c, issuer, at);
           if (r) {
             revocation = { status: r.status, source: "dss-crl", revokedAt: r.revokedAt ?? null };
+            reasons[i] = r.reason ?? null;
             break;
           }
         }
@@ -288,11 +320,16 @@ async function chainReport(
       if (revocation.status === "not_checked" && opts.online) {
         const o = await fetchOcsp(c, issuer, opts.fetcher);
         const r = o ? await statusFromOcsp(o, c, issuer, at) : null;
-        if (r) revocation = { status: r.status, source: "online-ocsp", revokedAt: r.revokedAt ?? null };
-        else {
+        if (r) {
+          revocation = { status: r.status, source: "online-ocsp", revokedAt: r.revokedAt ?? null };
+          reasons[i] = r.reason ?? null;
+        } else {
           const crl = await fetchCrl(c, opts.fetcher);
           const r2 = crl ? await statusFromCrl(crl, c, issuer, at) : null;
-          if (r2) revocation = { status: r2.status, source: "online-crl", revokedAt: r2.revokedAt ?? null };
+          if (r2) {
+            revocation = { status: r2.status, source: "online-crl", revokedAt: r2.revokedAt ?? null };
+            reasons[i] = r2.reason ?? null;
+          }
         }
       }
       if (revocation.status === "not_checked" && provisional) revocation = provisional;
@@ -301,7 +338,13 @@ async function chainReport(
   }
   // Revocado al momento de firmar: la revocación es anterior a esa fecha, o no se sabe cuándo ocurrió. El OCSP trae su
   // revocationTime: sin pasarlo, un certificado revocado DESPUÉS de una firma con sello de confianza contaba como revocado.
-  const revoked = entries.some((e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at));
+  // En una TSA, con la clave comprometida se pueden emitir sellos con cualquier fecha, también anterior a la revocación:
+  // la fecha del sello no prueba nada y la revocación cuenta siempre.
+  const revoked = entries.some(
+    (e, i) =>
+      e.revocation.status === "revoked" &&
+      (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at || (kind === "tsa" && COMPROMISE_REASONS.has(reasons[i] ?? -1))),
+  );
   // "De confianza" no dice nada de la revocación si no hubo datos (sin DSS ni consulta online): se informa aparte.
   const revocationUnknown = entries.some((e) => e.revocation.status === "not_checked" || e.revocation.status === "unknown");
   return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid, revoked, revocationUnknown };
@@ -393,7 +436,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
       const pool = [...dedupePool([...cmsCertificates(sd), ...dssCerts]), ...anchorCerts];
 
       if (s.type === "DocTimeStamp") {
-        const ts = await verifyToken(sd, content, pool, anchors, weak);
+        const ts = await verifyToken(sd, content, pool, anchors, weak, { dss, opts, warnings });
         const tsIntegrity: SignatureReport["integrity"] = brIssue
           ? { valid: false, reason: brIssue }
           : ts.valid
@@ -409,7 +452,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
           // Como en las firmas: sin integridad no se arma la cadena (un sello que no verifica no puede quedar "confiable").
           chain:
             signer && tsIntegrity.valid
-              ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak)
+              ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak, "tsa")
               : { trusted: false, anchor: null, entries: [] },
           level: null,
           ...weakOf(),
@@ -446,7 +489,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
       if (tsToken) {
         const sigValue = new Uint8Array(sd.signerInfos[0].signature.valueBlock.valueHexView);
         pool.push(...dedupePool(cmsCertificates(tsToken)).slice(0, 20));
-        timestamp = await verifyToken(tsToken, sigValue, pool, anchors, weak);
+        timestamp = await verifyToken(tsToken, sigValue, pool, anchors, weak, { dss, opts, warnings });
       }
       const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
       const signingTime = s.signingTimeM ?? (signingTimeAttr ? ((signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null) : null);

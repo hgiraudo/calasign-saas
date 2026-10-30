@@ -732,6 +732,16 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     let verifiedByPassword = false;
     let newUser: { name: string; passwordHash: string; locale: string } | null = null;
     if (user && !sessionUserId) {
+      // Cuenta creada por SSO o SCIM, sin contraseña propia: ninguna que escriba sirve (daba "contraseña incorrecta" y
+      // contaba para el bloqueo), y la sesión SSO de otra organización no se acepta como prueba. La salida es crearla
+      // con "Olvidé mi contraseña", como en el login.
+      if (!String(user.password_hash ?? "").startsWith("scrypt$")) {
+        throw new AppError(
+          403,
+          "password_reset_required",
+          'Tu cuenta entra por inicio de sesión único (SSO) y no tiene contraseña: creala desde "Olvidé mi contraseña" y volvé a abrir esta invitación',
+        );
+      }
       // Sin contraseña no hay intento que contar (p. ej. la pantalla consultando si hace falta): 401 sin tocar el bloqueo.
       if (!input.password) throw unauthorized();
       // Es un ingreso con contraseña: mismo bloqueo por (cuenta, red) que /v1/auth/login, y los fallos cuentan para ese

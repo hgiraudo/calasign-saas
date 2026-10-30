@@ -1,8 +1,28 @@
 # Rebotes, quejas y supresión de correos (Amazon SES + SNS)
 
 La API recibe los rebotes y las quejas de SES por un tema SNS y deja de escribirle a las direcciones que rebotan de
-forma permanente o que marcaron un correo como spam. **Esta infraestructura no está aplicada**: abajo está lo que hay
-que crear (Terraform o consola) y la configuración de la API.
+forma permanente o que marcaron un correo como spam. Lo que ya existe está en «Dónde está SES hoy»; «Infraestructura a
+crear» es la referencia para armarlo en otra cuenta.
+
+## Dónde está SES hoy
+
+SES **no** está en la organización de AWS de CalaSign: vive en la cuenta 006121953992, región **us-east-2**, armado
+por CLI (sin Terraform) junto con el relay de `dynamic-form`. El historial está en `~/cala/calasign-setup`
+(`README.md`, `aws-ses-production-access.md`). La arquitectura de la CA (`~/cala/calasign/docs/13-correo-y-entregabilidad.md`)
+planea otra cosa (`avisos.calasign.com` en la cuenta compartida); migrar es una decisión pendiente.
+
+| Pieza | Valor |
+|---|---|
+| Identidad | `calasign.com` (Easy DKIM 2048, MAIL FROM `bounce.calasign.com`), remitente `no-reply@calasign.com` |
+| Configuration set | `calasign-notify` (por defecto de la identidad): eventos a SNS y métricas a CloudWatch |
+| Tema SNS | `arn:aws:sns:us-east-2:006121953992:ses-notifications` (lo comparten `formularios-notify` y las alarmas de reputación: la API ignora lo que no es un evento de SES) |
+| Sandbox de SES | Sí, hasta que AWS apruebe el caso 179115865500671: solo entrega a direcciones verificadas |
+
+**Dev** (`infra/dev`): `SES_CONFIGURATION_SET` y `SES_SNS_TOPIC_ARNS` son parámetros de SSM en Terraform. `SMTP_URL`
+lo carga `scripts/set-dev-smtp.sh` desde el CSV de credenciales SMTP de SES. Con `DEV_MAILBOX=true` el correo va al
+buzón y además sale por SES; si SES lo rechaza (sandbox), queda solo en el buzón. La suscripción HTTPS de
+`ses-notifications` a `https://dev.calasign.com/v1/integrations/ses/sns` se crea después del deploy (con el tema ya en
+`SES_SNS_TOPIC_ARNS`, si no la confirmación se rechaza con 403).
 
 ## Qué hace la API
 

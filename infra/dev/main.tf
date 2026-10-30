@@ -175,6 +175,26 @@ resource "aws_ssm_parameter" "seal_chain" {
   }
 }
 
+# ───────────── Correo (Amazon SES) ─────────────
+#
+# SES no vive en esta organización: está en la cuenta 006121953992, región us-east-2, donde están verificados
+# calasign.com (DKIM, MAIL FROM bounce.calasign.com), el configuration set calasign-notify y el tema SNS de rebotes
+# y quejas. Ver docs/CORREO-REBOTES.md, sección «Dónde está SES hoy».
+# SMTP_URL (secreto) no va acá: lo carga scripts/set-dev-smtp.sh desde el CSV de credenciales SMTP de SES, para que la
+# contraseña no quede en el estado local de Terraform. Los parámetros llegan a secrets.env en el próximo deploy.
+
+resource "aws_ssm_parameter" "ses_configuration_set" {
+  name  = "/calasign-saas/dev/SES_CONFIGURATION_SET"
+  type  = "String"
+  value = "calasign-notify"
+}
+
+resource "aws_ssm_parameter" "ses_sns_topic_arns" {
+  name  = "/calasign-saas/dev/SES_SNS_TOPIC_ARNS"
+  type  = "String"
+  value = "arn:aws:sns:us-east-2:006121953992:ses-notifications"
+}
+
 # ───────────── Cómputo ─────────────
 
 resource "aws_iam_role" "app" {

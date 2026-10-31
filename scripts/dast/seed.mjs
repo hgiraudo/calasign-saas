@@ -33,7 +33,7 @@ await api("POST", "/v1/auth/signup", {
   locale: "es",
 });
 const { secret } = await api("POST", "/v1/api-keys", { name: "zap" });
-// Un sobre y una plantilla, para que el escaneo tenga algo real detrás de las rutas con id.
+// Un sobre, para que el escaneo tenga algo real detrás de las rutas con id.
 const env = await api("POST", "/v1/envelopes", { subject: "DAST" }).catch(() => null);
 writeFileSync(join(dir, "auth.json"), JSON.stringify({ apiKey: secret, cookie, envelopeId: env?.id ?? null }));
 console.log(`cuenta de ZAP creada${env?.id ? ` (sobre ${env.id})` : ""}`);

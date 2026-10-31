@@ -891,6 +891,23 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     ],
     // Tokens de vinculación de Telegram (30 minutos): vencidos hace más de un día ya no hacen falta.
     ["telegram-link-tokens", () => d.db.query(`DELETE FROM telegram_link_tokens WHERE expires_at < now() - interval '1 day'`)],
+    // Pases de firma del celular (0124): la imagen que llegó y no se adoptó es un dato personal que solo sirve mientras
+    // ese firmante puede firmar. Si el sobre ya no está en curso (anulado, rechazado, vencido, completado), el firmante
+    // ya firmó o rechazó, o su link cambió, se borra en la pasada siguiente y no espera los 7 días de abajo.
+    [
+      "signature-handoff-images",
+      () =>
+        d.db.query(
+          `UPDATE signature_handoffs SET image_png = NULL WHERE id IN (
+             SELECT h.id FROM signature_handoffs h
+               JOIN envelopes e ON e.id = h.envelope_id
+               JOIN recipients r ON r.id = h.recipient_id
+              WHERE h.image_png IS NOT NULL
+                AND (e.status <> 'sent' OR e.expires_at <= now() OR r.status NOT IN ('sent', 'viewed')
+                     OR r.access_token_hash IS DISTINCT FROM h.access_token_hash)
+              LIMIT 5000)`,
+        ),
+    ],
     // Pases de firma del celular (0124, 10 minutos): los envíos del link (topes diarios por destino, que se borran en
     // cascada) no hacen falta pasado un día. Una imagen que llegó y todavía no se adoptó espera 7 días: la pestaña de la
     // computadora puede quedar abierta de un día para el otro y /complete la sigue aceptando. De a 5000 por pasada.

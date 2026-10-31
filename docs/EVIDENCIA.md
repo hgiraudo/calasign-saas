@@ -68,7 +68,9 @@ Las raíces de confianza son las de `TRUST_STORE_DIR` (solo certificados autofir
 raíz, los PDF sellados antes dejan de figurar como confiables (`chain.trusted: false`) salvo que la raíz anterior esté
 en el almacén: antes de cambiar `SEAL_CHAIN_FILE`, copiar la raíz de la cadena vieja (PEM o DER) a `TRUST_STORE_DIR` y
 mantenerla ahí mientras haya PDF sellados con ella. Las raíces se leen una vez por proceso: reiniciar la API después
-de agregarlas.
+de agregarlas. La cadena del sello también se lee una vez por proceso: la lista de certificados de confianza para
+Acrobat (`GET /v1/public/trust-certificates`) pasa a la raíz nueva cuando la API se reinicia con el `SEAL_CHAIN_FILE`
+nuevo, igual que el sellado.
 
 Al sellar se comprueba cada firma con la clave pública del primer certificado de la cadena (`buildPadesCms`): si la
 clave (`SEAL_KEY_FILE` o `KMS_KEY_ID`) no corresponde a `SEAL_CHAIN_FILE` —por ejemplo, se rotó una y no la otra—, el

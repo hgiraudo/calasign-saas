@@ -21,6 +21,30 @@ type State =
 /** Tope del lienzo en píxeles reales (ancho × alto × densidad): un celular con DPR 3 y pantalla grande no se pasa. */
 const MAX_CANVAS_PIXELS = 6_000_000;
 
+/**
+ * Pasa lo visible del lienzo al trazo completo (`ink`) y lo devuelve: lo visible manda en su franja (incluye lo dibujado
+ * y lo borrado desde la última vez) y lo que quedó debajo del alto actual se conserva.
+ */
+function syncInk(c: HTMLCanvasElement, ink: { current: HTMLCanvasElement | null }): HTMLCanvasElement {
+  let full = ink.current;
+  if (!full || full.width !== c.width) {
+    full = document.createElement("canvas");
+    full.width = c.width;
+    full.height = c.height;
+  } else if (full.height < c.height) {
+    const grown = document.createElement("canvas");
+    grown.width = full.width;
+    grown.height = c.height;
+    grown.getContext("2d")?.drawImage(full, 0, 0);
+    full = grown;
+  }
+  const ctx = full.getContext("2d");
+  ctx?.clearRect(0, 0, c.width, c.height);
+  ctx?.drawImage(c, 0, 0);
+  ink.current = full;
+  return full;
+}
+
 export function SignatureHandoffPage() {
   const { token = "" } = useParams();
   const gx = useSignatureText();
@@ -98,40 +122,48 @@ function HandoffCanvas({
   const ref = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const last = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * El trazo completo, aunque el lienzo visible se achique: cuando aparece la barra del navegador el alto baja y la parte
+   * de abajo de la firma deja de verse, pero no se pierde (vuelve cuando el alto crece y se envía entera).
+   */
+  const ink = useRef<HTMLCanvasElement | null>(null);
+  /** Ancho en pantalla y densidad con que se dimensionó el lienzo: sólo un cambio de ancho los recalcula. */
+  const layout = useRef<{ cssWidth: number; dpr: number } | null>(null);
   const [hasInk, setHasInk] = useState(false);
-  const [tooShort, setTooShort] = useState(false);
+  const [problem, setProblem] = useState<"tooShort" | "tooLarge" | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Resolución real del lienzo = tamaño en pantalla × densidad (si no, el trazo se ve borroso en un celular). Al girar
-  // el celular cambia el tamaño: se ajusta y se borra (redibujar estirado deformaría la firma).
+  // el celular cambia el ancho: se ajusta y se borra (redibujar estirado deformaría la firma). Si sólo cambia el alto (la
+  // barra del navegador aparece o se esconde al mover la página, y el lienzo ocupa el alto visible), la densidad queda
+  // como estaba —con el tope de píxeles dependía del alto y cambiaba también el ancho— y el trazo se conserva entero.
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
     const fit = () => {
       const r = c.getBoundingClientRect();
+      const cssWidth = Math.round(r.width);
+      const sameWidth = layout.current?.cssWidth === cssWidth && c.width > 0;
       let dpr = window.devicePixelRatio || 1;
-      if (r.width * r.height * dpr * dpr > MAX_CANVAS_PIXELS) dpr = Math.sqrt(MAX_CANVAS_PIXELS / (r.width * r.height));
-      const w = Math.max(1, Math.round(r.width * dpr));
+      if (sameWidth) dpr = layout.current!.dpr;
+      else if (r.width * r.height * dpr * dpr > MAX_CANVAS_PIXELS) dpr = Math.sqrt(MAX_CANVAS_PIXELS / (r.width * r.height));
       const h = Math.max(1, Math.round(r.height * dpr));
-      if (c.width === w && c.height === h) return;
-      // Sólo cambió el alto (la barra del navegador del celular aparece o se esconde al mover la página, y el lienzo
-      // ocupa el alto visible): el trazo se conserva en su lugar, sin estirarlo. Girar el celular cambia el ancho: se borra.
-      let keep: HTMLCanvasElement | null = null;
-      if (c.width === w && c.height > 0) {
-        keep = document.createElement("canvas");
-        keep.width = c.width;
-        keep.height = c.height;
-        keep.getContext("2d")?.drawImage(c, 0, 0);
-      }
-      c.width = w;
-      c.height = h;
-      if (keep) {
-        c.getContext("2d")?.drawImage(keep, 0, 0);
+      if (sameWidth) {
+        if (c.height === h) return;
+        const full = syncInk(c, ink);
+        c.height = h;
+        c.getContext("2d")?.drawImage(full, 0, 0);
         return;
       }
+      const w = Math.max(1, Math.round(r.width * dpr));
+      layout.current = { cssWidth, dpr };
+      if (c.width === w && c.height === h) return;
+      ink.current = null;
+      c.width = w;
+      c.height = h;
       setHasInk(false);
-      setTooShort(false);
+      setProblem(null);
     };
     fit();
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(fit) : null;
@@ -187,21 +219,24 @@ function HandoffCanvas({
   const clear = () => {
     const c = ref.current;
     c?.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+    ink.current = null;
     setHasInk(false);
-    setTooShort(false);
+    setProblem(null);
     setError(null);
   };
 
   const send = async () => {
     const c = ref.current;
     if (!c || sending) return;
-    // Recortada y achicada al tamaño de la firma dibujada en la computadora (720 × 240), con el criterio de tinta de la API.
-    const trimmed = trimCanvas(c);
+    // El trazo completo (también lo que la barra del navegador tapa ahora), recortado y achicado al tamaño de la firma
+    // dibujada en la computadora (720 × 240), con el criterio de tinta de la API.
+    const trimmed = trimCanvas(syncInk(c, ink));
     const out = trimmed ? fitCanvas(trimmed) : null;
-    if (!out || inkPixels(out) < MIN_INK_PIXELS) return setTooShort(true);
+    if (!out || inkPixels(out) < MIN_INK_PIXELS) return setProblem("tooShort");
     const { imagePng } = canvasPng(out);
-    if (base64Bytes(imagePng) > SIGNATURE_PNG_MAX_BYTES) return setTooShort(true);
-    setTooShort(false);
+    // Demasiado pesada (muchísimos trazos): pedir que dibuje más no sirve, hay que simplificarla.
+    if (base64Bytes(imagePng) > SIGNATURE_PNG_MAX_BYTES) return setProblem("tooLarge");
+    setProblem(null);
     setSending(true);
     setError(null);
     try {
@@ -229,9 +264,9 @@ function HandoffCanvas({
         onPointerUp={onUp}
         onPointerCancel={onUp}
       />
-      {tooShort && (
+      {problem && (
         <p className="small warn-text" role="status">
-          {gx("handoff.tooShort")}
+          {gx(problem === "tooLarge" ? "handoff.tooLarge" : "handoff.tooShort")}
         </p>
       )}
       {error && (

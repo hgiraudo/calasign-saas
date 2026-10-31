@@ -202,4 +202,49 @@ describe("huso horario de la organización", () => {
     );
     expect(f!.value).toBe("04/03/2026 UTC−03:00");
   }, 60_000);
+
+  it("formatear muchas horas en un huso no crea un Intl.DateTimeFormat por hora (el certificado formatea una por evento)", async () => {
+    const { formatDateTimeInZone } = await import("@calasign/shared");
+    const Real = Intl.DateTimeFormat;
+    let created = 0;
+    const Counting = function (this: unknown, ...args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+      created++;
+      return new Real(...args);
+    } as unknown as typeof Intl.DateTimeFormat;
+    Object.assign(Counting, Real);
+    Intl.DateTimeFormat = Counting;
+    try {
+      const tz = "America/Sao_Paulo";
+      const first = formatDateTimeInZone(new Date("2026-03-05T01:30:00Z"), tz);
+      for (let i = 0; i < 50; i++) formatDateTimeInZone(new Date(Date.UTC(2026, 2, 5, 1, i)), tz);
+      expect(first).toBe("2026-03-04 22:30:00 UTC−03:00");
+      expect(created).toBeLessThanOrEqual(2);
+    } finally {
+      Intl.DateTimeFormat = Real;
+    }
+  });
+
+  it("una firma sin huso registrado y anterior al huso de la organización se rotula en UTC (se escribió en UTC)", async () => {
+    const { toStampFields } = await import("../src/modules/stamp-fields");
+    const field = (recipient_id: string) => ({
+      document_id: "d",
+      page: 0,
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      recipient_id,
+      type: "date_signed",
+      value: "28/10/2026",
+      read_only: false,
+    });
+    const moments = new Map([
+      // Firmada el 28-Oct, cuando la fecha se escribía en UTC y el evento no guardaba el huso.
+      ["viejo", { at: new Date("2026-10-28T15:00:00Z"), timeZone: null }],
+      // Firmada entre e9b8470 y 58a9e34: ya en el huso de la organización, pero sin registrarlo.
+      ["nuevo", { at: new Date("2026-10-30T12:00:00Z"), timeZone: null }],
+    ]);
+    const out = toStampFields([field("viejo"), field("nuevo")], [{ id: "d" }], new Map(), "America/Argentina/Buenos_Aires", moments);
+    expect(out.map((f) => f.value)).toEqual(["28/10/2026 UTC", "28/10/2026 UTC−03:00"]);
+  });
 });

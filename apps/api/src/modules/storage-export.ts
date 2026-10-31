@@ -318,8 +318,10 @@ export interface UploadOpts {
   /**
    * Re-exportación tras una renovación del sello: la copia que dejó la exportación anterior se reemplaza (nueva versión
    * del mismo archivo; Dropbox, OneDrive, SharePoint y Box guardan el historial) en lugar de sumar una «X (1).pdf» al
-   * lado, que dejaba a la vista la del sello que vence. `ref` es el remote_ref de esa exportación (Dropbox lo usa como
-   * ruta: si aquella copia había quedado renombrada, se reemplaza esa).
+   * lado, que dejaba a la vista la del sello que vence. `ref` es la referencia que devolvió la subida anterior de ESE
+   * archivo (remote_ref para el PDF, evidence_ref para la evidencia). Solo se pisa el archivo que esa referencia
+   * identifica: si aquella copia quedó renombrada porque el nombre ya lo tenía un archivo del cliente, el del cliente no
+   * se toca. Si no se puede ubicar (se borró, o la referencia no alcanza para saber cuál es), se sube una copia nueva.
    */
   replace?: { ref: string | null };
 }
@@ -669,8 +671,9 @@ export async function uploadDropbox(
       if (meta?.[".tag"] === "file" && meta.content_hash === mine) return { ref: `dropbox:${meta.path_display ?? p}`, creds: updated ?? undefined };
     }
   }
-  // Renovación del sello: se pisa la copia propia de la exportación anterior (Dropbox guarda la versión vieja).
-  const replacePath = opts?.replace ? (opts.replace.ref?.startsWith("dropbox:") && opts.kind === "pdf" ? opts.replace.ref.slice(8) : path) : null;
+  // Renovación del sello: se pisa la copia propia de la exportación anterior, en la ruta que devolvió su subida (Dropbox
+  // guarda la versión vieja). Nunca la ruta del nombre actual: ahí puede haber un archivo del cliente.
+  const replacePath = opts?.replace?.ref?.startsWith("dropbox:") ? opts.replace.ref.slice(8) : null;
   // Dropbox-API-Arg viaja en un header: los caracteres no ASCII van escapados.
   const arg = JSON.stringify(
     replacePath ? { path: replacePath, mode: "overwrite", autorename: false, mute: true } : { path, mode: "add", autorename: true, mute: true },
@@ -830,9 +833,28 @@ export async function resolveSharepointDrive(
 }
 
 /**
+ * Id del archivo de Graph que dejó la exportación anterior (renovación del sello): de la referencia «onedrive:<id>» o
+ * «sharepoint:<id>», o, si la referencia es el webUrl, del archivo que hoy está en `path` siempre que tenga ese mismo
+ * webUrl. null si no se puede saber cuál es: entonces se sube una copia nueva en lugar de pisar uno que puede ser ajeno.
+ */
+async function graphPreviousItemId(token: string, driveBase: string, path: string, ref: string | null, what: string): Promise<string | null> {
+  if (!ref) return null;
+  const byId = /^(onedrive|sharepoint):(.+)$/.exec(ref);
+  if (byId) return byId[2]!;
+  const res = await fetch(`${driveBase}/root:/${path}?$select=id,webUrl,file`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.status === 404) return null;
+  const item = (await (await check(res, `buscar exportación previa en ${what}`)).json()) as { id?: string; webUrl?: string; file?: unknown };
+  return item?.file && item.id && item.webUrl === ref ? String(item.id) : null;
+}
+
+/**
  * Subida a un drive de Graph (OneDrive del usuario o biblioteca de SharePoint). En un reintento se busca por ruta lo que
  * un intento anterior pudo haber subido (nombre actual y el del formato anterior) y, si tiene los mismos bytes (hash de
- * Graph), se reutiliza en lugar de subir una copia "(1)" con conflictBehavior=rename.
+ * Graph), se reutiliza en lugar de subir una copia "(1)" con conflictBehavior=rename. En la renovación del sello se sube
+ * una versión nueva del archivo de la exportación anterior, por su id (graphPreviousItemId).
  */
 async function graphUpload(
   token: string,
@@ -860,34 +882,49 @@ async function graphUpload(
       if (prev?.file && Number(prev.size) === bytes.length && graphSameContent(prev, bytes)) return prev;
     }
   }
-  // Renovación del sello: nueva versión del archivo de la exportación anterior (mismo nombre), no una copia «(1)».
-  const conflict = opts?.replace ? "replace" : "rename";
+  // Renovación del sello: nueva versión del archivo de la exportación anterior (por su id), no una copia «(1)». Si no
+  // se ubica, o ya no existe (404), se sube por nombre con rename, como una exportación nueva.
+  const prevId = opts?.replace ? await graphPreviousItemId(token, driveBase, path, opts.replace.ref, what) : null;
+  if (prevId) {
+    const item = await graphPut(`${driveBase}/items/${encodeURIComponent(prevId)}`, true, auth, bytes, contentType, what);
+    if (item) return item;
+  }
+  return graphPut(`${driveBase}/root:/${path}:`, false, auth, bytes, contentType, what);
+}
+
+/**
+ * Sube los bytes al destino de Graph: `byId`, una versión nueva del archivo «…/items/<id>» (null si ya no existe, para
+ * que quien llama suba por nombre); si no, un archivo en «…/root:/<ruta>:» con rename si el nombre está ocupado.
+ */
+async function graphPut(
+  target: string,
+  byId: boolean,
+  auth: { authorization: string },
+  bytes: Uint8Array,
+  contentType: string,
+  what: string,
+): Promise<any> {
+  const conflict = byId ? "replace" : "rename";
   let item: any;
   if (bytes.length <= 4 * 1024 * 1024) {
-    item = await (
-      await check(
-        await fetch(`${driveBase}/root:/${path}:/content?@microsoft.graph.conflictBehavior=${conflict}`, {
-          method: "PUT",
-          headers: { ...auth, "content-type": contentType },
-          body: Buffer.from(bytes),
-          signal: AbortSignal.timeout(60_000),
-        }),
-        `subir a ${what}`,
-      )
-    ).json();
+    const res = await fetch(`${target}/content?@microsoft.graph.conflictBehavior=${conflict}`, {
+      method: "PUT",
+      headers: { ...auth, "content-type": contentType },
+      body: Buffer.from(bytes),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (byId && res.status === 404) return null;
+    item = await (await check(res, `subir a ${what}`)).json();
   } else {
     // Archivos grandes: sesión de carga en partes de 5 MiB (múltiplo de 320 KiB).
-    const session: any = await (
-      await check(
-        await fetch(`${driveBase}/root:/${path}:/createUploadSession`, {
-          method: "POST",
-          headers: { ...auth, "content-type": "application/json" },
-          body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": conflict } }),
-          signal: AbortSignal.timeout(15_000),
-        }),
-        `sesión de carga ${what}`,
-      )
-    ).json();
+    const res = await fetch(`${target}/createUploadSession`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": conflict } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (byId && res.status === 404) return null;
+    const session = (await (await check(res, `sesión de carga ${what}`)).json()) as { uploadUrl: string };
     const CHUNK = 16 * 320 * 1024;
     for (let off = 0; off < bytes.length; off += CHUNK) {
       const end = Math.min(off + CHUNK, bytes.length);
@@ -948,6 +985,29 @@ export async function uploadBox(
     folderId = cfg.folder ? await ensureBoxFolder(token, String(cfg.folder)) : "0";
     newCfg.folderId = folderId;
   }
+  const done = (id: string): UploadResult => ({
+    ref: `box:${id}`,
+    creds: updated ?? undefined,
+    config: Object.keys(newCfg).length ? newCfg : undefined,
+  });
+  // Renovación del sello: nueva versión del archivo de la exportación anterior, por su id (Box guarda la vieja). Solo
+  // ese: si el nombre lo tiene otro archivo (del cliente), no se toca. Si ya no existe (404), se sube como uno nuevo.
+  const prevId = opts?.replace?.ref?.startsWith("box:") ? opts.replace.ref.slice(4) : null;
+  if (prevId) {
+    const form = new FormData();
+    form.append("attributes", JSON.stringify({}));
+    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }), name);
+    const v = await fetch(`${BOX_UPLOAD()}/api/2.0/files/${encodeURIComponent(prevId)}/content?fields=id,name`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (v.status !== 404) {
+      const vb = (await (await check(v, "subir versión a Box")).json()) as { id?: string; entries?: { id?: string }[] };
+      return done(String((vb?.entries?.[0] ?? vb)?.id ?? prevId));
+    }
+  }
   const put = async (fileName: string) => {
     const form = new FormData();
     form.append("attributes", JSON.stringify({ name: fileName, parent: { id: folderId } }));
@@ -975,28 +1035,13 @@ export async function uploadBox(
     const c = b?.context_info?.conflicts;
     const existing = Array.isArray(c) ? c[0] : c;
     if (existing?.id && typeof existing.sha1 === "string" && existing.sha1.toLowerCase() === createHash("sha1").update(bytes).digest("hex")) {
-      return { ref: `box:${existing.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
-    }
-    // Renovación del sello: nueva versión del archivo de la exportación anterior (Box guarda la vieja), no otra copia.
-    if (opts?.replace && existing?.id) {
-      const form = new FormData();
-      form.append("attributes", JSON.stringify({ name }));
-      form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }), name);
-      const v = await fetch(`${BOX_UPLOAD()}/api/2.0/files/${encodeURIComponent(String(existing.id))}/content?fields=id,name`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}` },
-        body: form,
-        signal: AbortSignal.timeout(60_000),
-      });
-      const vb = (await (await check(v, "subir versión a Box")).json()) as { id?: string; entries?: { id?: string }[] };
-      const vf = vb?.entries?.[0] ?? vb;
-      return { ref: `box:${vf?.id ?? existing.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
+      return done(String(existing.id));
     }
     res = await put(name.replace(/(\.[a-z0-9]+)$/i, ` (${Date.now().toString(36)})$1`));
   }
   const body: any = await (await check(res, "subir a Box")).json();
   const file = body?.entries?.[0] ?? body;
-  return { ref: `box:${file?.id ?? name}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
+  return done(String(file?.id ?? name));
 }
 
 interface S3Creds {
@@ -1143,8 +1188,11 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
     const prev = await db.one<any>(`SELECT pdf_ref, pdf_sha256 FROM storage_exports WHERE id = $1`, [ex.id]);
     if (prev?.pdf_ref && !exportIsCurrent(prev, e.sha256 ?? null)) prev.pdf_ref = null;
     let ref: string = prev?.pdf_ref ?? null;
-    // Ya hubo una exportación completa (remote_ref) y ahora se vuelve a subir: es la de una renovación del sello.
+    // Ya hubo una exportación completa (remote_ref) y ahora se vuelve a subir: es la de una renovación del sello. Cada
+    // archivo reemplaza el suyo (el PDF, remote_ref; la evidencia, evidence_ref). Una evidencia exportada antes de 0126
+    // no tiene referencia: se sube como una nueva, porque por nombre se podría pisar un archivo del cliente.
     const replace = ex.remote_ref ? { ref: String(ex.remote_ref) } : null;
+    const replaceEvidence = ex.remote_ref && ex.evidence_ref ? { ref: String(ex.evidence_ref) } : null;
     let pdfSha: string | null = prev?.pdf_ref ? (prev.pdf_sha256 ?? null) : null;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
@@ -1187,10 +1235,11 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
           kind: "evidence",
           retry,
           legacyName: `${legacySafeBaseName(e.subject, p.envelopeId)} - evidencia.json`,
-          ...(replace ? { replace } : {}),
+          ...(replaceEvidence ? { replace: replaceEvidence } : {}),
         },
       );
       await persistUpload(db, c.id, r2, cur.config?.folder);
+      await db.query(`UPDATE storage_exports SET evidence_ref = $2, updated_at = now() WHERE id = $1`, [ex.id, r2.ref]);
     }
     await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, ref]);
     await db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [c.id]);

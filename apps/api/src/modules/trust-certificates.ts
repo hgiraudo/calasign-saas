@@ -13,13 +13,14 @@ interface CaCert {
   info: TrustCertificate;
 }
 
-/** Atado a la cadena que devuelve el proveedor del sello: si cambia (sello renovado bajo otra CA), se recalcula. */
-let cache: { chain: Uint8Array[]; items: CaCert[] } | null = null;
-
-/** Las autoridades de la cadena del sello (sin el certificado del sello), de la raíz hacia abajo. */
+/**
+ * Las autoridades de la cadena del sello (sin el certificado del sello), de la raíz hacia abajo. Se arman en cada pedido
+ * desde la cadena del proveedor (son dos o tres certificados y la ruta tiene tope por IP), sin caché: la lista es
+ * siempre la de la cadena con la que se está sellando. El proveedor lee la cadena una vez por proceso (getSealProvider),
+ * así que una rotación del sello (otro SEAL_CHAIN_FILE) aparece al reiniciar la API, igual que en el sellado.
+ */
 export async function sealAuthorities(): Promise<CaCert[]> {
   const chain = await (await getSealProvider()).certificateChain();
-  if (cache?.chain === chain) return cache.items;
   const out: CaCert[] = [];
   for (const der of chain.slice(1)) {
     const c = parseCert(der);
@@ -40,7 +41,6 @@ export async function sealAuthorities(): Promise<CaCert[]> {
   }
   // La raíz primero: es la que se marca como de confianza en Acrobat.
   out.sort((a, b) => Number(b.info.root) - Number(a.info.root));
-  cache = { chain, items: out };
   return out;
 }
 

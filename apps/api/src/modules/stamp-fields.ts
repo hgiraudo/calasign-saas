@@ -1,7 +1,7 @@
 // Campos de un sobre listos para estampar en el PDF (con la imagen de firma/iniciales de cada destinatario).
 // Lo usan el sellado final y la copia en curso que puede bajar un firmante antes de que firmen todos.
 import type { StampField } from "@calasign/pdf";
-import { normalizeTimeZone, signingDateForDisplay } from "@calasign/shared";
+import { DEFAULT_TIME_ZONE, normalizeTimeZone, signingDateForDisplay } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 
@@ -36,7 +36,15 @@ export async function loadSigningMoments(db: Db, envelopeId: string): Promise<Si
 }
 
 /**
- * `timeZone`: el huso actual de la organización, para las fechas de firma sin huso registrado. `moments`: el instante y
+ * Desde e9b8470 (30-Oct-2026 01:29 UTC) la fecha de firma se escribe en el huso de la organización; antes, en UTC. Las
+ * firmas sin huso registrado (anteriores a 58a9e34) y previas a ese momento se rotulan en UTC aunque la organización
+ * haya configurado otro huso después: el rótulo describe cómo se escribió la fecha, no el huso de hoy.
+ */
+const ZONED_SIGNING_DATES_SINCE = Date.parse("2026-10-30T01:29:32Z");
+
+/**
+ * `timeZone`: el huso actual de la organización, para las fechas de firma sin huso registrado escritas después de
+ * ZONED_SIGNING_DATES_SINCE (y las de una firma que todavía no figura en `moments`). `moments`: el instante y
  * el huso de cada firma; la fecha guardada se escribió en ese huso y su desfase es el de ese día (si la organización
  * cambió de huso, o pasó a horario de verano, entre la firma y el sellado, el rótulo sigue siendo el de la firma).
  */
@@ -50,7 +58,8 @@ export function toStampFields(
   const docIndex = new Map(docs.map((x, i) => [x.id, i]));
   const dateLabel = (f: { recipient_id: string; value: string }) => {
     const m = moments.get(f.recipient_id);
-    return signingDateForDisplay(f.value, m?.timeZone ? normalizeTimeZone(m.timeZone) : timeZone, m?.at);
+    const zone = m?.timeZone ? normalizeTimeZone(m.timeZone) : m && m.at.getTime() < ZONED_SIGNING_DATES_SINCE ? DEFAULT_TIME_ZONE : timeZone;
+    return signingDateForDisplay(f.value, zone, m?.at);
   };
   return fields.map((f) => ({
     documentIndex: docIndex.get(f.document_id)!,

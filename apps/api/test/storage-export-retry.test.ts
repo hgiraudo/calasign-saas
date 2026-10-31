@@ -327,7 +327,7 @@ describe("renovación del sello: la copia anterior se reemplaza, no se duplica",
   const bytes = new TextEncoder().encode("%PDF-renovado");
   const base = { envelopeId: "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000", kind: "pdf" as const, retry: false };
 
-  it("Dropbox: overwrite sobre la ruta de la exportación anterior (aunque haya quedado renombrada)", async () => {
+  it("Dropbox: overwrite sobre la ruta de la exportación anterior (aunque haya quedado renombrada), nunca sobre el nombre actual", async () => {
     const calls = mockFetch(() => json(200, { path_display: "/F/C (1).pdf" }));
     const r = await uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
       ...base,
@@ -339,40 +339,118 @@ describe("renovación del sello: la copia anterior se reemplaza, no se duplica",
       autorename: false,
     });
     expect(r.ref).toBe("dropbox:/F/C (1).pdf");
-    // La evidencia no tiene ref propio: se reemplaza por nombre.
-    const ev = mockFetch(() => json(200, { path_display: "/F/C - evidencia.json" }));
+    // La evidencia, con su propia referencia: se pisa esa ruta.
+    const ev = mockFetch(() => json(200, { path_display: "/F/C - evidencia (1).json" }));
     await uploadDropbox(creds, { folder: "F" }, "C - evidencia.json", bytes, "application/json", undefined, {
       ...base,
       kind: "evidence",
-      replace: { ref: "dropbox:/F/C (1).pdf" },
+      replace: { ref: "dropbox:/F/C - evidencia (1).json" },
     });
-    expect(JSON.parse(String((ev[0].init.headers as any)["dropbox-api-arg"]))).toMatchObject({ path: "/F/C - evidencia.json", mode: "overwrite" });
+    expect(JSON.parse(String((ev[0].init.headers as any)["dropbox-api-arg"]))).toMatchObject({
+      path: "/F/C - evidencia (1).json",
+      mode: "overwrite",
+    });
+    // Sin referencia de Dropbox (evidencia exportada antes de 0126): «C - evidencia.json» puede ser del cliente, se agrega.
+    const legacy = mockFetch(() => json(200, { path_display: "/F/C - evidencia (1).json" }));
+    await uploadDropbox(creds, { folder: "F" }, "C - evidencia.json", bytes, "application/json", undefined, {
+      ...base,
+      kind: "evidence",
+      replace: { ref: null },
+    });
+    expect(JSON.parse(String((legacy[0].init.headers as any)["dropbox-api-arg"]))).toMatchObject({
+      path: "/F/C - evidencia.json",
+      mode: "add",
+      autorename: true,
+    });
   });
 
-  it("OneDrive/SharePoint: conflictBehavior=replace (también en la sesión de carga de archivos grandes)", async () => {
-    const { uploadOnedrive } = await import("../src/modules/storage-export");
-    let calls = mockFetch(() => json(200, { id: "o1", webUrl: "https://od/o1" }));
-    await uploadOnedrive(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, { ...base, replace: { ref: "https://od/o1" } });
-    expect(calls.find((c) => c.init.method === "PUT")!.url).toContain("conflictBehavior=replace");
+  it("OneDrive/SharePoint: versión nueva del archivo de la exportación anterior, por su id (también en archivos grandes)", async () => {
+    const { uploadOnedrive, uploadSharepoint } = await import("../src/modules/storage-export");
+    // En «C.pdf» está la copia exportada (mismo webUrl que quedó anotado).
+    let calls = mockFetch((url, init) =>
+      init.method === "PUT" ? json(200, { id: "o1", webUrl: "https://od/F/C.pdf" }) : json(200, { id: "o1", webUrl: "https://od/F/C.pdf", file: {} }),
+    );
+    await uploadOnedrive(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, { ...base, replace: { ref: "https://od/F/C.pdf" } });
+    const put = calls.find((c) => c.init.method === "PUT")!;
+    expect(put.url).toContain("/me/drive/items/o1/content");
+    expect(put.url).toContain("conflictBehavior=replace");
     const big = new Uint8Array(4 * 1024 * 1024 + 1);
-    calls = mockFetch((url) => (url.endsWith("createUploadSession") ? json(200, { uploadUrl: "https://up/s" }) : json(201, { id: "o1" })));
-    await uploadOnedrive(creds, { folder: "F" }, "C.pdf", big, "application/pdf", undefined, { ...base, replace: { ref: "https://od/o1" } });
+    calls = mockFetch((url, init) =>
+      url.endsWith("createUploadSession")
+        ? json(200, { uploadUrl: "https://up/s" })
+        : init.method === "PUT"
+          ? json(201, { id: "s9" })
+          : json(404, "no"),
+    );
+    await uploadSharepoint(creds, { folder: "F", driveId: "d1" }, "C.pdf", big, "application/pdf", undefined, {
+      ...base,
+      replace: { ref: "sharepoint:s9" },
+    });
     const session = calls.find((c) => c.url.endsWith("createUploadSession"))!;
+    expect(session.url).toContain("/drives/d1/items/s9/createUploadSession");
     expect(JSON.parse(String(session.init.body)).item["@microsoft.graph.conflictBehavior"]).toBe("replace");
   });
 
-  it("Box: con el nombre ocupado por la copia anterior, sube una versión nueva de ese archivo", async () => {
-    const { uploadBox } = await import("../src/modules/storage-export");
-    let n = 0;
-    const calls = mockFetch(() =>
-      n++ === 0 ? json(409, { context_info: { conflicts: [{ id: "77", sha1: "viejo" }] } }) : json(201, { entries: [{ id: "77" }] }),
+  it("OneDrive: si la copia exportada había quedado renombrada, el archivo del cliente con el nombre actual no se pisa", async () => {
+    const { uploadOnedrive } = await import("../src/modules/storage-export");
+    // «C.pdf» es del cliente (otro webUrl); la exportación original quedó como «C 1.pdf».
+    const calls = mockFetch((url, init) =>
+      init.method === "PUT"
+        ? json(201, { id: "n2", webUrl: "https://od/F/C 2.pdf" })
+        : json(200, { id: "cliente", webUrl: "https://od/F/C.pdf", file: {} }),
     );
+    const r = await uploadOnedrive(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
+      ...base,
+      replace: { ref: "https://od/F/C 1.pdf" },
+    });
+    const puts = calls.filter((c) => c.init.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0].url).toContain("/root:/F/C.pdf:/content");
+    expect(puts[0].url).toContain("conflictBehavior=rename");
+    expect(calls.some((c) => c.url.includes("/items/cliente"))).toBe(false);
+    expect(r.ref).toBe("https://od/F/C 2.pdf");
+  });
+
+  it("OneDrive: si el archivo de la exportación anterior ya no existe, se sube uno nuevo con rename", async () => {
+    const { uploadOnedrive } = await import("../src/modules/storage-export");
+    const calls = mockFetch((url) => (url.includes("/items/o1/") ? json(404, "no") : json(201, { id: "o2", webUrl: "https://od/F/C.pdf" })));
+    const r = await uploadOnedrive(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
+      ...base,
+      replace: { ref: "onedrive:o1" },
+    });
+    expect(calls.map((c) => c.url)).toEqual([
+      expect.stringContaining("/items/o1/content"),
+      expect.stringMatching(/\/root:\/F\/C\.pdf:\/content\?@microsoft\.graph\.conflictBehavior=rename$/),
+    ]);
+    expect(r.ref).toBe("https://od/F/C.pdf");
+  });
+
+  it("Box: versión nueva del archivo de la exportación anterior, por su id", async () => {
+    const { uploadBox } = await import("../src/modules/storage-export");
+    const calls = mockFetch(() => json(201, { entries: [{ id: "77" }] }));
     const r = await uploadBox(creds, { folderId: "5", folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
       ...base,
       replace: { ref: "box:77" },
     });
     expect(r.ref).toBe("box:77");
-    expect(calls).toHaveLength(2);
-    expect(calls[1].url).toContain("/api/2.0/files/77/content");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/api/2.0/files/77/content");
+  });
+
+  it("Box: con el nombre ocupado por otro archivo (del cliente), no le sube una versión: agrega un sufijo", async () => {
+    const { uploadBox } = await import("../src/modules/storage-export");
+    // La copia anterior (77) se borró; «C.pdf» es del cliente (88).
+    let uploads = 0;
+    const calls = mockFetch((url) => {
+      if (url.includes("/files/77/")) return json(404, "no");
+      return uploads++ === 0 ? json(409, { context_info: { conflicts: [{ id: "88", sha1: "otro" }] } }) : json(201, { entries: [{ id: "99" }] });
+    });
+    const r = await uploadBox(creds, { folderId: "5", folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, {
+      ...base,
+      replace: { ref: "box:77" },
+    });
+    expect(calls.some((c) => c.url.includes("/files/88/"))).toBe(false);
+    expect(calls).toHaveLength(3);
+    expect(r.ref).toBe("box:99");
   });
 });

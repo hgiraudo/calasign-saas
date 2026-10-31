@@ -202,6 +202,30 @@ describe("enviar con X-Expected-Updated-At", () => {
   });
 });
 
+describe("compartidos de otra organización", () => {
+  it("GET y PUT de los grupos de un sobre o una plantilla ajenos dan 404, sin nombres de grupos ajenos", async () => {
+    const { uuidv7 } = await import("../src/lib/util");
+    const other = uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Ajena')`, [other, `o-${other.slice(-8)}`]);
+    const group = uuidv7();
+    await db.query(`INSERT INTO groups (id, tenant_id, name) VALUES ($1, $2, 'Directorio ajeno')`, [group, other]);
+    const env = uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Ajeno', 'draft')`, [env, other]);
+    await db.query(`INSERT INTO envelope_shares (envelope_id, group_id) VALUES ($1, $2)`, [env, group]);
+    const tpl = uuidv7();
+    await db.query(`INSERT INTO templates (id, tenant_id, name) VALUES ($1, $2, 'Ajena')`, [tpl, other]);
+    await db.query(`INSERT INTO template_shares (template_id, group_id) VALUES ($1, $2)`, [tpl, group]);
+    for (const url of [`/v1/envelopes/${env}/shares`, `/v1/templates/${tpl}/shares`]) {
+      const r = await app.inject({ method: "GET", url, headers: auth });
+      expect(r.statusCode, url).toBe(404);
+      expect(r.body).not.toContain("Directorio ajeno");
+    }
+    const put = await app.inject({ method: "PUT", url: `/v1/envelopes/${env}/shares`, headers: auth, payload: { groupIds: [] } });
+    expect(put.statusCode).toBe(404);
+    expect(await db.query(`SELECT 1 FROM envelope_shares WHERE envelope_id = $1`, [env])).toHaveLength(1);
+  });
+});
+
 describe("límite de pedidos por IP", () => {
   it("429 con código rate_limited, mensaje en español y Retry-After", async () => {
     let last = null as Awaited<ReturnType<App["inject"]>> | null;

@@ -346,10 +346,19 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
   app.get<P>("/v1/signing/:token/signature-handoffs/:id", pollRl, async (req) => {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     const h = await ownHandoff(s.db, r, e, req.params.id!);
-    const submitted = Boolean(h.submitted_at && h.image_png);
+    // Con el sobre anulado, vencido o rechazado (o el firmante ya sin turno), el pase no sirve más: «expired», como le
+    // responde el celular (410). Antes seguía en «pending» hasta los 10 minutos y los dos dispositivos se contradecían.
+    const usable = await assertCanPrepare(s.db, r, e).then(
+      () => true,
+      (err) => {
+        if (err instanceof AppError) return false;
+        throw err;
+      },
+    );
+    const submitted = usable && Boolean(h.submitted_at && h.image_png);
     const out: SignatureHandoffStatus = {
       id: h.id,
-      status: submitted ? "submitted" : !h.submitted_at && new Date(h.expires_at).getTime() > Date.now() ? "pending" : "expired",
+      status: submitted ? "submitted" : usable && !h.submitted_at && new Date(h.expires_at).getTime() > Date.now() ? "pending" : "expired",
       expiresAt: new Date(h.expires_at).toISOString(),
       imagePng: submitted ? h.image_png : null,
     };

@@ -142,4 +142,51 @@ test.describe("adoptar la firma: importar y celular", () => {
     expect(JSON.stringify(ev)).not.toContain(url.split("/h/")[1]);
     sinErrores();
   });
+
+  test("en el celular la firma no se recorta ni se borra cuando la barra del navegador cambia el alto", async ({ page, request, browser }) => {
+    const cuenta = await altaDeCuenta(request);
+    const sobre = await sobreEnviado(request, cuenta);
+    const pad = await abrirFirma(page, sobre.token, `Contrato web ${cuenta.stamp}`);
+    await pad.getByRole("tab", { name: "Dibujar" }).click();
+    await pad.getByRole("button", { name: "Dibujar en el celular" }).click();
+    const url = await pad.getByRole("textbox", { name: "Link para el celular" }).inputValue();
+
+    // Una tablet con densidad 3: el lienzo pasa el tope de píxeles y la densidad se recorta (antes dependía del alto).
+    const ctx = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 3, locale: "es-AR" });
+    const celular = await ctx.newPage();
+    const sinErroresCelular = vigilarErrores(celular);
+    await celular.goto(url);
+    const lienzo = celular.getByRole("img", { name: "Lienzo para dibujar la firma" });
+    await expect(lienzo).toBeVisible();
+    const caja = (await lienzo.boundingBox())!;
+    // Un trazo en la parte de abajo del lienzo (el 90 % del alto).
+    await celular.mouse.move(caja.x + caja.width * 0.2, caja.y + caja.height * 0.9);
+    await celular.mouse.down();
+    for (let i = 1; i <= 20; i++) await celular.mouse.move(caja.x + caja.width * (0.2 + i * 0.03), caja.y + caja.height * 0.9, { steps: 2 });
+    await celular.mouse.up();
+    /** Tamaño real del lienzo y si hay tinta en la franja de abajo (del 80 % al final del alto). */
+    const estado = () =>
+      celular.evaluate(() => {
+        const c = document.querySelector("canvas.handoff-canvas") as HTMLCanvasElement;
+        const y0 = Math.floor(c.height * 0.8);
+        const d = c.getContext("2d")!.getImageData(0, y0, c.width, c.height - y0).data;
+        let tinta = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i]! > 32) tinta++;
+        return { ancho: c.width, tinta };
+      });
+    const antes = await estado();
+    expect(antes.tinta).toBeGreaterThan(100);
+
+    // Aparece la barra del navegador (el alto visible baja) y después se esconde.
+    await celular.setViewportSize({ width: 1024, height: 1100 });
+    await expect.poll(async () => (await lienzo.boundingBox())!.height).toBeLessThan(caja.height - 50);
+    expect((await estado()).ancho).toBe(antes.ancho);
+    await celular.setViewportSize({ width: 1024, height: 1366 });
+    await expect.poll(async () => Math.round((await lienzo.boundingBox())!.height)).toBe(Math.round(caja.height));
+    const despues = await estado();
+    expect(despues.ancho).toBe(antes.ancho);
+    expect(despues.tinta).toBe(antes.tinta);
+    sinErroresCelular();
+    await ctx.close();
+  });
 });

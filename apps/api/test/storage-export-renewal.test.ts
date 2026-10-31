@@ -29,8 +29,10 @@ function mockDropbox() {
     if (url.endsWith("/files/get_metadata")) return new Response('{"error_summary":"path/not_found/"}', { status: 409 });
     if (url.endsWith("/files/upload")) {
       uploads.push(Buffer.from(init.body));
-      uploads.args!.push(JSON.parse(String(init.headers["dropbox-api-arg"])));
-      return new Response(JSON.stringify({ path_display: `/CalaSign/f${uploads.length}.pdf` }), { status: 200 });
+      const arg = JSON.parse(String(init.headers["dropbox-api-arg"]));
+      uploads.args!.push(arg);
+      const ext = String(arg.path).endsWith(".json") ? "json" : "pdf";
+      return new Response(JSON.stringify({ path_display: `/CalaSign/f${uploads.length}.${ext}` }), { status: 200 });
     }
     return new Response("inesperado", { status: 500 });
   }) as typeof fetch;
@@ -66,21 +68,27 @@ async function signedFile(envelopeId: string, content: string) {
 }
 
 /** Sobre completado, ya exportado a una conexión de Dropbox con el PDF original (pdfSha: lo que quedó anotado). */
-async function exportedEnvelope(opts: { active?: boolean; pdfSha?: "original" | null } = {}) {
+async function exportedEnvelope(opts: { active?: boolean; pdfSha?: "original" | null; evidenceRef?: string | null } = {}) {
   const env = util.uuidv7();
   await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1,$2,'Contrato','completed', now())`, [env, tenant]);
   const original = await signedFile(env, "original");
   await db.query(`UPDATE envelopes SET signed_file_id = $2 WHERE id = $1`, [env, original.id]);
   const conn = util.uuidv7();
   await db.query(
-    `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, active) VALUES ($1,$2,'dropbox','Dropbox','{"folder":"CalaSign"}',$3,$4)`,
-    [conn, tenant, util.encrypt(JSON.stringify({ access_token: "tok", expires_at: Date.now() + 3_600_000 })), opts.active ?? true],
+    `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, active) VALUES ($1,$2,'dropbox','Dropbox',$5,$3,$4)`,
+    [
+      conn,
+      tenant,
+      util.encrypt(JSON.stringify({ access_token: "tok", expires_at: Date.now() + 3_600_000 })),
+      opts.active ?? true,
+      JSON.stringify({ folder: "CalaSign", ...(opts.evidenceRef !== undefined ? { includeEvidence: true } : {}) }),
+    ],
   );
   const ex = util.uuidv7();
   await db.query(
-    `INSERT INTO storage_exports (id, tenant_id, connection_id, envelope_id, status, attempts, pdf_ref, pdf_sha256, remote_ref)
-     VALUES ($1,$2,$3,$4,'succeeded',1,'dropbox:/CalaSign/c.pdf',$5,'dropbox:/CalaSign/c.pdf')`,
-    [ex, tenant, conn, env, opts.pdfSha === null ? null : original.sha],
+    `INSERT INTO storage_exports (id, tenant_id, connection_id, envelope_id, status, attempts, pdf_ref, pdf_sha256, remote_ref, evidence_ref)
+     VALUES ($1,$2,$3,$4,'succeeded',1,'dropbox:/CalaSign/c.pdf',$5,'dropbox:/CalaSign/c.pdf',$6)`,
+    [ex, tenant, conn, env, opts.pdfSha === null ? null : original.sha, opts.evidenceRef ?? null],
   );
   return { env, conn, ex, original };
 }
@@ -107,7 +115,7 @@ const exportJobs = (env: string) =>
   db.query<{ dedupe_key: string; payload: any }>(`SELECT dedupe_key, payload FROM jobs WHERE queue = 'platform' AND payload->>'envelopeId' = $1`, [
     env,
   ]);
-const exportRow = (id: string) => db.one<any>(`SELECT status, pdf_sha256, remote_ref FROM storage_exports WHERE id = $1`, [id]);
+const exportRow = (id: string) => db.one<any>(`SELECT status, pdf_sha256, remote_ref, evidence_ref FROM storage_exports WHERE id = $1`, [id]);
 
 describe("renovación del sello de archivo y copias exportadas", () => {
   it("la renovación encola la re-exportación y el trabajo sube el PDF renovado (una sola vez)", async () => {
@@ -155,6 +163,28 @@ describe("renovación del sello de archivo y copias exportadas", () => {
     expect(uploads).toHaveLength(1);
     expect(uploads[0].equals(Buffer.from(renewed.bytes))).toBe(true);
     expect((await exportRow(ex)).pdf_sha256).toBe(renewed.sha);
+  });
+
+  it("la evidencia reemplaza la suya (evidence_ref), no la que tenga el nombre actual, y queda anotada para la próxima", async () => {
+    // La evidencia original quedó renombrada: «Contrato - <id> - evidencia.json» era de otro (del cliente).
+    const { env, conn, ex } = await exportedEnvelope({ evidenceRef: "dropbox:/CalaSign/ev (1).json" });
+    await renew(env);
+    const uploads = mockDropbox();
+    await se.exportEnvelopeJob(db, blobs, { connectionId: conn, envelopeId: env });
+    expect(uploads.args).toEqual([
+      expect.objectContaining({ path: "/CalaSign/c.pdf", mode: "overwrite" }),
+      expect.objectContaining({ path: "/CalaSign/ev (1).json", mode: "overwrite" }),
+    ]);
+    expect(await exportRow(ex)).toMatchObject({ status: "succeeded", evidence_ref: "dropbox:/CalaSign/f2.json" });
+  });
+
+  it("una evidencia exportada antes de 0126 (sin referencia) no se reemplaza por nombre: se sube como nueva", async () => {
+    const { env, conn, ex } = await exportedEnvelope({ evidenceRef: null });
+    await renew(env);
+    const uploads = mockDropbox();
+    await se.exportEnvelopeJob(db, blobs, { connectionId: conn, envelopeId: env });
+    expect(uploads.args![1]).toMatchObject({ path: expect.stringMatching(/evidencia\.json$/), mode: "add", autorename: true });
+    expect((await exportRow(ex)).evidence_ref).toBe("dropbox:/CalaSign/f2.json");
   });
 
   it("una conexión desactivada no se re-exporta", async () => {

@@ -424,6 +424,7 @@ describe("fecha de firma", () => {
         { ...base, recipient_id: "ny", value: "2026-01-15" },
         { ...base, recipient_id: "ba", value: "15/01/2026" },
         { ...base, recipient_id: "viejo", value: "15/01/2026" },
+        { ...base, recipient_id: "ventana", value: "15/07/2027" },
       ],
       [{ id: "d" }],
       new Map(),
@@ -434,11 +435,13 @@ describe("fecha de firma", () => {
         ["ny", { at: new Date("2026-01-15T15:00:00Z"), timeZone: "America/New_York" }],
         // La organización estaba en Buenos Aires cuando firmó y después cambió de huso.
         ["ba", { at: new Date("2026-01-15T15:00:00Z"), timeZone: "America/Argentina/Buenos_Aires" }],
-        // Firmado antes de que el evento registrara el huso: el actual de la organización, en el día de la firma.
+        // Firmado antes de que la fecha se escribiera en el huso de la organización (y sin huso en el evento): UTC.
         ["viejo", { at: new Date("2026-07-15T15:00:00Z"), timeZone: null }],
+        // Firmado después, pero antes de que el evento registrara el huso: el actual de la organización, en ese día.
+        ["ventana", { at: new Date("2027-07-15T15:00:00Z"), timeZone: null }],
       ]),
     );
-    expect(out.map((f) => f.value)).toEqual(["2026-01-15 UTC−05:00", "15/01/2026 UTC−03:00", "15/01/2026 UTC−04:00"]);
+    expect(out.map((f) => f.value)).toEqual(["2026-01-15 UTC−05:00", "15/01/2026 UTC−03:00", "15/01/2026 UTC", "15/07/2027 UTC−04:00"]);
   });
 });
 

@@ -1081,10 +1081,19 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     return rows;
   }
 
+  // Las rutas de compartidos filtran por la organización aunque enforceRoutePolicy ya compruebe el acceso al sobre o a
+  // la plantilla: si la política de la ruta cambia, un id ajeno sigue dando 404 y no los grupos de otra organización.
+  async function ownEnvelope(tenantId: string, id: string, db: Db = s.db) {
+    if (!(await db.one(`SELECT 1 FROM envelopes WHERE id = $1 AND tenant_id = $2`, [id, tenantId]))) throw notFound("Sobre");
+  }
+
   app.get<P>("/v1/envelopes/:id/shares", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    await ownEnvelope(a.tenantId, req.params.id);
     const rows = await s.db.query<any>(
-      `SELECT g.id, g.name FROM envelope_shares es JOIN groups g ON g.id = es.group_id WHERE es.envelope_id = $1 ORDER BY g.name`,
-      [req.params.id],
+      `SELECT g.id, g.name FROM envelope_shares es JOIN groups g ON g.id = es.group_id
+        WHERE es.envelope_id = $1 AND g.tenant_id = $2 ORDER BY g.name`,
+      [req.params.id, a.tenantId],
     );
     return { groups: rows };
   });
@@ -1092,8 +1101,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   app.put<P>("/v1/envelopes/:id/shares", { preHandler: auth }, async (req) => {
     const a = A(req);
     const { groupIds } = PutSharesInput.parse(req.body);
+    await ownEnvelope(a.tenantId, req.params.id);
     const groups = await validGroups(a.tenantId, groupIds);
     await s.db.tx(async (t) => {
+      await ownEnvelope(a.tenantId, req.params.id, t);
       await t.query(`DELETE FROM envelope_shares WHERE envelope_id = $1`, [req.params.id]);
       for (const g of groups) await t.query(`INSERT INTO envelope_shares (envelope_id, group_id) VALUES ($1,$2)`, [req.params.id, g.id]);
     });
@@ -1106,12 +1117,15 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<P>("/v1/templates/:id/shares", { preHandler: auth }, async (req) => {
-    const t = await s.db.one<any>(`SELECT visibility FROM templates WHERE id = $1`, [req.params.id]);
+    const a = A(req);
+    const t = await s.db.one<any>(`SELECT visibility FROM templates WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
+    if (!t) throw notFound("Plantilla");
     const rows = await s.db.query<any>(
-      `SELECT g.id, g.name FROM template_shares ts JOIN groups g ON g.id = ts.group_id WHERE ts.template_id = $1 ORDER BY g.name`,
-      [req.params.id],
+      `SELECT g.id, g.name FROM template_shares ts JOIN groups g ON g.id = ts.group_id
+        WHERE ts.template_id = $1 AND g.tenant_id = $2 ORDER BY g.name`,
+      [req.params.id, a.tenantId],
     );
-    return { groups: rows, visibility: t?.visibility ?? "organization" };
+    return { groups: rows, visibility: t.visibility ?? "organization" };
   });
 
   app.put<P>("/v1/templates/:id/shares", { preHandler: auth }, async (req) => {

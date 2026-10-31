@@ -46,14 +46,21 @@ interface Parts {
   second: number;
 }
 
-/** Un formateador por huso: crearlo cuesta, y el certificado formatea una hora por evento del registro. */
+/**
+ * Un formateador por huso: crearlo cuesta, y el certificado formatea una hora por evento del registro. La clave es el
+ * huso tal como llega (además del normalizado): normalizarlo también crea un Intl.DateTimeFormat para validarlo, así
+ * que con la clave normalizada el caché no ahorraba nada. Con tope, porque la clave la puede elegir quien llama.
+ */
 const formatters = new Map<string, Intl.DateTimeFormat>();
+const MAX_FORMATTERS = 256;
 
-function partsIn(d: Date, tz: string): Parts {
+function formatterFor(tz: string): Intl.DateTimeFormat {
+  const hit = formatters.get(tz);
+  if (hit) return hit;
   const zone = normalizeTimeZone(tz);
-  let f = formatters.get(zone);
-  if (!f) {
-    f = new Intl.DateTimeFormat("en-US", {
+  const f =
+    formatters.get(zone) ??
+    new Intl.DateTimeFormat("en-US", {
       timeZone: zone,
       hourCycle: "h23",
       year: "numeric",
@@ -63,9 +70,14 @@ function partsIn(d: Date, tz: string): Parts {
       minute: "2-digit",
       second: "2-digit",
     });
-    formatters.set(zone, f);
-  }
-  const parts = f.formatToParts(d);
+  if (formatters.size >= MAX_FORMATTERS) formatters.clear();
+  formatters.set(zone, f);
+  formatters.set(tz, f);
+  return f;
+}
+
+function partsIn(d: Date, tz: string): Parts {
+  const parts = formatterFor(tz).formatToParts(d);
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
   return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour") % 24, minute: get("minute"), second: get("second") };
 }
@@ -78,25 +90,32 @@ export function datePartsInZone(d: Date, tz: string): { year: number; month: num
   return { year: p.year, month: p.month, day: p.day };
 }
 
-/** Desfase del huso en ese instante, en minutos (Buenos Aires: -180). */
-export function utcOffsetMinutes(d: Date, tz: string): number {
-  const p = partsIn(d, tz);
+/** Desfase en minutos a partir de las partes de ese instante en el huso. */
+function offsetFromParts(d: Date, p: Parts): number {
   const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
   return Math.round((asUtc - Math.floor(d.getTime() / 1000) * 1000) / 60_000);
 }
 
-/** "UTC", "UTC−03:00", "UTC+05:30" (con el signo menos tipográfico, como se escribe en los husos). */
-export function utcOffsetLabel(d: Date, tz: string): string {
-  const m = utcOffsetMinutes(d, tz);
+function offsetLabel(m: number): string {
   if (m === 0) return "UTC";
   const a = Math.abs(m);
   return `UTC${m < 0 ? "−" : "+"}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
 }
 
+/** Desfase del huso en ese instante, en minutos (Buenos Aires: -180). */
+export function utcOffsetMinutes(d: Date, tz: string): number {
+  return offsetFromParts(d, partsIn(d, tz));
+}
+
+/** "UTC", "UTC−03:00", "UTC+05:30" (con el signo menos tipográfico, como se escribe en los husos). */
+export function utcOffsetLabel(d: Date, tz: string): string {
+  return offsetLabel(utcOffsetMinutes(d, tz));
+}
+
 /** "2026-10-29 18:03:12 UTC−03:00": fecha y hora del instante en el huso, con su desfase (el del certificado). */
 export function formatDateTimeInZone(d: Date, tz: string): string {
   const p = partsIn(d, tz);
-  return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)} ${utcOffsetLabel(d, tz)}`;
+  return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)} ${offsetLabel(offsetFromParts(d, p))}`;
 }
 
 /** Configuración general de la organización (GET/PATCH /v1/settings/organization). */

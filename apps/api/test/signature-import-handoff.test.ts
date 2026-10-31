@@ -393,6 +393,43 @@ describe("firma dibujada en el celular (pase de firma)", () => {
     expect(left.sort()).toEqual([fresh, oldWithImage].sort());
   });
 
+  it("barrido: la imagen no adoptada se borra apenas el sobre deja de estar en curso, sin esperar los 7 días", async () => {
+    const mk = async () => {
+      const s = await setup();
+      const h = (await signing(s.token, "/signature-handoffs", "POST", {})).json();
+      expect((await phone(tokenOf(h.url), "POST", { imagePng: INKED })).statusCode).toBe(200);
+      return { ...s, id: h.id as string };
+    };
+    const live = await mk();
+    const voided = await mk();
+    const signedOther = await mk();
+    await db.query(`UPDATE envelopes SET status = 'voided' WHERE id = $1`, [voided.envelope]);
+    await db.query(`UPDATE recipients SET status = 'signed', signed_at = now() WHERE id = $1`, [signedOther.recipient]);
+    const { sweep } = await import("../src/modules/jobs");
+    const { createBlobStore } = await import("../src/infra/storage");
+    await sweep({ db, blobs: createBlobStore(), log: { info() {}, warn() {}, error() {} } } as any);
+    const image = async (id: string) => (await db.one<any>(`SELECT image_png FROM signature_handoffs WHERE id = $1`, [id])).image_png;
+    expect(await image(live.id)).not.toBeNull();
+    expect(await image(voided.id)).toBeNull();
+    expect(await image(signedOther.id)).toBeNull();
+  });
+
+  it("con el sobre anulado, la computadora ve el pase vencido (como el celular), no «pending» ni la imagen", async () => {
+    const pending = await setup();
+    const hp = (await signing(pending.token, "/signature-handoffs", "POST", {})).json();
+    const sent = await setup();
+    const hs = (await signing(sent.token, "/signature-handoffs", "POST", {})).json();
+    expect((await phone(tokenOf(hs.url), "POST", { imagePng: INKED })).statusCode).toBe(200);
+    expect((await signing(pending.token, `/signature-handoffs/${hp.id}`)).json().status).toBe("pending");
+    expect((await signing(sent.token, `/signature-handoffs/${hs.id}`)).json().status).toBe("submitted");
+
+    await db.query(`UPDATE envelopes SET status = 'voided' WHERE id = ANY($1)`, [[pending.envelope, sent.envelope]]);
+    expect((await phone(tokenOf(hp.url))).statusCode).toBe(410);
+    expect((await signing(pending.token, `/signature-handoffs/${hp.id}`)).json().status).toBe("expired");
+    const after = (await signing(sent.token, `/signature-handoffs/${hs.id}`)).json();
+    expect(after).toMatchObject({ status: "expired", imagePng: null });
+  });
+
   it("la espera cuenta por firmante: varios firmantes detrás de la misma IP no se reparten el tope; tokens inventados sí topan", async () => {
     const office = "198.51.100.20";
     const poll = (token: string, id: string, ip = office) =>

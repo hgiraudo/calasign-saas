@@ -74,7 +74,7 @@ describe("certificados de confianza de CalaSign", () => {
     }
   });
 
-  it("si el proveedor del sello pasa a otra cadena, la lista la sigue (no queda la del arranque)", async () => {
+  it("la lista es la de la cadena que devuelve el proveedor del sello en ese momento (sin caché aparte)", async () => {
     const { getSealProvider } = await import("../src/infra/seal");
     const provider = await getSealProvider();
     const chain = await provider.certificateChain();

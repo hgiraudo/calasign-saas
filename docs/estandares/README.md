@@ -24,7 +24,7 @@ de test y **gates automáticos que miden el delta en vez de exigir cero** (el tr
 | [`decisiones-de-diseno.md`](decisiones-de-diseno.md) | 14 decisiones de código y proceso, con el porqué y lo descartado (Prettier y ESLint con el costo medido) | `decisiones-de-diseno.md` |
 | [`contribuir.md`](contribuir.md) | Commits, worktrees y agentes en paralelo, hook de pre-commit, checklist, deploy a dev y rollback | `contribuir.md` |
 | [`tests-automatizados.md`](tests-automatizados.md) | Las capas de test con tiempos medidos, **qué test escribir para cada cambio**, `scripts/qa.sh` y el trinquete | `tests-automatizados.md` |
-| [`seguridad-y-cumplimiento.md`](seguridad-y-cumplimiento.md) | Reglas `SEG-NN` (evidencia, multi-tenant, secretos, datos personales, salientes, auditoría) con estado y dónde se verifica | `cumplimiento-bcra.md` (el BCRA no aplica: ver ese doc §0) |
+| [`seguridad-y-cumplimiento.md`](seguridad-y-cumplimiento.md) | Reglas `SEG-NN` (evidencia, multi-tenant, secretos, datos personales, salientes, auditoría, SAST/DAST) con estado y dónde se verifica; herramientas y resultado del pentest interno (§5.2-5.3) | `cumplimiento-bcra.md` (el BCRA no aplica: ver ese doc §0) |
 
 Lo que **no** está acá porque ya tiene su lugar y no se duplica: la arquitectura (`../ARQUITECTURA.md`), el modelo de
 datos (`../MODELO-DE-DATOS.md`), la evidencia y el sellado (`../EVIDENCIA.md`), el marco legal por país

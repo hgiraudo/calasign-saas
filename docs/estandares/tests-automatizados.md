@@ -15,22 +15,23 @@ dependencias instaladas.
 
 | # | Capa | Comando | Tarda | Qué caza | Qué NO caza |
 |---|---|---|---|---|---|
-| 0 | **Hook pre-commit** | automático en `git commit` (si está activado) | **~1,5 s** | secretos en texto plano, `.env`/tfstate en stage, formato y errores de ESLint en lo que está en stage, el trinquete, `bash -n` | nada de comportamiento |
+| 0 | **Hook pre-commit** | automático en `git commit` (si está activado) | **~1,5 s** | secretos en texto plano (gitleaks si está instalado, más las regex propias), `.env`/tfstate en stage, formato y errores de ESLint en lo que está en stage, el trinquete, `bash -n` | nada de comportamiento |
 | 1 | **Typecheck** | `tsc --noEmit` en los 7 paquetes | **~42 s** (api 14, web 14) | contrato API↔web roto (`@calasign/shared`), traducciones faltantes (`Record<Key, string>`) | que algo funcione |
-| 2 | **Reglas** | `prettier --check` + `eslint` + `check-calidad.mjs` + `check-error-codes.mjs` + `pnpm audit --prod --audit-level high` (red) | **~35 s** (Prettier 19, ESLint 14) | formato, imports y variables sin uso, hooks de React mal usados, `any`/`catch` vacío/`console` nuevos, migraciones con número repetido o editadas, códigos de error sin texto, una dependencia de producción con vulnerabilidad alta nueva | — |
+| 2 | **Reglas** | `prettier --check` + `eslint` + `check-calidad.mjs` + `check-error-codes.mjs` + `pnpm audit --prod --audit-level high` (red) + `sast.sh` (Semgrep con las reglas propias y gitleaks sobre todo el historial) | **~65 s** (Prettier 19, ESLint 14, SAST 30) | formato, imports y variables sin uso, hooks de React mal usados, `any`/`catch` vacío/`console` nuevos, migraciones con número repetido o editadas, códigos de error sin texto, una dependencia de producción con vulnerabilidad alta nueva, SQL con datos del pedido, cambios a la evidencia, redirects abiertos y otros patrones inseguros (SEG-48), un secreto en cualquier commit (SEG-21) | fallas que sólo aparecen corriendo (eso es el DAST, capa 9) |
 | 3 | **Unit de paquetes** | vitest en `pdf`, `xades`, `firmador`, `sdk-node` | **~36 s** · 261 tests (pdf 188) | PDF malformado, ByteRange, LTV, XAdES de DGII/DIAN/SUNAT, el Firmador | integración con la API |
 | 4 | **Unit + integración de la API** | `cd apps/api && vitest run` | **~3 min 40 s** · **954 tests** · 100 archivos | la app real sobre PGlite: permisos, auditoría, evidencia append-only, SSRF, webhooks, carreras, OpenAPI | concurrencia real (PGlite es un proceso) |
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
 | 6 | **e2e locales** | `qa.sh --solo-e2e` | **~5 min** · 23 suites | flujos de punta a punta contra una API de verdad: firmar, sellar, CRM, conectores, certificado propio, SDKs | la web en un navegador; B-LT/B-LTA (sin PKI de laboratorio) |
 | 7 | **e2e contra dev** | `node scripts/<suite>.mjs https://dev.calasign.com` | minutos | lo mismo sobre Postgres, S3, KMS y Caddy reales | las suites que sólo existen en local (§5.1) |
 | 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 16 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular y en WebKit (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | pantallas fuera del smoke |
+| 9 | **Seguridad nocturna** | `sast.sh --completo`, `dast.sh`, `dast.sh --remoto https://dev.calasign.com` (QA nocturno) | **~20 min** | rulesets públicos de Semgrep, dependencias con vulnerabilidad (osv-scanner, informativo), configuración insegura de `infra/` (Trivy); OWASP ZAP **atacando** la API efímera autenticado con la spec OpenAPI (inyección, XSS, traversal, cabeceras, errores que filtran internos) y en pasivo dev, más TLS (SEG-49) | lógica de negocio y autorización entre organizaciones (eso es `tenant-isolation-routes.test.ts`) |
 
 **`qa.sh` las agrupa:**
 
 | Modo | Capas | Tarda | Cuándo |
 |---|---|---|---|
-| `./scripts/qa.sh --rapido` | 1-2 | ~75 s | lo corre `deploy-dev.sh`; antes de un commit chico |
-| `./scripts/qa.sh` | 1-5 | ~6 min | antes de commitear un cambio de comportamiento |
+| `./scripts/qa.sh --rapido` | 1-2 | ~105 s | lo corre `deploy-dev.sh`; antes de un commit chico |
+| `./scripts/qa.sh` | 1-5 | ~7,5 min | antes de commitear un cambio de comportamiento |
 | `./scripts/qa.sh --web` | 8 | ~1 min | después de tocar la web |
 | `./scripts/qa.sh --e2e` | 1-6 y 8 | ~11 min | antes de un deploy grande, después de un merge de ramas, al cerrar una pasada de review |
 
@@ -155,7 +156,12 @@ máquina):
 
 - Corre `qa.sh --e2e` **con WebKit** (`E2E_WEBKIT=1`) sobre el último `main` **local** en un **worktree propio** (`checkout --detach main`, sin pull: lo
   que está commiteado en `main` aunque no esté pusheado), nunca en el checkout compartido.
-- Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando.
+- Después, la seguridad (capa 9, desde el 31-Oct-2026): `sast.sh --completo`, `dast.sh` (ZAP activo sobre una API
+  efímera en `:4196`) y `dast.sh --remoto` contra dev (`DAST_REMOTO` cambia el destino; vacío lo saltea). Una alerta
+  alta nueva de ZAP o un hallazgo nuevo del SAST deja la noche en rojo. Informes en `var/dast/` y `var/sast/` del
+  worktree. Herramientas: `seguridad-y-cumplimiento.md` §5.2.
+- Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando. Tope de la
+  unidad: 150 min.
 - Resultado en `var/qa-nocturno/ultimo.txt` y el log de cada noche al lado (quedan 14). En rojo, aviso de escritorio.
 - Sin `linger` el timer corre sólo con la sesión abierta; `Persistent=true` recupera la corrida perdida al volver
   (`sudo loginctl enable-linger $USER` lo hace correr con la sesión cerrada).

@@ -78,7 +78,9 @@ La convención del repo (no es Conventional Commits), en castellano, diciendo **
 `scripts/hooks/pre-commit` corre en ~1,5 s sobre lo que está en stage y **bloquea el commit** si encuentra:
 
 - un secreto en texto plano en una línea agregada (claves de AWS, privadas, de Anthropic, Stripe, Mercado Pago, Slack,
-  GitHub, Google, Telegram, API keys `cs_live_`);
+  GitHub, Google, Telegram, API keys `cs_live_`), y además lo que encuentre gitleaks si está instalado
+  (`seguridad-y-cumplimiento.md` §5.2). Un falso positivo de gitleaks va a `.gitleaksignore` con el motivo;
+  `qa.sh` repite gitleaks sobre **todo** el historial, así que algo que se escape del hook igual se ve;
 - un archivo que nunca se versiona (`.env`, `*.tfstate`, `*.tfvars`, `var/`, `.p12`);
 - un archivo TS/JS sin el formato de Prettier (`corepack pnpm format` lo arregla) o con errores de ESLint;
 - una cuenta del trinquete que sube, o una migración con número repetido o ya versionada editada;

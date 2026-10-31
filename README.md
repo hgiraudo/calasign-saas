@@ -91,12 +91,16 @@ Todo junto, en un comando (mapa de capas y qué test escribir para cada cambio e
 [`docs/estandares/tests-automatizados.md`](docs/estandares/tests-automatizados.md)):
 
 ```bash
-./scripts/qa.sh            # typecheck + formato + lint + reglas + unit + integraciones + SDKs (~6 min)
-./scripts/qa.sh --rapido   # typecheck + formato + lint + reglas (~75 s; lo corre deploy-dev.sh)
+./scripts/qa.sh            # typecheck + formato + lint + reglas + SAST + unit + integraciones + SDKs (~7,5 min)
+./scripts/qa.sh --rapido   # typecheck + formato + lint + reglas + SAST (~105 s; lo corre deploy-dev.sh)
 ./scripts/qa.sh --web      # la web en navegador con Playwright (~1 min; ver apps/web/e2e/README.md)
 ./scripts/qa.sh --e2e      # todo: lo anterior + las 23 suites e2e contra una API efímera en :4199 (~11 min)
 corepack pnpm format       # Prettier sobre todo el TS/JS (corepack pnpm lint: ESLint)
 ./scripts/mutacion.sh      # mutation testing con Stryker de los módulos críticos (~6 min; no va en qa.sh)
+./scripts/sast.sh          # SAST: Semgrep (reglas propias) + gitleaks del historial (~30 s; va en qa.sh)
+./scripts/sast.sh --completo   # + rulesets públicos de Semgrep, osv-scanner y Trivy (~3 min; QA nocturno)
+./scripts/dast.sh          # DAST: OWASP ZAP atacando una API efímera en :4196 (~15 min; QA nocturno)
+./scripts/dast.sh --remoto https://dev.calasign.com   # ZAP pasivo + testssl.sh contra un entorno (~5 min)
 git config core.hooksPath scripts/hooks                   # una vez por clon: hook de pre-commit
 git config blame.ignoreRevsFile .git-blame-ignore-revs    # git blame saltea el commit de formato
 ```

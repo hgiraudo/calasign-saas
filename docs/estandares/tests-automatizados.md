@@ -23,7 +23,7 @@ dependencias instaladas.
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
 | 6 | **e2e locales** | `qa.sh --solo-e2e` | **~5 min** · 23 suites | flujos de punta a punta contra una API de verdad: firmar, sellar, CRM, conectores, certificado propio, SDKs | la web en un navegador; B-LT/B-LTA (sin PKI de laboratorio) |
 | 7 | **e2e contra dev** | `node scripts/<suite>.mjs https://dev.calasign.com` | minutos | lo mismo sobre Postgres, S3, KMS y Caddy reales | las suites que sólo existen en local (§5.1) |
-| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 15 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | Safari (WebKit opcional), pantallas fuera del smoke |
+| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 16 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | Safari (WebKit opcional), pantallas fuera del smoke |
 
 **`qa.sh` las agrupa:**
 
@@ -142,8 +142,9 @@ El completo no va en el camino del deploy: 5 minutos cada vez terminarían salte
 
 ### 4.4 QA nocturno
 
-**Estado (31-Oct-2026).** Escrito: `scripts/qa-nocturno.sh` y sus unidades en `scripts/qa-nocturno/`. **Falta instalarlo
-una vez** (lo hace el usuario: es un timer que queda corriendo en su máquina):
+**Estado (31-Oct-2026).** ✅ Instalado en la máquina de trabajo: `scripts/qa-nocturno.sh` y sus unidades en
+`scripts/qa-nocturno/`. En un clon nuevo se instala una vez (lo hace el usuario: es un timer que queda corriendo en su
+máquina):
 
 ```bash
 ./scripts/qa-nocturno.sh --instalar   # crea el worktree ../calasign-qa e instala calasign-qa.timer (03:30 cada noche)
@@ -191,7 +192,7 @@ manuales, receptores en 127.0.0.1). El resto también corre contra `https://dev.
 
 ## 6. e2e de la web en navegador (Playwright)
 
-**Estado (29-Oct-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 15 tests, ~50 s
+**Estado (29-Oct-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 16 tests, ~45 s
 más ~19 s de compilar la web. Corren en `qa.sh --web` y dentro de `qa.sh --e2e`.
 
 **Por qué.** Hay regresiones que **sólo** se ven en un navegador y que la pasada 147 tuvo que arreglar a mano: el
@@ -216,11 +217,10 @@ del consentimiento quitada, el test del firmante da rojo («Expected: disabled /
   `apps/web/dist`. 🔴 Si el puerto está ocupado **falla**: no corre contra una API ajena.
 - **Los datos se arman por la API** (`helpers/api.ts`); la UI sólo para lo que se prueba.
 - **Un worker**: comparten la API y la máquina tiene poca RAM.
-- **Navegadores**: Chromium siempre; **WebKit** (Safari) con `E2E_WEBKIT=1`, después de instalar sus librerías una
-  vez con `sudo ./node_modules/.bin/playwright install-deps webkit` (en `apps/web`). 🔴 **Bloqueado en esta máquina
-  (31-Oct-2026)**: el WebKit de Playwright 1.49 está compilado para Ubuntu 24.04 y pide `libicu74`, `libvpx9` y
-  `libxml2.so.2`; Ubuntu 26.04 trae `libicu78`, `libvpx12` y `libxml2.so.16`, así que `install-deps` no alcanza.
-  Salidas: subir Playwright a una versión con build para 26.04, o correrlo en la imagen Docker oficial de Playwright.
+- **Navegadores**: Chromium siempre; **WebKit** (Safari) con `E2E_WEBKIT=1`. Desde el 31-Oct-2026 Playwright está en
+  **1.64.1**, que trae WebKit compilado para Ubuntu 26.04 (la 1.49 sólo tenía el de 24.04 y no corría acá). Una vez por
+  máquina: `./node_modules/.bin/playwright install chromium webkit` (en `apps/web`) y las librerías del sistema,
+  `sudo apt-get install libevent-2.1-7t64 libavif16 libmanette-0.2-0` (o `sudo ./node_modules/.bin/playwright install-deps webkit`).
 - **En una falla**: captura y traza en `var/playwright/<test>/` (`playwright show-trace …/trace.zip`).
 
 ### 6.3 Reglas

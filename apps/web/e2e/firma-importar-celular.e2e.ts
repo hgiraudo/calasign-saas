@@ -164,7 +164,7 @@ test.describe("adoptar la firma: importar y celular", () => {
     await celular.mouse.down();
     for (let i = 1; i <= 20; i++) await celular.mouse.move(caja.x + caja.width * (0.2 + i * 0.03), caja.y + caja.height * 0.9, { steps: 2 });
     await celular.mouse.up();
-    /** Tamaño real del lienzo y si hay tinta en la franja de abajo (del 80 % al final del alto). */
+    /** Resolución real del lienzo y si hay tinta en la franja de abajo (del 80 % al final del alto). */
     const estado = () =>
       celular.evaluate(() => {
         const c = document.querySelector("canvas.handoff-canvas") as HTMLCanvasElement;
@@ -172,7 +172,7 @@ test.describe("adoptar la firma: importar y celular", () => {
         const d = c.getContext("2d")!.getImageData(0, y0, c.width, c.height - y0).data;
         let tinta = 0;
         for (let i = 3; i < d.length; i += 4) if (d[i]! > 32) tinta++;
-        return { ancho: c.width, tinta };
+        return { ancho: c.width, alto: c.height, tinta };
       });
     const antes = await estado();
     expect(antes.tinta).toBeGreaterThan(100);
@@ -180,9 +180,12 @@ test.describe("adoptar la firma: importar y celular", () => {
     // Aparece la barra del navegador (el alto visible baja) y después se esconde.
     await celular.setViewportSize({ width: 1024, height: 1100 });
     await expect.poll(async () => (await lienzo.boundingBox())!.height).toBeLessThan(caja.height - 50);
+    // La caja cambia antes de que el ResizeObserver de la página ajuste la resolución: se espera la resolución.
+    await expect.poll(async () => (await estado()).alto).toBeLessThan(antes.alto);
     expect((await estado()).ancho).toBe(antes.ancho);
     await celular.setViewportSize({ width: 1024, height: 1366 });
     await expect.poll(async () => Math.round((await lienzo.boundingBox())!.height)).toBe(Math.round(caja.height));
+    await expect.poll(async () => (await estado()).alto).toBe(antes.alto);
     const despues = await estado();
     expect(despues.ancho).toBe(antes.ancho);
     expect(despues.tinta).toBe(antes.tinta);

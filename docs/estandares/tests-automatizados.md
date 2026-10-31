@@ -23,7 +23,7 @@ dependencias instaladas.
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
 | 6 | **e2e locales** | `qa.sh --solo-e2e` | **~5 min** · 23 suites | flujos de punta a punta contra una API de verdad: firmar, sellar, CRM, conectores, certificado propio, SDKs | la web en un navegador; B-LT/B-LTA (sin PKI de laboratorio) |
 | 7 | **e2e contra dev** | `node scripts/<suite>.mjs https://dev.calasign.com` | minutos | lo mismo sobre Postgres, S3, KMS y Caddy reales | las suites que sólo existen en local (§5.1) |
-| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 16 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | Safari (WebKit opcional), pantallas fuera del smoke |
+| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 16 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular y en WebKit (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | pantallas fuera del smoke |
 
 **`qa.sh` las agrupa:**
 
@@ -152,7 +152,7 @@ máquina):
 ./scripts/qa-nocturno.sh              # una corrida ahora, igual que la del timer
 ```
 
-- Corre `qa.sh --e2e` sobre el último `main` **local** en un **worktree propio** (`checkout --detach main`, sin pull: lo
+- Corre `qa.sh --e2e` **con WebKit** (`E2E_WEBKIT=1`) sobre el último `main` **local** en un **worktree propio** (`checkout --detach main`, sin pull: lo
   que está commiteado en `main` aunque no esté pusheado), nunca en el checkout compartido.
 - Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando.
 - Resultado en `var/qa-nocturno/ultimo.txt` y el log de cada noche al lado (quedan 14). En rojo, aviso de escritorio.
@@ -217,10 +217,12 @@ del consentimiento quitada, el test del firmante da rojo («Expected: disabled /
   `apps/web/dist`. 🔴 Si el puerto está ocupado **falla**: no corre contra una API ajena.
 - **Los datos se arman por la API** (`helpers/api.ts`); la UI sólo para lo que se prueba.
 - **Un worker**: comparten la API y la máquina tiene poca RAM.
-- **Navegadores**: Chromium siempre; **WebKit** (Safari) con `E2E_WEBKIT=1`. Desde el 31-Oct-2026 Playwright está en
-  **1.64.1**, que trae WebKit compilado para Ubuntu 26.04 (la 1.49 sólo tenía el de 24.04 y no corría acá). Una vez por
-  máquina: `./node_modules/.bin/playwright install chromium webkit` (en `apps/web`) y las librerías del sistema,
-  `sudo apt-get install libevent-2.1-7t64 libavif16 libmanette-0.2-0` (o `sudo ./node_modules/.bin/playwright install-deps webkit`).
+- **Navegadores**: Chromium siempre; **WebKit** (Safari, 13 tests más, ~2 min) con `E2E_WEBKIT=1`: lo corre siempre el
+  QA nocturno, y a mano conviene después de tocar el visor de PDF, el lienzo de la firma o estilos. Playwright **1.64.1**
+  (la 1.49 sólo traía WebKit para Ubuntu 24.04). Una vez por máquina: `./node_modules/.bin/playwright install chromium
+  webkit` (en `apps/web`) y `sudo apt-get install libevent-2.1-7t64 libavif16 libmanette-0.2-0`.
+- **CSP en http**: la API no manda `upgrade-insecure-requests` si `APP_URL` es `http://` (WebKit, a diferencia de
+  Chromium, lo aplica en localhost y la página quedaba en blanco). Con `https://` va siempre (`http-headers*.test.ts`).
 - **En una falla**: captura y traza en `var/playwright/<test>/` (`playwright show-trace …/trace.zip`).
 
 ### 6.3 Reglas

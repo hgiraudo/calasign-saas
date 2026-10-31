@@ -126,6 +126,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
+        // helmet la pone por defecto. Servida por http (local, la API efímera de los tests en navegador) WebKit pasa los
+        // scripts a https://localhost y la página queda en blanco; Chromium exime a localhost.
+        upgradeInsecureRequests: config.appUrl.startsWith("https://") ? [] : null,
       },
     },
     crossOriginEmbedderPolicy: false,

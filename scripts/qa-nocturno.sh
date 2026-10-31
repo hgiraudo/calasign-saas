@@ -60,7 +60,8 @@ avisar() {
   git -C "$WT" checkout --force --detach main && git -C "$WT" clean -fdq -e var/ || exit 1
   echo "main = $(git -C "$WT" log -1 --format='%h %s')"
   (cd "$WT" && corepack pnpm install --frozen-lockfile --prefer-offline) || { echo "✗ pnpm install"; exit 1; }
-  cd "$WT" && QA_WORKERS="${QA_WORKERS:-3}" ./scripts/qa.sh --e2e
+  # De noche también WebKit (Safari): suma ~2 min que a mano molestan.
+  cd "$WT" && QA_WORKERS="${QA_WORKERS:-3}" E2E_WEBKIT="${E2E_WEBKIT:-1}" ./scripts/qa.sh --e2e
 } >"$LOG" 2>&1
 RC=$?
 

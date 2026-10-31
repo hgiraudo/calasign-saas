@@ -88,6 +88,11 @@ describe("Permissions-Policy y CSP", () => {
       expect(csp).not.toContain("challenges.cloudflare.com");
     }
   });
+  it("servida por http (APP_URL local) el CSP no pide upgrade-insecure-requests: WebKit dejaba la página en blanco", async () => {
+    const csp = String((await app.inject({ method: "GET", url: "/login" })).headers["content-security-policy"]);
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).not.toContain("upgrade-insecure-requests");
+  });
 });
 
 describe("cookie de sesión __Host-cs_session", () => {

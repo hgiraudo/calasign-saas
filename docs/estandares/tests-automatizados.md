@@ -17,7 +17,7 @@ dependencias instaladas.
 |---|---|---|---|---|---|
 | 0 | **Hook pre-commit** | automático en `git commit` (si está activado) | **~1,5 s** | secretos en texto plano, `.env`/tfstate en stage, formato y errores de ESLint en lo que está en stage, el trinquete, `bash -n` | nada de comportamiento |
 | 1 | **Typecheck** | `tsc --noEmit` en los 7 paquetes | **~42 s** (api 14, web 14) | contrato API↔web roto (`@calasign/shared`), traducciones faltantes (`Record<Key, string>`) | que algo funcione |
-| 2 | **Reglas** | `prettier --check` + `eslint` + `check-calidad.mjs` + `check-error-codes.mjs` | **~35 s** (Prettier 19, ESLint 14) | formato, imports y variables sin uso, hooks de React mal usados, `any`/`catch` vacío/`console` nuevos, migraciones con número repetido o editadas, códigos de error sin texto | — |
+| 2 | **Reglas** | `prettier --check` + `eslint` + `check-calidad.mjs` + `check-error-codes.mjs` + `pnpm audit --prod --audit-level high` (red) | **~35 s** (Prettier 19, ESLint 14) | formato, imports y variables sin uso, hooks de React mal usados, `any`/`catch` vacío/`console` nuevos, migraciones con número repetido o editadas, códigos de error sin texto, una dependencia de producción con vulnerabilidad alta nueva | — |
 | 3 | **Unit de paquetes** | vitest en `pdf`, `xades`, `firmador`, `sdk-node` | **~36 s** · 261 tests (pdf 188) | PDF malformado, ByteRange, LTV, XAdES de DGII/DIAN/SUNAT, el Firmador | integración con la API |
 | 4 | **Unit + integración de la API** | `cd apps/api && vitest run` | **~3 min 40 s** · **954 tests** · 100 archivos | la app real sobre PGlite: permisos, auditoría, evidencia append-only, SSRF, webhooks, carreras, OpenAPI | concurrencia real (PGlite es un proceso) |
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
@@ -140,24 +140,29 @@ número de `qa.sh` y de `package.json` (`lint`) baja en el mismo commit.
 minutos). `SKIP_QA=1 ./scripts/deploy-dev.sh` lo saltea: es para una emergencia, y se dice en el commit o en la sesión.
 El completo no va en el camino del deploy: 5 minutos cada vez terminarían salteándose siempre.
 
-### 4.4 QA nocturno — propuesta
+### 4.4 QA nocturno
 
-No existe todavía. Dos formas: un workflow de **GitHub Actions** programado (el repo tiene remoto en GitHub; corre
-fuera de esta máquina, así que no compite por la RAM) o, la más barata, un timer de systemd de usuario que corra `qa.sh --e2e` de madrugada sobre
-`main` en un **worktree propio** (no el checkout compartido) y avise sólo si sale ≠0:
+**Estado (31-Oct-2026).** Escrito: `scripts/qa-nocturno.sh` y sus unidades en `scripts/qa-nocturno/`. **Falta instalarlo
+una vez** (lo hace el usuario: es un timer que queda corriendo en su máquina):
 
-```ini
-# ~/.config/systemd/user/calasign-qa.service (propuesta, no instalada)
-[Service]
-Type=oneshot
-WorkingDirectory=%h/cala/calasign-qa        # git worktree add ../calasign-qa main, actualizado con git pull --ff-only
-ExecStartPre=/usr/bin/git pull --ff-only
-ExecStart=%h/cala/calasign-qa/scripts/qa.sh --e2e
+```bash
+./scripts/qa-nocturno.sh --instalar   # crea el worktree ../calasign-qa e instala calasign-qa.timer (03:30 cada noche)
+./scripts/qa-nocturno.sh --estado     # la última corrida y el próximo disparo
+./scripts/qa-nocturno.sh              # una corrida ahora, igual que la del timer
 ```
 
+- Corre `qa.sh --e2e` sobre el último `main` **local** en un **worktree propio** (`checkout --detach main`, sin pull: lo
+  que está commiteado en `main` aunque no esté pusheado), nunca en el checkout compartido.
+- Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando.
+- Resultado en `var/qa-nocturno/ultimo.txt` y el log de cada noche al lado (quedan 14). En rojo, aviso de escritorio.
+- Sin `linger` el timer corre sólo con la sesión abierta; `Persistent=true` recupera la corrida perdida al volver
+  (`sudo loginctl enable-linger $USER` lo hace correr con la sesión cerrada).
+- Se descartó GitHub Actions: el gate usa PGlite, puertos fijos y la PKI de laboratorio local, y un runner nuevo pide
+  instalar todo cada vez; el timer local no cuesta nada.
+
 La lección de Milhouse que hay que copiar: **la señal de que el QA corre es `systemctl --user status calasign-qa` en
-verde, no la ausencia de aviso**. El suyo estuvo rojo 26 noches sin que nadie lo viera porque moría antes de correr un
-test y no mandaba nada.
+verde y la fecha de `ultimo.txt`, no la ausencia de aviso**. El suyo estuvo rojo 26 noches sin que nadie lo viera
+porque moría antes de correr un test y no mandaba nada.
 
 ---
 
@@ -212,7 +217,10 @@ del consentimiento quitada, el test del firmante da rojo («Expected: disabled /
 - **Los datos se arman por la API** (`helpers/api.ts`); la UI sólo para lo que se prueba.
 - **Un worker**: comparten la API y la máquina tiene poca RAM.
 - **Navegadores**: Chromium siempre; **WebKit** (Safari) con `E2E_WEBKIT=1`, después de instalar sus librerías una
-  vez con `sudo ./node_modules/.bin/playwright install-deps webkit` (en `apps/web`).
+  vez con `sudo ./node_modules/.bin/playwright install-deps webkit` (en `apps/web`). 🔴 **Bloqueado en esta máquina
+  (31-Oct-2026)**: el WebKit de Playwright 1.49 está compilado para Ubuntu 24.04 y pide `libicu74`, `libvpx9` y
+  `libxml2.so.2`; Ubuntu 26.04 trae `libicu78`, `libvpx12` y `libxml2.so.16`, así que `install-deps` no alcanza.
+  Salidas: subir Playwright a una versión con build para 26.04, o correrlo en la imagen Docker oficial de Playwright.
 - **En una falla**: captura y traza en `var/playwright/<test>/` (`playwright show-trace …/trace.zip`).
 
 ### 6.3 Reglas

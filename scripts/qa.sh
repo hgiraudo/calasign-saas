@@ -87,6 +87,9 @@ static_checks() {
   run "eslint" . ./node_modules/.bin/eslint . --max-warnings "${ESLINT_MAX_WARNINGS:-4}"
   run "calidad (trinquete)" . node scripts/check-calidad.mjs
   run "códigos de error i18n" . node scripts/check-error-codes.mjs
+  # Dependencias de producción con vulnerabilidad alta o crítica. Las aceptadas, con el motivo, en
+  # docs/estandares/seguridad-y-cumplimiento.md (SEG-41, §5.1) y en pnpm.auditConfig.ignoreGhsas. Necesita red.
+  run "pnpm audit (prod, high)" . corepack pnpm audit --prod --audit-level high
   local sh_ok=1
   for f in scripts/*.sh scripts/hooks/*; do [ -f "$f" ] && { bash -n "$f" 2>>"$RUN/bash-n.log" || sh_ok=0; }; done
   if [ $sh_ok -eq 1 ]; then label "bash -n scripts"; echo "✓"; SUMMARY+=("✓ bash -n scripts"); else

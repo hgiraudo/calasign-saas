@@ -93,7 +93,7 @@ Ley 172-13 (RD), Ley 1581 de 2012 (CO), LGPD (BR), Ley 29733 (PE); Honduras sin 
 | ID | Regla | Estado | Evidencia |
 |---|---|---|---|
 | **SEG-40** | **Scripts de instalación bloqueados** salvo los de `pnpm.onlyBuiltDependencies` (`esbuild`, `pkcs11js`) | ✅ | `package.json`, `pnpm-workspace.yaml` |
-| **SEG-41** | **`pnpm audit` sin críticas ni altas en producción** | 🔴 Ver §5.1 | — |
+| **SEG-41** | **`pnpm audit` sin críticas ni altas en producción** | ✅ **Desde el 31-Oct-2026**: 0 altas sin aceptar; las aceptadas, en §5.1 | `pnpm audit --prod --audit-level high` en `qa.sh` (todos los modos) · `pnpm.auditConfig.ignoreGhsas` |
 | **SEG-42** | **Backups diarios** de Postgres con alarma si pasan 24 h sin uno | ✅ | `calasign-backup.timer` · README § Entorno dev |
 | **SEG-43** | **Prueba de restauración periódica** del backup (el procedimiento existe; nadie lo corrió con fecha) | 🔴 Hacerla una vez por trimestre y anotar la fecha y el tiempo | README § Restaurar un backup |
 | **SEG-44** | **Parches de seguridad del host** diarios | ✅ | timer `calasign-security-updates` (lo instala `scripts/deploy-dev.sh`) |
@@ -113,8 +113,18 @@ Todo el árbol: 2 críticas, 3 altas, 13 moderadas, 4 bajas. **Sólo dependencia
 | Alta | `body-parser` 2.3.0 (DoS por bytes de más) | `@modelcontextprotocol/sdk` → `express` | Baja: el servidor MCP usa el transporte web estándar sobre Fastify (`modules/mcp/index.ts`), no monta express | Mismo que arriba |
 | Alta | `node-forge` 1.4.0 (verificación RSA PKCS#1 v1.5 laxa) | `apps/api` directo | Baja: sólo se usa para **leer** `.p12` (`custody.ts`, Firmador), no para verificar firmas | Sin versión arreglada: mantener el uso acotado a parsear |
 
-Cuando SEG-41 se adopte, `pnpm audit --prod --audit-level high` va a `qa.sh` como chequeo de **delta** (que no aparezca
-una alta nueva), igual que el trinquete: hoy daría rojo por las tres de arriba.
+**31-Oct-2026: SEG-41 adoptado.** `qa.sh` corre `pnpm audit --prod --audit-level high` y da rojo ante una alta o
+crítica nueva. Lo que se hizo con las de arriba (para entonces, 8 altas: aparecieron 5 nuevas de `node-forge`, entre
+ellas falsificación del MAC de un PKCS#12 y bypass de `basicConstraints` en `verifyCertificateChain`):
+
+| Advisory | Qué se hizo |
+|---|---|
+| `node-forge` ≤ 1.4.0 (las seis, incluida la RSA PKCS#1 v1.5) | Subido a **1.4.1** en `apps/api` y `packages/firmador` |
+| `body-parser` < 2.4.0 | `pnpm.overrides` → `^2.4.0` (llega por `express` del SDK de MCP; mismo major) |
+| `zod` < 4.6.6 (`GHSA-mrhx-c7xc-m3w5`) | **Aceptada** en `pnpm.auditConfig.ignoreGhsas`: no hay arreglo en zod 3 y pasar a zod 4 es una migración de todo `@calasign/shared`. Exposición acotada: el cuerpo de un pedido no pasa de 2 MB (`bodyLimit` en `app.ts`). Se saca de la lista al migrar a zod 4 |
+
+Una alta nueva se arregla o se acepta acá con su motivo, y su GHSA va a `ignoreGhsas` en el mismo commit. Las
+moderadas y bajas (`nodemailer`, `fast-uri`, `glob`, `react-router` 6) no cortan el gate.
 
 ---
 

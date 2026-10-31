@@ -39,6 +39,14 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "pkcs11js"
-    ]
+    ],
+    "overrides": {
+      "body-parser@>=2.0.0 <2.4.0": "^2.4.0"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-mrhx-c7xc-m3w5"
+      ]
+    }
   }
 }

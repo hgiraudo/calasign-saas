@@ -21,7 +21,7 @@
     "build:windows": "node build/build-sea.mjs windows-x64"
   },
   "dependencies": {
-    "node-forge": "1.4.0",
+    "node-forge": "1.4.1",
     "pdf-lib": "^1.17.1"
   },
   "optionalDependencies": {

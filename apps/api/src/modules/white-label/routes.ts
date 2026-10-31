@@ -807,7 +807,10 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       a.tenantId,
       String(req.params.domain).toLowerCase(),
     ]);
-    if (r) await auditFromRequest(s.db, req, a, "email_domain.removed", { targetType: "domain", targetId: r.domain });
+    // Un dominio que no es de esta organización (o ya no existe) da 404, como el resto de los recursos (SEG-11): antes
+    // respondía 204 igual y la auditoría genérica dejaba el dominio de otra organización en la de quien llamó.
+    if (!r) throw notFound("Dominio");
+    await auditFromRequest(s.db, req, a, "email_domain.removed", { targetType: "domain", targetId: r.domain });
     return reply.code(204).send();
   });
 

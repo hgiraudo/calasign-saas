@@ -861,20 +861,27 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     requireUserSession(a);
     const c = await s.db.one<any>(`SELECT id, name FROM oauth_clients WHERE client_id = $1`, [req.params.clientId]);
     if (!c) throw notFound("Aplicación");
-    await s.db.tx(async (t) => {
-      await t.query(`DELETE FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3`, [c.id, a.userId, a.tenantId]);
-      await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL`, [
+    const touched = await s.db.tx(async (t) => {
+      const consents = await t.query(`DELETE FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 RETURNING 1`, [
         c.id,
         a.userId,
         a.tenantId,
       ]);
-      // Y los códigos todavía sin canjear (valen 10 minutos): canjeados después de desconectar, la app recibía tokens
-      // nuevos (con refresh token) que esta revocación ya no alcanzaba. Como al restablecer la contraseña.
-      await t.query(
-        `UPDATE oauth_authorization_codes SET used_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND used_at IS NULL`,
+      const tokens = await t.query(
+        `UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL RETURNING 1`,
         [c.id, a.userId, a.tenantId],
       );
+      // Y los códigos todavía sin canjear (valen 10 minutos): canjeados después de desconectar, la app recibía tokens
+      // nuevos (con refresh token) que esta revocación ya no alcanzaba. Como al restablecer la contraseña.
+      const codes = await t.query(
+        `UPDATE oauth_authorization_codes SET used_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND used_at IS NULL RETURNING 1`,
+        [c.id, a.userId, a.tenantId],
+      );
+      return consents.length + tokens.length + codes.length;
     });
+    // Una app que el usuario no tiene conectada en esta organización (p. ej. la app privada de otra organización) da
+    // 404, como cualquier recurso ajeno (SEG-11): antes respondía 204 y dejaba el nombre de esa app en la auditoría.
+    if (!touched) throw notFound("Aplicación");
     await auditFromRequest(s.db, req, a, "oauth.disconnected", { targetType: "oauth_app", targetId: req.params.clientId, data: { app: c.name } });
     return reply.code(204).send();
   });

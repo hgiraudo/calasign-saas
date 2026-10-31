@@ -42,7 +42,7 @@ Buscá tu fila **antes** de escribir el test.
 
 | Si cambiás… | Escribís… | Y además |
 |---|---|---|
-| Un endpoint nuevo | Test en `apps/api/test/` con `buildApp` sobre PGlite: el camino feliz, **otro tenant da 404**, **sin permiso da 403** | OpenAPI (`openapi-contract.test.ts` falla si falta), SDKs si es público |
+| Un endpoint nuevo | Test en `apps/api/test/` con `buildApp` sobre PGlite: el camino feliz, **otro tenant da 404**, **sin permiso da 403** | OpenAPI (`openapi-contract.test.ts` falla si falta), SDKs si es público; con un id nuevo en el path, su fixture en `tenant-isolation-fixtures.ts` (o la excepción pública con el motivo): `tenant-isolation-routes.test.ts` falla si falta |
 | Permisos, roles, scopes OAuth, límites del plan | **Unit obligatorio con el caso negativo** (el que NO tiene que poder) | `permissions-trim.test.ts` y `team-membership-hardening.test.ts` son el patrón |
 | Algo que pasa sobre un sobre (estado, firma, sello) | Test que verifica **el evento en la cadena** y que la cadena sigue verificando (`verifyRows`) | Si es nuevo tipo de evento: `MODELO-DE-DATOS.md` § Eventos |
 | Una acción nueva de una persona | Entrada en `audit-coverage.test.ts`: la acción queda en la auditoría, con antes/después y **sin secretos** | — |

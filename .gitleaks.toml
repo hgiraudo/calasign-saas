@@ -1,0 +1,15 @@
+# gitleaks (scripts/sast.sh, SEG-21): las reglas por defecto más excepciones de datos de prueba.
+# Un hallazgo puntual que no es un secreto va a .gitleaksignore (su fingerprint) con un comentario del motivo.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Tests y e2e: contraseñas y claves inventadas (una-clave-larga-123, clave-…). Nunca un secreto real."
+targetRules = ["generic-api-key"]
+paths = [
+  '''(^|/)test/''',
+  '''(^|/)e2e/''',
+  '''^scripts/e2e[^/]*\.m?[jt]s$''',
+  '''^sdks/python/smoke_test\.py$''',
+  '''^scripts/semgrep/''',
+]

@@ -1,0 +1,189 @@
+# Reglas de Semgrep propias de CalaSign (SAST, SEG-48 en docs/estandares/seguridad-y-cumplimiento.md).
+# Las corre scripts/sast.sh junto con los rulesets públicos. Cada regla tiene su caso en calasign.ts (semgrep --test).
+# Un hallazgo que sea una excepción a propósito se marca en la línea con: // nosemgrep: <id> — <motivo>
+rules:
+  - id: calasign-sql-con-entrada-del-pedido
+    message: >-
+      SQL armado con un valor del pedido (req.query/body/params/headers). Pasalo como parámetro ($1, $2…); si es un
+      nombre de columna u orden, elegilo de una lista fija (SEG-11).
+    severity: ERROR
+    languages: [typescript, javascript]
+    mode: taint
+    # El valor del pedido usado directo (o a través de variables), no lo que devuelve una función que lo recibe: los
+    # armadores del repo (buildWhere, *Sql, envelopeBaseUrl…) parametrizan, y seguir el taint por ellos era sólo ruido.
+    options:
+      taint_assume_safe_functions: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.headers
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request)$
+    pattern-sanitizers:
+      - pattern: Number(...)
+      - pattern: Math.trunc(...)
+      - pattern: parseInt(...)
+      - pattern: "$X.includes(...) ? $A : $B"
+      # $${params.length}: el número del placeholder, no el valor.
+      - pattern: $X.length
+      # Un mapa constante (ACCOUNT_KEY[provider]): el resultado es uno de sus valores, no lo que mandó el cliente.
+      - patterns:
+          - pattern: $MAP[$K]
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^[A-Z][A-Z0-9_]*$
+    pattern-sinks:
+      # Un template literal que empieza como SQL pasado a cualquier función (db.query, t.one<any>…: Semgrep no
+      # reconoce el genérico en un patrón de método, así que se reconoce por el texto).
+      - patterns:
+          - pattern-inside: $F($Q, ...)
+          - metavariable-regex:
+              metavariable: $Q
+              regex: (?is)^`\s*(select|insert|update|delete|with)\b
+          - pattern-inside: $F(`...${$E}...`, ...)
+          - pattern: $E
+
+  - id: calasign-evidencia-append-only
+    message: >-
+      UPDATE/DELETE/TRUNCATE sobre la evidencia (envelope_events, account_audit_log). Es append-only (SEG-01): un error
+      se compensa con otro evento. Las únicas excepciones las permite el trigger de la migración 0072; marcalas con
+      nosemgrep y el motivo.
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern: $F($SQL, ...)
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: (?is)^[`"'].*(update\s+(envelope_events|account_audit_log)\b|delete\s+from\s+(envelope_events|account_audit_log)\b|truncate\s+(table\s+)?(envelope_events|account_audit_log)\b)
+
+  - id: calasign-gcm-sin-largo-de-tag
+    message: >-
+      createDecipheriv con GCM sin authTagLength: Node acepta un tag más corto que 16 bytes, y un tag truncado se puede
+      falsificar por fuerza bruta. Pasá { authTagLength: 16 }.
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern: createDecipheriv($ALG, $K, $IV)
+      - metavariable-regex:
+          metavariable: $ALG
+          regex: (?i).*gcm.*
+
+  - id: calasign-comparacion-de-secreto-no-constante
+    message: >-
+      Comparación de un secreto (firma, HMAC, token, digest) con === o !==: el tiempo de respuesta filtra cuántos
+      caracteres coinciden. Usá timingSafeEqual (o comparar hashes de largo fijo) como en webhooks.ts.
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["**/test/**", "**/e2e/**", "scripts/e2e*.mjs", "*.test.ts"]
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $A === $B
+                  - pattern: $A !== $B
+                  - pattern: $A == $B
+                  - pattern: $A != $B
+              - metavariable-regex:
+                  metavariable: $A
+                  regex: (?i)^[\w.]*(signature|hmac|digest|secret|expectedsig|mac)$
+          - patterns:
+              - pattern-either:
+                  - pattern: $A === $B
+                  - pattern: $A !== $B
+                  - pattern: $A == $B
+                  - pattern: $A != $B
+              - metavariable-regex:
+                  metavariable: $B
+                  regex: (?i)^[\w.]*(signature|hmac|digest|secret|expectedsig|mac)$
+      - pattern-not: $A === undefined
+      - pattern-not: $A === null
+      - pattern-not: $A !== undefined
+      - pattern-not: $A !== null
+      - pattern-not: $A === "..."
+      - pattern-not: $A !== "..."
+      - pattern-not: $A == null
+      - pattern-not: $A != null
+      - pattern-not: typeof $X === $Y
+
+  - id: calasign-redirect-con-entrada-del-pedido
+    message: >-
+      Redirección a un destino que viene del pedido: redirect abierto (phishing con el dominio de CalaSign). Validá
+      que sea una ruta relativa propia con safeRedirectPath (identity/sso.ts) o un origen de una lista permitida.
+    severity: ERROR
+    languages: [typescript, javascript]
+    mode: taint
+    # El valor del pedido usado directo (o a través de variables), no lo que devuelve una función que lo recibe: los
+    # armadores del repo (buildWhere, *Sql, envelopeBaseUrl…) parametrizan, y seguir el taint por ellos era sólo ruido.
+    options:
+      taint_assume_safe_functions: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request)$
+    pattern-sanitizers:
+      - pattern: safeRedirectPath(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $REPLY.redirect($URL, ...)
+              - pattern: '$REPLY.header("location", $URL)'
+          - focus-metavariable: $URL
+
+  - id: calasign-random-no-criptografico
+    message: >-
+      Math.random() para un token, código, contraseña o identificador secreto: es predecible. Usá randomToken() /
+      randomBytes / randomInt de node:crypto.
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern-either:
+          - pattern: const $V = <... Math.random() ...>;
+          - pattern: let $V = <... Math.random() ...>;
+          - pattern: $V = <... Math.random() ...>;
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?i).*(token|secret|code|otp|password|pass|nonce|key|salt).*
+
+  - id: calasign-tls-sin-verificar
+    message: Desactiva la verificación del certificado TLS del servidor remoto (MITM). Nunca en el código de la aplicación.
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern-either:
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+
+  - id: calasign-postmessage-a-cualquier-origen
+    message: >-
+      postMessage con destino "*": cualquier página que enmarque o abra a CalaSign recibe el mensaje. Mandalo al origen
+      que se validó (embed.ts).
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern: $W.postMessage($MSG, "*", ...)
+
+  - id: calasign-html-sin-escapar-en-react
+    message: >-
+      dangerouslySetInnerHTML: XSS si el contenido llega de un usuario o de la marca de un cliente. Renderizá texto, o
+      sanitizá con una lista blanca y dejalo explicado.
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern: <$EL dangerouslySetInnerHTML={...} />
+
+  - id: calasign-eval
+    message: eval / new Function / vm con código armado en tiempo de ejecución. Si es una fórmula del cliente, usá el evaluador de packages/shared.
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: vm.runInNewContext(...)
+      - pattern: vm.runInThisContext(...)

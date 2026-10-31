@@ -92,7 +92,7 @@ class LocalBlobStore implements BlobStore {
     } catch (e) {
       throw kmsFailure(h.arn, e);
     }
-    const d = createDecipheriv("aes-256-gcm", plainKey, Buffer.from(h.iv, "base64"));
+    const d = createDecipheriv("aes-256-gcm", plainKey, Buffer.from(h.iv, "base64"), { authTagLength: 16 });
     d.setAuthTag(Buffer.from(h.tag, "base64"));
     const out = Buffer.concat([d.update(raw.subarray(start + n)), d.final()]);
     plainKey.fill(0);

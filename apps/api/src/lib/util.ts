@@ -117,7 +117,8 @@ export function encryptBytes(plain: Uint8Array): Uint8Array {
 
 export function decryptBytes(payload: Uint8Array): Uint8Array {
   const b = Buffer.from(payload);
-  const d = createDecipheriv("aes-256-gcm", getSecretKey(), b.subarray(0, 12));
+  // authTagLength: sin él Node acepta un tag más corto (un payload truncado) y un tag corto se falsifica por fuerza bruta.
+  const d = createDecipheriv("aes-256-gcm", getSecretKey(), b.subarray(0, 12), { authTagLength: 16 });
   d.setAuthTag(b.subarray(12, 28));
   return new Uint8Array(Buffer.concat([d.update(b.subarray(28)), d.final()]));
 }

@@ -13,7 +13,7 @@ import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError, rateLimitError } from "./lib/errors";
 import { markBearerAuthRoutes, rateLimitIdentity, rateLimitIpKey, type RateLimitIdentity } from "./lib/ip";
-import { requestPath } from "./lib/util";
+import { bearerToken, requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
@@ -268,7 +268,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     if (["GET", "HEAD", "OPTIONS"].includes(req.method) || !path.startsWith("/v1/")) return;
     if (path.startsWith("/v1/integrations/")) return;
     const origin = req.headers.origin;
-    if (!origin || req.headers.authorization) return;
+    // Sólo un Bearer de verdad saltea el control: con "Authorization: Basic …" (o "Bearer " vacío) authenticate usa la
+    // cookie igual, y saltearlo dejaba usar la sesión desde cualquier origen.
+    if (!origin || bearerToken(req.headers.authorization)) return;
     const allowed = new Set([new URL(config.appUrl).origin, `${req.protocol}://${req.headers.host}`]);
     if (!allowed.has(origin)) return reply.code(403).send({ error: { code: "bad_origin", message: "Origen no permitido" } });
   });

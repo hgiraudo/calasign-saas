@@ -68,7 +68,7 @@ Ley 172-13 (RD), Ley 1581 de 2012 (CO), LGPD (BR), Ley 29733 (PE); Honduras sin 
 | ID | Regla | Estado | Evidencia |
 |---|---|---|---|
 | **SEG-20** | **Nada de datos personales reales fuera de su lugar**: ni en fixtures, ni en logs, ni en mensajes de error, ni en avisos (Telegram, correo de alertas). Correos de prueba en `example.com` | 🟡 Regla nueva; los secretos de ruta se redactan solos, los datos personales dependen de la revisión | `lib/redact.ts` · `test/redact.test.ts` · `tests-automatizados.md` §3 |
-| **SEG-21** | **Ningún secreto en el repo**: van a SSM o a `var/`. El tfstate no se versiona | 🟡 El hook de pre-commit lo bloquea, pero hay que activarlo en cada clon | `scripts/hooks/pre-commit` · `contribuir.md` §3.3 |
+| **SEG-21** | **Ningún secreto en el repo**: van a SSM o a `var/`. El tfstate no se versiona | ✅ **Desde el 31-Oct-2026** gitleaks recorre **todo el historial** en cada `qa.sh` (el hook sólo veía lo que está en stage, y hay que activarlo en cada clon). Primera pasada: 100 hallazgos, todos claves inventadas de tests y ejemplos de la documentación; ningún secreto real | `scripts/sast.sh` · `.gitleaks.toml`, `.gitleaksignore` · `scripts/hooks/pre-commit` |
 | **SEG-22** | **Residencia**: el dato de una organización no sale de su celda | ✅ en el código; 🟡 **excepción desde el 30-Oct-2026** (pedido del usuario): el alta ofrece todas las regiones y una sin configurar deja a la organización en la celda por defecto (la pedida queda en `tenants.requested_cell`): antes de tener clientes reales, configurar esas celdas o volver a mostrarlas como «Próximamente»; 💲 la celda de Brasil (São Paulo) necesita cambiar la SCP de la organización AWS | `infra/cells.ts` · `test/cells-residency.test.ts` · `docs/DATOS.md` |
 | **SEG-23** | **Cifrado de lo sensible** en la base (tokens de proveedores, claves en custodia) y BYOK con el KMS del cliente | ✅ | `lib/util.ts` `encrypt` · `modules/custody.ts` · `test/byok-archive-hardening.test.ts` |
 | **SEG-24** | **Retención**: la purga borra archivos y deja el evento `envelope.purged`; no se borra evidencia | ✅ | `modules/retention.ts` · `test/retention.test.ts` |
@@ -100,6 +100,9 @@ Ley 172-13 (RD), Ley 1581 de 2012 (CO), LGPD (BR), Ley 29733 (PE); Honduras sin 
 | **SEG-45** | **Un cambio de código no llega a dev sin el QA** | 🟡 `deploy-dev.sh` corre `qa.sh --rapido`; el completo es manual | `tests-automatizados.md` §4.3 |
 | **SEG-46** | **Revisión por otra persona** antes de producción (hoy sólo hay dev) | 💲 / decisión: cuando exista producción, un pase aprobado por alguien distinto de quien hizo el cambio | — |
 | **SEG-47** | **Certificaciones** (ISO 27001, SOC 2) que piden los clientes grandes | 💲 | — |
+| **SEG-48** | **SAST**: el código pasa Semgrep con las reglas propias (SQL con datos del pedido, evidencia append-only, GCM sin largo de tag, comparación de secretos no constante, redirect abierto, `Math.random` para secretos, TLS sin verificar, `postMessage("*")`, `dangerouslySetInnerHTML`, `eval`) y los rulesets públicos de TypeScript/Node; la infraestructura pasa Trivy | ✅ **Desde el 31-Oct-2026**. Una excepción va en la línea con `// nosemgrep: <regla> — <motivo>` | `scripts/sast.sh` (reglas propias en `qa.sh`; `--completo` de noche) · `scripts/semgrep/calasign.yml` + su test · `.trivyignore` |
+| **SEG-49** | **DAST**: OWASP ZAP ataca la API (escaneo activo, autenticado, con la spec OpenAPI) sobre una instancia efímera, y analiza en pasivo el entorno desplegado (más TLS con testssl.sh); una alerta alta nueva corta | ✅ **Desde el 31-Oct-2026**, cada noche. Las aceptadas, con el motivo, en `scripts/dast/aceptadas.tsv` | `scripts/dast.sh` · `scripts/qa-nocturno.sh` |
+| **SEG-50** | **Pentest externo** de un tercero antes de tener clientes reales (lo piden los cuestionarios y SOC 2/ISO 27001) | 💲 La revisión white-box interna (§5.3) deja hecho lo barato | — |
 
 ### 5.1 `pnpm audit` medido el 29-Oct-2026
 
@@ -126,6 +129,53 @@ ellas falsificación del MAC de un PKCS#12 y bypass de `basicConstraints` en `ve
 Una alta nueva se arregla o se acepta acá con su motivo, y su GHSA va a `ignoreGhsas` en el mismo commit. Las
 moderadas y bajas (`nodemailer`, `fast-uri`, `glob`, `react-router` 6) no cortan el gate.
 
+**31-Oct-2026: osv-scanner** (en `sast.sh --completo`, informativo) ve 29 sobre todo el lockfile, las mismas de arriba
+más las de herramientas de desarrollo. Las moderadas de producción con arreglo en el mismo major **se suben cuando la
+versión arreglada cumpla 14 días publicada** (las cadenas de npm comprometidas de 2025 se detectaron en días; pnpm 9
+no tiene `minimumReleaseAge`, que llega con pnpm 10.16):
+
+| Paquete | Arreglada en | Publicada | Subir desde |
+|---|---|---|---|
+| `nodemailer` 10.0.16 (3 moderadas) | 10.1.4 | 18-Oct-2026 | **1-Nov-2026** |
+| `fast-uri` 3.1.8 / 4.2.2 (vía `ajv` y `@fastify/ajv-compiler`) | 3.1.9 / 4.2.3 (`pnpm.overrides`) | 19-Oct-2026 | **2-Nov-2026** |
+| `vite` 6.4.4 (dev) | 6.4.5 | 21-Oct-2026 | **4-Nov-2026** |
+| `glob`/`minimatch` (vía `@fastify/static`), `react-router` 6 | majors nuevos | — | con la próxima subida de `@fastify/static` / migración a react-router 7 |
+
+### 5.2 Herramientas de SAST y DAST (sin Docker)
+
+Binarios en `~/.local/bin`, instalados el 31-Oct-2026 con checksum verificado y versiones de al menos 14 días:
+gitleaks 8.30.1, Trivy 0.75.0, osv-scanner 2.7.0 (releases de GitHub, `*_checksums.txt`), Semgrep 1.180.0 (venv propio
+en `~/.local/share/semgrep-venv`, `pip install semgrep==…`), testssl.sh 3.2.4 (`~/opt/testssl`). OWASP ZAP 2.17.0 en
+`~/opt/ZAP_2.17.0` (tarball Linux con su sha256; corre con el Java 17 de `~/opt`). Bajar los tarballs a disco, no a
+`/tmp` (es tmpfs y se queda sin cuota).
+
+| Corre | Qué | Tiempo |
+|---|---|---|
+| `qa.sh` (todos los modos) | `sast.sh`: reglas propias de Semgrep + gitleaks del historial | ~40 s |
+| QA nocturno | `sast.sh --completo` (rulesets públicos, osv-scanner, Trivy), `dast.sh` (activo sobre API efímera), `dast.sh --remoto https://dev.calasign.com` (pasivo + TLS) | ~20 min |
+
+Primera corrida (31-Oct-2026): ZAP activo 12 min sobre ~730 URLs autenticadas, **0 altas**; 4 medias/bajas aceptadas
+por diseño (CORS `*` de `/oauth/*` para clientes MCP, `client_secret_basic`, XSS en JSON de baja confianza) y
+`style-src 'unsafe-inline'` en la CSP (pendiente: sacar los estilos inline). dev.calasign.com: cabeceras correctas
+(CSP, HSTS, `nosniff`, `frame-ancestors 'none'`), TLS sin problemas altos; testssl marca BREACH (gzip) como medio:
+aceptado, el HTML comprimido no mezcla secretos con texto del atacante.
+
+### 5.3 Revisión white-box (pentest interno) del 31-Oct-2026
+
+Revisión manual de autenticación, SSO, OAuth, firmante, embed, MCP/IA, entradas, marca blanca y webhooks, más el test
+de SEG-11. Lo encontrado y arreglado, cada uno con su test:
+
+| Severidad | Hallazgo | Arreglo |
+|---|---|---|
+| Media | Una sesión SSO de la organización A listaba y cerraba las sesiones de la persona en sus otras organizaciones y revocaba sus apps OAuth allá (el IdP de A puede afirmar el correo de un miembro) | Las sesiones SSO quedan acotadas a su organización en `/v1/me/sessions`, su `DELETE` y `logout-all` (`sessions.ts`) · `test/sso-session-scope.test.ts` |
+| Media | `DELETE /v1/settings/email-domains/:domain` y `DELETE /v1/oauth/connected-apps/:clientId` respondían 204 a un recurso de otra organización (sin tocarlo) y lo anotaban en la auditoría propia | 404 si no borró nada · `test/tenant-isolation-routes.test.ts` |
+| Baja | `Authorization: Basic …` salteaba el control de Origin y el pedido se autenticaba igual con la cookie | Sólo un Bearer de verdad lo saltea (`app.ts`) · `test/sso-session-scope.test.ts` |
+| Baja | `decryptBytes` aceptaba un tag GCM de 4 bytes (falsificable por fuerza bruta); igual en el sobre de `storage.ts` y el KMS de prueba | `authTagLength: 16` · `test/crypto-gcm-tag.test.ts` · regla de Semgrep |
+
+Quedan anotados para decidir: `/v1/xml/verify` dice `valid: true` con un certificado autofirmado (no evalúa confianza;
+sumar `trusted` o una advertencia), y el link público de un workflow con firmante autoservicio no verifica el correo
+que se escribe (revisar que la evidencia lo marque como no verificado, como `self_registered` en los formularios).
+
 ---
 
 ## 6. Checklist de seguridad antes de commitear
@@ -139,4 +189,5 @@ moderadas y bajas (`nodemailer`, `fast-uri`, `glob`, `react-router` 6) no cortan
 - [ ] Destino saliente elegido por el cliente → `assertPublicDestination` (SEG-31)
 - [ ] Webhook entrante → verificar la firma antes de leer (SEG-33)
 - [ ] Proveedor externo nuevo → al catálogo (SEG-30) y a su doc, antes de integrarlo
+- [ ] `./scripts/sast.sh` verde (lo corre `qa.sh`); una excepción, con `nosemgrep` y el motivo (SEG-48)
 - [ ] Dependencia nueva → `pnpm audit` sin altas nuevas; si trae script de instalación, revisarlo antes de sumarlo a `onlyBuiltDependencies` (SEG-40, SEG-41)

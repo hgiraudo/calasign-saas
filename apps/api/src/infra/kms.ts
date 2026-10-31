@@ -105,7 +105,7 @@ function mockUnwrap(blob: Uint8Array, ctx?: Record<string, string>): { plain: Ui
   if (unusable(arn)) throw new Error(`KMSInvalidStateException: la clave ${arn} no está habilitada`);
   const iv = b.subarray(7 + n, 19 + n);
   const tag = b.subarray(19 + n, 35 + n);
-  const d = createDecipheriv("aes-256-gcm", mockKeyFor(arn), iv);
+  const d = createDecipheriv("aes-256-gcm", mockKeyFor(arn), iv, { authTagLength: 16 });
   d.setAAD(Buffer.from(ctxString(ctx)));
   d.setAuthTag(tag);
   try {

@@ -189,6 +189,7 @@ const ALLOWED_ATTRS = new Set(Object.values(ATTR));
 export function assertSignedAttributes(p: Pick<Prepared, "dataToSign" | "digestToSign">): void {
   const data = Buffer.from(p.dataToSign, "base64");
   const digest = createHash("sha256").update(data).digest("base64");
+  // nosemgrep: calasign-comparacion-de-secreto-no-constante — chequeo de integridad local, no un secreto
   if (digest !== p.digestToSign) throw new CertsignError(0, "bad_prepared", "El servidor mandó un hash que no corresponde a los datos a firmar");
   let set: forge.asn1.Asn1;
   try {
@@ -210,6 +211,7 @@ export function assertSignedAttributes(p: Pick<Prepared, "dataToSign" | "digestT
     const oid = forge.asn1.derToOid(parts[0].value as string);
     if (!ALLOWED_ATTRS.has(oid) || seen.has(oid)) throw new CertsignError(0, "bad_prepared", `Atributo de firma no esperado: ${oid}`);
     seen.add(oid);
+    // nosemgrep: calasign-comparacion-de-secreto-no-constante — compara un OID, no un secreto
     if (oid === ATTR.messageDigest) {
       const v = (parts[1].value as forge.asn1.Asn1[])?.[0];
       mdOk = v?.type === forge.asn1.Type.OCTETSTRING && typeof v.value === "string" && v.value.length === 32;
@@ -267,6 +269,7 @@ function messageDigestOf(der: Uint8Array): Buffer | null {
     const set = forge.asn1.fromDer(forge.util.createBuffer(Buffer.from(der).toString("binary")), true);
     for (const attr of set.value as forge.asn1.Asn1[]) {
       const parts = attr.value as forge.asn1.Asn1[];
+      // nosemgrep: calasign-comparacion-de-secreto-no-constante — compara un OID, no un secreto
       if (forge.asn1.derToOid(parts[0].value as string) !== ATTR.messageDigest) continue;
       const v = (parts[1].value as forge.asn1.Asn1[])?.[0];
       if (v?.type === forge.asn1.Type.OCTETSTRING && typeof v.value === "string") return Buffer.from(v.value, "binary");

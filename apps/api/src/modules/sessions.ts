@@ -126,15 +126,33 @@ export function shortUserAgent(ua: string | null | undefined): string | null {
   return browser ?? os ?? ua.slice(0, 40);
 }
 
-/** Cierra todas las sesiones de la cuenta y revoca sus tokens OAuth, códigos sin canjear y desafíos de 2FA. */
-export async function closeAllSessions(db: Db, userId: string): Promise<number> {
+/**
+ * Cierra todas las sesiones de la cuenta y revoca sus tokens OAuth, códigos sin canjear y desafíos de 2FA. Con
+ * `tenantId` (pedido desde una sesión SSO), sólo lo de esa organización: los desafíos de 2FA son de la cuenta y quedan.
+ */
+export async function closeAllSessions(db: Db, userId: string, tenantId: string | null = null): Promise<number> {
   return db.tx(async (t) => {
-    const closed = await t.query(`DELETE FROM sessions WHERE user_id = $1 RETURNING user_id`, [userId]);
-    await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
-    await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
-    await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
+    const p = [userId, tenantId];
+    const inScope = `user_id = $1 AND ($2::uuid IS NULL OR tenant_id = $2::uuid)`;
+    const closed = await t.query(`DELETE FROM sessions WHERE ${inScope} RETURNING user_id`, p);
+    await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE ${inScope} AND revoked_at IS NULL`, p);
+    await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE ${inScope} AND used_at IS NULL`, p);
+    if (!tenantId) await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
     return closed.length;
   });
+}
+
+/**
+ * Una sesión SSO vale sólo en su organización (como en /v1/me/access, teams.ts): devuelve esa organización para
+ * acotar lo que ve y cierra, o null si es una sesión con contraseña (alcance de toda la cuenta). Si no, el IdP de una
+ * organización, que puede afirmar el correo de un miembro, veía las sesiones de esa persona en las otras (red,
+ * navegador) y la sacaba de todas, revocando las apps que autorizó allá.
+ */
+async function ssoTenantScope(db: Db, req: FastifyRequest, tenantId: string): Promise<string | null> {
+  const cookie = sessionCookieToken(req);
+  if (!cookie) return null;
+  const sess = await db.one<{ auth_method: string }>(`SELECT auth_method FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]);
+  return sess?.auth_method === "sso" ? tenantId : null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -147,10 +165,12 @@ export async function sessionRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth;
     requireUserSession(a);
     const cookie = sessionCookieToken(req);
+    const scope = await ssoTenantScope(s.db, req, a.tenantId);
     const rows = await s.db.query<any>(
       `SELECT s.id, s.token_hash, s.created_at, s.last_seen_at, s.authenticated_at, s.user_agent, s.ip, s.auth_method, s.remember
-         FROM sessions s WHERE s.user_id = $1 AND ${sessionAliveSql("s")} ORDER BY s.last_seen_at DESC LIMIT 200`,
-      [a.userId],
+         FROM sessions s WHERE s.user_id = $1 AND ($2::uuid IS NULL OR s.tenant_id = $2::uuid) AND ${sessionAliveSql("s")}
+        ORDER BY s.last_seen_at DESC LIMIT 200`,
+      [a.userId, scope],
     );
     const current = cookie ? sha256Hex(cookie) : null;
     return {
@@ -172,10 +192,11 @@ export async function sessionRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth;
     requireUserSession(a);
     if (!UUID_RE.test(req.params.id)) throw notFound("Sesión");
-    const r = await s.db.query<{ token_hash: string }>(`DELETE FROM sessions WHERE id = $1 AND user_id = $2 RETURNING token_hash`, [
-      req.params.id,
-      a.userId,
-    ]);
+    const scope = await ssoTenantScope(s.db, req, a.tenantId);
+    const r = await s.db.query<{ token_hash: string }>(
+      `DELETE FROM sessions WHERE id = $1 AND user_id = $2 AND ($3::uuid IS NULL OR tenant_id = $3::uuid) RETURNING token_hash`,
+      [req.params.id, a.userId, scope],
+    );
     if (!r.length) throw notFound("Sesión");
     const cookie = sessionCookieToken(req);
     if (cookie && r[0].token_hash === sha256Hex(cookie)) clearSessionCookie(reply);
@@ -189,8 +210,9 @@ export async function sessionRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/auth/logout-all", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const a = req.auth;
     requireUserSession(a);
-    const closed = await closeAllSessions(s.db, a.userId);
-    const tenants = await s.db.query<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [a.userId]);
+    const scope = await ssoTenantScope(s.db, req, a.tenantId);
+    const closed = await closeAllSessions(s.db, a.userId, scope);
+    const tenants = scope ? [] : await s.db.query<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [a.userId]);
     const { ip, userAgent } = clientInfo(req);
     for (const tenantId of new Set([a.tenantId, ...tenants.map((m) => m.tenant_id)])) {
       await recordAudit(s.db, {

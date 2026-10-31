@@ -1,0 +1,5 @@
+# DAST (scripts/dast.sh): alertas de ZAP aceptadas. pluginId <TAB> regex de la URL <TAB> motivo (y fecha).
+10098	/oauth/	CORS * en /oauth/* y .well-known: a propósito para clientes MCP y apps OAuth (sin cookies ni credenciales del navegador). 31-Oct-2026
+10098	/\.well-known/	Ídem: metadatos OAuth/MCP públicos. 31-Oct-2026
+10105	/oauth/(token|introspect|revoke)	WWW-Authenticate: Basic es client_secret_basic de RFC 6749 §2.3.1, siempre sobre TLS. 31-Oct-2026
+40014	/v1/	XSS en JSON con confianza baja: las respuestas son application/json con nosniff y la web escapa todo (React). 31-Oct-2026

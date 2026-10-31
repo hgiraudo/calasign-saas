@@ -314,6 +314,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       // Los eventos primero, con el sobre todavía en borrador: la base solo deja borrar evidencia de un borrador
       // (migración 0072). Queda constancia en la auditoría de la organización (envelope.deleted, audit.ts).
       (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { subject: e.subject };
+      // nosemgrep: calasign-evidencia-append-only — borrador: el trigger de 0072 sólo deja borrar eventos de un borrador
       await t.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [e.id]);
       // Sin FK al sobre: las entregas de webhooks (con su asunto y firmantes en el payload) se borran a mano.
       await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);

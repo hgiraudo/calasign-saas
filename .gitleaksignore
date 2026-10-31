@@ -1,0 +1,6 @@
+# gitleaks: hallazgos puntuales que no son secretos (scripts/sast.sh). Formato: commit:archivo:regla:línea.
+# Ejemplos de la documentación para desarrolladores (Idempotency-Key de muestra, prefijo de clave de ejemplo), 31-Oct-2026.
+d3cc84ce39c849297485544eee42ac9deb9121b6:apps/web/src/pages/developers/content/Quickstart.tsx:generic-api-key:36
+d3cc84ce39c849297485544eee42ac9deb9121b6:apps/web/src/pages/developers/content/Quickstart.tsx:generic-api-key:239
+d3cc84ce39c849297485544eee42ac9deb9121b6:apps/api/src/modules/openapi.ts:generic-api-key:1153
+d3cc84ce39c849297485544eee42ac9deb9121b6:apps/web/src/pages/developers/reference/Reference.tsx:generic-api-key:190

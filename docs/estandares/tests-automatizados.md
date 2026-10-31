@@ -53,6 +53,7 @@ Buscá tu fila **antes** de escribir el test.
 | Una carrera (dos pedidos a la vez) | Test que fuerza el orden; **en PGlite pasar no prueba nada** de concurrencia real | `crm-writeback-race.test.ts`, `ai-metadata-races.test.ts` |
 | Un destino saliente (webhook, Slack, S3, URL de un PDF) | Caso en `ssrf.test.ts`: IP interna, nombre que resuelve a una interna, redirect | — |
 | Una ruta con un secreto en el path o la query | Caso en `redact.test.ts` | Y la ruta en `lib/redact.ts` |
+| Una regla de Semgrep propia (`scripts/semgrep/calasign.yml`) | Un caso `ruleid:` y uno `ok:` en `scripts/semgrep/calasign.tsx` (`semgrep --test`, lo corre `sast.sh`) | Correrla sobre el repo: cada hallazgo se arregla o lleva `nosemgrep` con el motivo (SEG-48) |
 | Un código de error nuevo | Nada a mano: `check-error-codes.mjs` verifica el texto en PT-BR/EN | — |
 | Un conector de CRM o de terceros | Simulador HTTP del proveedor en la suite e2e del área (`e2e-crm`, `e2e-connectors`) | Unit del mapeo (`crm-mapping.test.ts`) |
 | Una pantalla de la web | Si está en un camino crítico (firmante, login, verificación): un test en `apps/web/e2e/`; si no, tsc + prueba manual en celular y escritorio | §6 |

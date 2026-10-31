@@ -1,5 +1,5 @@
 [Unit]
-Description=CalaSign: QA nocturno (qa.sh --e2e sobre main en un worktree propio)
+Description=CalaSign: QA nocturno (qa.sh --e2e, SAST y DAST sobre main en un worktree propio)
 
 [Service]
 Type=oneshot
@@ -7,4 +7,5 @@ ExecStart=@REPO@/scripts/qa-nocturno.sh
 # Que no le gane la RAM ni la CPU a las sesiones de trabajo.
 Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=90min
+# QA --e2e (~45 min) + SAST completo (~3 min) + DAST activo (hasta 40 min) y pasivo (~5 min).
+TimeoutStartSec=150min

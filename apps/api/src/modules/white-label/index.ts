@@ -1,6 +1,7 @@
 // Marca blanca: punto de entrada (rutas, HTML de la web con la marca, favicon/manifest por dominio, logo del PDF).
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { HEX_COLOR } from "@calasign/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
@@ -177,15 +178,14 @@ export async function whiteLabelModule(app: FastifyInstance, s: Services) {
       if (!rebrands(b)) return;
       // Página sin conexión del service worker: con el nombre y el color de la marca (la de la plataforma la nombra).
       const name = escAttr(productLabel(b));
-      return reply
-        .header("cache-control", "no-cache")
-        .type("text/html; charset=utf-8")
-        .send(
-          `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name}</title></head>` +
-            `<body style="font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:${b.theme.backgroundColor ?? "#f4f6fa"}">` +
-            `<main style="text-align:center;padding:24px"><h1 style="color:${b.theme.primaryColor ?? "#0b1f3a"}">${name}</h1>` +
-            `<p>Sin conexión · Sem conexão · You're offline</p></main></body></html>`,
-        );
+      // Los colores se validan #RRGGBB al guardarse; se revisan igual acá porque van crudos a un atributo style.
+      const bg = HEX_COLOR.test(b.theme.backgroundColor ?? "") ? b.theme.backgroundColor : "#f4f6fa";
+      const fg = HEX_COLOR.test(b.theme.primaryColor ?? "") ? b.theme.primaryColor : "#0b1f3a";
+      // name va escapado (escAttr) y los colores validados: nada del cliente llega crudo al HTML.
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name}</title></head>
+<body style="font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:${bg}">
+<main style="text-align:center;padding:24px"><h1 style="color:${fg}">${name}</h1><p>Sin conexión · Sem conexão · You're offline</p></main></body></html>`;
+      return reply.header("cache-control", "no-cache").type("text/html; charset=utf-8").send(html);
     }
     const p = assetPath(b, "favicon");
     if (p) return reply.redirect(p, 302);

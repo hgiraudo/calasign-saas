@@ -1,6 +1,6 @@
 #!/bin/bash
 # Hook pre-commit de CalaSign (docs/estandares/contribuir.md §3.3). Corre en < 2 s sobre lo que está en stage:
-#   1. secretos en texto plano en las líneas agregadas (claves de AWS, privadas, de Anthropic, Stripe, Mercado Pago,
+#   1. secretos en texto plano en las líneas agregadas (gitleaks si está instalado, más claves de AWS, privadas, de Anthropic, Stripe, Mercado Pago,
 #      Slack, GitHub, Google, Telegram y API keys cs_live_) y archivos que nunca se versionan (.env, tfstate, .p12…)
 #   2. el trinquete de calidad sobre los archivos en stage (scripts/check-calidad.mjs --staged)
 #   3. prettier --check y eslint (sólo errores) sobre los .ts/.tsx/.js en stage
@@ -22,6 +22,13 @@ if [ -n "$hits" ]; then
   echo "  Los secretos van a SSM (/calasign-saas/<entorno>/<VARIABLE>) o a var/, nunca al repo." >&2
   echo "  Si es una clave falsa de un test: marcá la línea con un comentario 'calidad:permitir-secreto'." >&2
   fail=1
+fi
+# gitleaks (si está instalado, ver seguridad-y-cumplimiento.md §5.2): sus ~200 reglas sobre lo que está en stage.
+if command -v gitleaks >/dev/null; then
+  if ! gitleaks git --pre-commit --staged --config .gitleaks.toml --redact --no-banner --log-level error . >&2; then
+    echo "  gitleaks: si no es un secreto, su fingerprint va a .gitleaksignore con el motivo." >&2
+    fail=1
+  fi
 fi
 bad=$(git diff --cached --name-only --diff-filter=ACR | grep -E '(^|/)\.env(\.[^/]*)?$|\.tfstate|\.tfvars$|(^|/)var/|\.(p12|pfx|jks)$' | grep -vE '\.env\.example$|example\.tfvars$' || true)
 if [ -n "$bad" ]; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-# QA nocturno (docs/estandares/tests-automatizados.md §4.4): corre `qa.sh --e2e` sobre el último `main` local en un
+# QA nocturno (docs/estandares/tests-automatizados.md §4.4): corre `qa.sh --e2e` y la seguridad sobre el último `main` local en un
 # worktree propio (nunca en el checkout compartido, donde puede haber otra sesión trabajando).
 #
 #   ./scripts/qa-nocturno.sh             una corrida ahora (lo mismo que hace el timer)
@@ -9,7 +9,11 @@
 # La señal de que el QA corre es `systemctl --user status calasign-qa` en verde y la fecha de var/qa-nocturno/ultimo.txt,
 # no la ausencia de aviso. En rojo: aviso de escritorio (notify-send) y los logs de qa.sh quedan en el worktree.
 #
-# Variables: QA_NOCTURNO_DIR (worktree, por defecto ../calasign-qa), QA_WORKERS (3: deja RAM a las otras sesiones).
+# Después del QA corre la seguridad: scripts/sast.sh --completo, scripts/dast.sh (activo, API efímera) y
+# scripts/dast.sh --remoto $DAST_REMOTO (pasivo; por defecto https://dev.calasign.com, vacío para saltearlo).
+#
+# Variables: QA_NOCTURNO_DIR (worktree, por defecto ../calasign-qa), QA_WORKERS (3: deja RAM a las otras sesiones),
+# DAST_REMOTO.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WT="${QA_NOCTURNO_DIR:-$(dirname "$REPO")/calasign-qa}"
@@ -61,7 +65,15 @@ avisar() {
   echo "main = $(git -C "$WT" log -1 --format='%h %s')"
   (cd "$WT" && corepack pnpm install --frozen-lockfile --prefer-offline) || { echo "✗ pnpm install"; exit 1; }
   # De noche también WebKit (Safari): suma ~2 min que a mano molestan.
-  cd "$WT" && QA_WORKERS="${QA_WORKERS:-3}" E2E_WEBKIT="${E2E_WEBKIT:-1}" ./scripts/qa.sh --e2e
+  cd "$WT" || exit 1
+  rc=0
+  QA_WORKERS="${QA_WORKERS:-3}" E2E_WEBKIT="${E2E_WEBKIT:-1}" ./scripts/qa.sh --e2e || rc=1
+  # Seguridad (SEG-48/49): SAST completo, DAST activo contra una API efímera y pasivo contra dev. Uno a la vez, después
+  # del QA: ZAP usa ~1 GB de RAM.
+  echo; ./scripts/sast.sh --completo || rc=1
+  echo; ./scripts/dast.sh || rc=1
+  if [ -n "${DAST_REMOTO-https://dev.calasign.com}" ]; then echo; ./scripts/dast.sh --remoto "${DAST_REMOTO-https://dev.calasign.com}" || rc=1; fi
+  exit $rc
 } >"$LOG" 2>&1
 RC=$?
 

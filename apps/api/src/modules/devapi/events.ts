@@ -123,6 +123,7 @@ async function assignPositionBlock(s: Services): Promise<number> {
     const first = BigInt(base!.b);
     const last = first + BigInt(pending.length) - 1n;
     await t.query(`SELECT setval('envelope_events_pos_seq', $1::bigint)`, [last.toString()]);
+    // nosemgrep: calasign-evidencia-append-only — asigna pos (NULL → número), lo único que el trigger de 0072 deja cambiar
     await t.query(
       `UPDATE envelope_events ev SET pos = $2::bigint + n.ord - 1
          FROM unnest($1::bigint[]) WITH ORDINALITY AS n(id, ord) WHERE ev.id = n.id`,

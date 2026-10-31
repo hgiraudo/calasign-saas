@@ -1,0 +1,11 @@
+# Trivy config (scripts/sast.sh --completo) sobre infra/dev: hallazgos aceptados, con el motivo. Revisado 31-Oct-2026.
+# Salida a cualquier IP: la API llama a webhooks de clientes, SES, Stripe, Mercado Pago, KYC y CRMs (destinos que
+# elige el cliente). El control está en la aplicación (assertPublicDestination, SEG-31), no en el security group.
+AVD-AWS-0104
+# Tópico SNS de alertas sin KMS: sólo lleva avisos de operación (backup vencido, alarmas), sin datos de clientes.
+AVD-AWS-0095
+# Bucket de blobs con SSE-KMS de la clave administrada por AWS: la clave propia (CMK) por organización es BYOK (SEG-23).
+AVD-AWS-0132
+# Logging de acceso del bucket y descripción de la regla de salida: bajos; se revisan al armar producción.
+AVD-AWS-0089
+AVD-AWS-0124

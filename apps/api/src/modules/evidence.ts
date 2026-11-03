@@ -2,8 +2,8 @@
 // validación pública de PDF y conectores de firma (CSC v2).
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { signXml, verifyXml } from "@calasign/xades";
-import { commonName, parseCert, validatePdf, sha256 as sha256Bytes } from "@calasign/pdf";
+import { signXml, signatureCertificates, verifyXml } from "@calasign/xades";
+import { checkSigningCertificate, commonName, parseCert, validatePdf, sha256 as sha256Bytes } from "@calasign/pdf";
 import {
   SealOptionsInput,
   UpdateEvidenceSettingsInput,
@@ -15,6 +15,7 @@ import {
   type SealOptions,
   type SignatureProviderTestResult,
   type XmlSignResponse,
+  type XmlVerification,
 } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
@@ -32,6 +33,22 @@ import { getCscProvider, guardedFetch, listSignatureProviders, resolveSealLevel,
 const SIGNATURE_PROVIDER_TESTS_PER_HOUR = 5;
 /** Una prueba iniciada sin resultado deja de bloquear a las demás pasado este lapso (proceso caído a mitad de prueba). */
 const SIGNATURE_PROVIDER_TEST_STALE = "3 minutes";
+
+/**
+ * verifyXml (integridad: digests y SignatureValue) más la confianza del certificado del firmante contra el almacén de
+ * CalaSign. Un certificado autofirmado da `valid: true` y `trusted: false`.
+ */
+async function verifyXmlWithTrust(xml: string): Promise<XmlVerification> {
+  const v = verifyXml(xml);
+  const certs = signatureCertificates(xml);
+  if (!certs.length) return { ...v, trusted: false, trustWarnings: ["sin certificado del firmante en KeyInfo"] };
+  try {
+    const c = await checkSigningCertificate(certs, { trustAnchors: await trustAnchors() });
+    return { ...v, trusted: c.trusted, trustWarnings: [...c.errors, ...c.warnings] };
+  } catch (e) {
+    return { ...v, trusted: false, trustWarnings: [`no se pudo leer el certificado del firmante: ${(e as Error).message}`] };
+  }
+}
 
 export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
@@ -163,7 +180,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         if (e instanceof AppError) throw e;
         throw badRequest("xml_sign_failed", `No se pudo firmar el XML: ${(e as Error).message}`);
       }
-      const verification = verifyXml(signedXml);
+      const verification = await verifyXmlWithTrust(signedXml);
       const sha256 = sha256Hex(signedXml);
       await auditFromRequest(s.db, req, req.auth!, "certificate.used", {
         targetType: "certificate",
@@ -177,7 +194,8 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
 
   app.post("/v1/xml/verify", { onRequest: auth, bodyLimit: 6 * 1024 * 1024 }, async (req) => {
     const input = XmlVerifyInput.parse(req.body);
-    return verifyXml(input.xml);
+    const res: XmlVerification = await verifyXmlWithTrust(input.xml);
+    return res;
   });
 
   // ───────── Sello de empresa y nivel de firma del sobre ─────────

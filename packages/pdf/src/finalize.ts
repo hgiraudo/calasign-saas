@@ -47,6 +47,7 @@ export interface CertificateRecipient {
   phone: string | null;
   idDocument: string | null;
   channels: string[];
+  /** Código (`link`, `otp_email`, …, `link_self_registered`: link en pantalla de un formulario público) o texto ya traducido. */
   authMethod: string;
   sentAt: string | null;
   viewedAt: string | null;
@@ -1052,6 +1053,7 @@ function authLabel(L: CertLabels, m: string): string {
   if (m === "otp_email") return L.auth_otp_email;
   if (m === "otp_sms") return L.auth_otp_sms;
   if (m === "otp_whatsapp") return L.auth_otp_whatsapp;
+  if (m === "link_self_registered") return L.auth_link_self_registered;
   return m === "link" ? L.auth_link : m;
 }
 

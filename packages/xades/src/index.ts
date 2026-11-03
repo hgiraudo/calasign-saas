@@ -451,7 +451,28 @@ export interface XmlVerifyResult {
   errors: string[];
 }
 
-/** Verifica la primera ds:Signature del documento (enveloped). No valida la cadena de confianza. */
+/**
+ * Los certificados de KeyInfo de la primera ds:Signature (DER, en el orden del documento: el del firmante primero).
+ * Para evaluar la confianza afuera (verifyXml no la evalúa); uno ilegible se omite.
+ */
+export function signatureCertificates(xml: string): Uint8Array[] {
+  const doc = new DOMParser().parseFromString(xml, "text/xml");
+  const sigEl = descendantsNS(doc, NS.ds, "Signature")[0];
+  if (!sigEl) return [];
+  const out: Uint8Array[] = [];
+  for (const el of descendantsNS(sigEl, NS.ds, "X509Certificate")) {
+    const der = Buffer.from(el.textContent?.replace(/\s+/g, "") ?? "", "base64");
+    try {
+      new X509Certificate(der);
+      out.push(new Uint8Array(der));
+    } catch {
+      // ilegible: verifyXml ya lo informa en errors
+    }
+  }
+  return out;
+}
+
+/** Verifica la primera ds:Signature del documento (enveloped). No valida la cadena de confianza (ver signatureCertificates). */
 export function verifyXml(xml: string): XmlVerifyResult {
   const errors: string[] = [];
   const doc = new DOMParser().parseFromString(xml, "text/xml");

@@ -172,9 +172,12 @@ de SEG-11. Lo encontrado y arreglado, cada uno con su test:
 | Baja | `Authorization: Basic …` salteaba el control de Origin y el pedido se autenticaba igual con la cookie | Sólo un Bearer de verdad lo saltea (`app.ts`) · `test/sso-session-scope.test.ts` |
 | Baja | `decryptBytes` aceptaba un tag GCM de 4 bytes (falsificable por fuerza bruta); igual en el sobre de `storage.ts` y el KMS de prueba | `authTagLength: 16` · `test/crypto-gcm-tag.test.ts` · regla de Semgrep |
 
-Quedan anotados para decidir: `/v1/xml/verify` dice `valid: true` con un certificado autofirmado (no evalúa confianza;
-sumar `trusted` o una advertencia), y el link público de un workflow con firmante autoservicio no verifica el correo
-que se escribe (revisar que la evidencia lo marque como no verificado, como `self_registered` en los formularios).
+Los dos que habían quedado para decidir, resueltos el 3-Nov-2026:
+
+| Severidad | Hallazgo | Arreglo |
+|---|---|---|
+| Media | `/v1/xml/verify` decía `valid: true` con un certificado autofirmado o de una CA desconocida: cualquiera puede generarse uno con el nombre de cualquier empresa | `valid` sigue siendo la integridad; la respuesta suma `trusted` (la cadena de KeyInfo llega al almacén de confianza) y `trustWarnings`. Con sólo la hoja en KeyInfo (lo habitual en DGII) da `trusted: false` con «no se pudo completar la cadena» · `test/xml-verify-trust.test.ts` |
+| Baja | El firmante autoservicio de un link público de workflow (y el de un formulario web) ya quedaba `self_registered` con su evento en la cadena, pero el certificado de finalización decía «Link único enviado al canal del destinatario» | El certificado dice «Link mostrado en pantalla a quien completó el formulario público (correo escrito por el firmante, no verificado)» mientras no valide el correo con el código · `certificateAuthMethod` (`otp.ts`) · `test/certificate-auth-method.test.ts` y `packages/pdf/test/finalize.test.ts` |
 
 ---
 

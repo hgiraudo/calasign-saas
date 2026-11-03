@@ -76,6 +76,14 @@ export function isUnverifiedSelfRegistered(r: any): boolean {
 }
 
 /**
+ * Autenticación que imprime el certificado de finalización. Un autorregistrado (formulario o link público) sin validar
+ * el correo no recibió el link por un canal: lo vio en pantalla, y el correo lo escribió él (`link_self_registered`).
+ */
+export function certificateAuthMethod(r: { auth_method: string; self_registered?: boolean | null; authenticated_at?: unknown }): string {
+  return r.auth_method === "link" && isUnverifiedSelfRegistered(r) ? "link_self_registered" : r.auth_method;
+}
+
+/**
  * Firma dentro de la app del integrador: marcado como embebido o abierto con una URL de firma embebida (una
  * embed_session usada) en las últimas 24 h. La ventana es la misma de embed.ts lastEmbedSession (la que enmarca la
  * página al volver de un proveedor): pasado ese plazo la sesión embebida ya no rige, y un firmante que después abre su

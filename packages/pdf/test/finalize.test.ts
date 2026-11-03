@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, StandardFonts, decodePDFRawStream, degrees } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { LocalKeyProvider, finalizeEnvelopePdf, generateDevRootCa, inspectPdf, issueSealCertificate, renderEnvelopePdf } from "../src";
+import {
+  LocalKeyProvider,
+  extractPdfPlainText,
+  finalizeEnvelopePdf,
+  generateDevRootCa,
+  inspectPdf,
+  issueSealCertificate,
+  renderEnvelopePdf,
+} from "../src";
 
 // PNG 1x1 negro.
 const PNG = Uint8Array.from(
@@ -170,5 +178,52 @@ describe("certificado de finalización", () => {
     }
     expect(names).toBe(12);
     expect(images).toBe(12);
+  });
+
+  // Pentest white-box del 31-Oct-2026: quien completa un formulario o link público escribe el correo que quiere y ve
+  // el link en pantalla. El certificado decía «Link único enviado al canal del destinatario», como si el correo se
+  // hubiera verificado.
+  it.each([
+    ["es", "no verificado", "Link único enviado"],
+    ["pt-BR", "não verificado", "Link único enviado"],
+    ["en", "not verified", "Unique link sent"],
+  ])("%s: un firmante autorregistrado figura con el correo no verificado, no como «link enviado al canal»", async (locale, noVerificado, enviado) => {
+    const now = new Date().toISOString();
+    const base = { role: "signer" as const, phone: null, idDocument: null, channels: ["email"], sentAt: now, viewedAt: now };
+    const pdf = await renderEnvelopePdf({
+      documents: [{ name: "a.pdf", bytes: await samplePdf() }],
+      fields: [],
+      certificate: {
+        envelopeId: "0192f0e0-0000-7000-8000-000000000003",
+        subject: "Contrato",
+        organizationName: "ACME",
+        senderName: "Ana",
+        senderEmail: null,
+        createdAt: now,
+        sentAt: now,
+        completedAt: now,
+        locale,
+        documents: [{ name: "a.pdf", pageCount: 2, sha256: "a".repeat(64) }],
+        recipients: [
+          {
+            ...base,
+            name: "Quien Completo",
+            email: "autor@example.com",
+            authMethod: "link_self_registered",
+            consentedAt: now,
+            signedAt: now,
+            ip: null,
+            userAgent: null,
+          },
+        ],
+        events: [],
+        chainHead: "c".repeat(64),
+      },
+    });
+    const text = (await extractPdfPlainText(pdf)).text.replace(/\s+/g, " ");
+    expect(text).toContain("autor@example.com");
+    expect(text).toContain(noVerificado);
+    expect(text).not.toContain(enviado);
+    expect(text).not.toContain("link_self_registered");
   });
 });

@@ -85,6 +85,14 @@ export interface XmlVerification {
   signer: { subject: string; issuer: string; serialNumber: string; notAfter: string } | null;
   xades: { signingTime: string | null; signingCertificateMatches: boolean | null; policyIdentifier: string | null; signerRole: string | null } | null;
   errors: string[];
+  /**
+   * El certificado del firmante llega a una raíz del almacén de confianza de CalaSign. `valid` dice sólo que el XML no
+   * cambió desde que se firmó con ese certificado: con un certificado autofirmado o de una CA desconocida, `valid`
+   * es true y `trusted` false (cualquiera puede generarse un certificado con cualquier nombre).
+   */
+  trusted: boolean;
+  /** Por qué no es de confianza o qué le falta al certificado (vencido, sin uso de firma, cadena incompleta). */
+  trustWarnings: string[];
 }
 
 export interface XmlSignResponse {

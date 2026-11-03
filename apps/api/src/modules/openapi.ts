@@ -1665,6 +1665,8 @@ const OPS: Op[] = [
     operationId: "verifyXml",
     tag: "Firma XML",
     summary: "Verificar una firma XML (digests, SignatureValue, SigningCertificate)",
+    description:
+      "`valid`: el XML no cambió desde que se firmó con el certificado de KeyInfo. `trusted`: además ese certificado llega a una raíz del almacén de confianza de CalaSign (hace falta la cadena en KeyInfo); con un certificado autofirmado o de una CA desconocida, `valid` es true y `trusted` false. `trustWarnings` dice por qué.",
     body: XmlVerifyInput,
   },
 

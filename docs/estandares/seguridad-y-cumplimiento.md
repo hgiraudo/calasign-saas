@@ -197,6 +197,7 @@ Los dos que habían quedado para decidir, resueltos el 3-Nov-2026:
 |---|---|---|
 | Media | `/v1/xml/verify` decía `valid: true` con un certificado autofirmado o de una CA desconocida: cualquiera puede generarse uno con el nombre de cualquier empresa | `valid` sigue siendo la integridad; la respuesta suma `trusted` (la cadena de KeyInfo llega al almacén de confianza) y `trustWarnings`. Con sólo la hoja en KeyInfo (lo habitual en DGII) da `trusted: false` con «no se pudo completar la cadena» · `test/xml-verify-trust.test.ts` |
 | Baja | El firmante autoservicio de un link público de workflow (y el de un formulario web) ya quedaba `self_registered` con su evento en la cadena, pero el certificado de finalización decía «Link único enviado al canal del destinatario» | El certificado dice «Link mostrado en pantalla a quien completó el formulario público (correo escrito por el firmante, no verificado)» mientras no valide el correo con el código · `certificateAuthMethod` (`otp.ts`) · `test/certificate-auth-method.test.ts` y `packages/pdf/test/finalize.test.ts` |
+| Media | **SSRF** (lo encontró el mutation testing de `isPrivateAddress`): `::ffff:0:a.b.c.d` (IPv4 traducida, SIIT) con una IPv4 interna adentro, el NAT64 de uso local `64:ff9b:1::/48` y el resto de `::/8` se tomaban como públicas: un webhook o una URL de PDF podía apuntar a la red interna | La forma SIIT valida su IPv4, el NAT64 conocido es sólo `64:ff9b::/96` y el resto de `::/8` es interno (`webhooks.ts`) · `test/ssrf.test.ts` prueba los dos extremos de cada rango |
 
 ---
 

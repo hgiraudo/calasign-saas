@@ -270,6 +270,7 @@ versión automática de «ver el test fallar con el bug inyectado» (§2).
 ./scripts/mutacion.sh        # pdf y api, uno después del otro (~6 min)
 ./scripts/mutacion.sh pdf    # sólo packages/pdf (~1,5 min)
 ./scripts/mutacion.sh api    # sólo apps/api (~4 min)
+./scripts/mutacion.sh --completo api   # sin el incremental: para medir el puntaje o subir el piso
 ```
 
 Informe navegable en `var/mutacion/<paquete>.html` (qué mutante sobrevivió y en qué línea). **Incremental**: la segunda
@@ -297,6 +298,8 @@ el `stryker.config.mjs` y su test al `include` del `vitest.stryker.config.ts`.
 | `pdf` `signatures.ts` (con los tests nuevos) | 262 | 102 | 2 | 158 | 39 % | **98 %** |
 | `api` `redact.ts` | 142 | 93 | 48 | 1 | 65 % | 66 % |
 | `api` `totp.ts` | 99 | 55 | 20 | 24 | 56 % | 73 % |
+| `api` `redact.ts` (3-Nov-2026, con los tests nuevos) | 146 | 145 | 1 | 0 | **99 %** | 99 % |
+| `api` `totp.ts` (3-Nov-2026, con los tests nuevos) | 92 | 87 | 5 | 0 | **95 %** | 95 % |
 
 - La primera corrida de `pdf` encontró 23 bordes de `byteRangeIssue` sin probar (valores negativos o no enteros, el
   límite exacto del archivo, cada extremo de los rangos hexadecimales, el largo impar, el relleno con ceros). Se
@@ -304,12 +307,21 @@ el `stryker.config.mjs` y su test al `include` del `vitest.stryker.config.ts`.
   el primer carácter no hexadecimal, y sin la comparación de largo el `equals` igual da distinto).
 - «Sin cobertura» son funciones del archivo que ese test unitario no llama (en `signatures.ts`, el parser de firmas,
   probado por otros tests de `pdf` más pesados). No es una falla: dice dónde haría falta un test unitario.
-- **Pendiente**: los 48 sobrevivientes de `redact.ts` (sobre todo las listas de rutas y parámetros con secreto: cada
-  entrada sin un caso propio en `redact.test.ts`) y los 20 de `totp.ts`. Ver el informe HTML.
+- **3-Nov-2026: `redact.ts` y `totp.ts`.** Cada ruta y cada parámetro con secreto tiene su caso en `redact.test.ts`
+  (con un secreto **corto**: uno largo lo redacta igual la regla de «forma de token» y la entrada de la lista no se
+  prueba), más los bordes de UUID y de forma de token y la censura de headers de pino (`LOG_REDACT_PATHS`). En
+  `totp.test.ts`, los vectores de base32 de RFC 4648, el paso siguiente, `lastStep`, códigos que no son 6 dígitos (no
+  tiran) y los códigos de recuperación. Los 6 que quedan son **equivalentes**: `i <= segs.length` (el segmento
+  `undefined` se saltea igual), `/\s/g` por `/\s+/g` (dos veces), `.trim()` antes de un `replace` que ya saca los
+  espacios, `bits > 5` en base32 (el carácter sale igual en la vuelta siguiente o en la cola) y
+  `opts.lastStep != null` → `true` (`step <= null` es `step <= 0`, falso para cualquier paso posterior a 1970).
+- 🔴 **El incremental mintió**: tras agregar los tests, la corrida incremental seguía dando 49 vivos en `api` (80 %);
+  sin el incremental eran 6 (98 %). No vuelve a probar los mutantes de constantes del módulo (las listas, las regex)
+  si sólo cambió el test. Para medir o subir el piso: `./scripts/mutacion.sh --completo`.
 
 ### 8.3 El piso
 
-Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **61**): si baja, la
+Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **97** desde el 3-Nov-2026): si baja, la
 corrida falla. Cuando un test nuevo lo sube, el piso sube el mismo día, igual que el trinquete de `check-calidad.mjs`.
 
 **Cuándo correrlo**: al tocar un módulo mutado (o su test), y una vez por mes. No va en `qa.sh` ni en el deploy: tarda

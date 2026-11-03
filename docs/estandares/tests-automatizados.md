@@ -267,9 +267,10 @@ corre los tests. Si siguen verdes, ese **mutante sobrevivió**: hay un comportam
 versión automática de «ver el test fallar con el bug inyectado» (§2).
 
 ```bash
-./scripts/mutacion.sh        # pdf y api, uno después del otro (~6 min)
+./scripts/mutacion.sh        # pdf, api y sdk, uno después del otro
 ./scripts/mutacion.sh pdf    # sólo packages/pdf (~1,5 min)
-./scripts/mutacion.sh api    # sólo apps/api (~4 min)
+./scripts/mutacion.sh api    # sólo apps/api
+./scripts/mutacion.sh sdk    # sólo packages/sdk-node (~30 s)
 ./scripts/mutacion.sh --completo api   # sin el incremental: para medir el puntaje o subir el piso
 ```
 
@@ -286,9 +287,15 @@ serían días. Por eso cada paquete muta **pocos módulos críticos y puros** y 
 |---|---|---|---|
 | `packages/pdf` | `src/signatures.ts` | `test/byterange.test.ts` | `byteRangeIssue`: si el hueco sin firmar no es exactamente el `/Contents`, se pueden cambiar bytes sin invalidar la firma |
 | `apps/api` | `src/lib/redact.ts`, `src/lib/totp.ts` | `test/redact.test.ts`, `test/totp.test.ts` | Que ningún secreto llegue a un log; el segundo factor |
+| `apps/api` | `src/lib/util.ts` | `test/util.test.ts`, `test/crypto-gcm-tag.test.ts` | La base criptográfica: AES-256-GCM con la clave de la aplicación (y de dónde sale esa clave), HMAC por propósito, scrypt de las contraseñas, el JSON canónico de la cadena de evidencia, `bearerToken` y `requestPath` (qué credencial y qué ruta ve el control de acceso) |
+| `apps/api` | `src/lib/password-policy.ts` | `test/password-policy.test.ts` | Contraseñas cortas, comunes o armadas con el correo: cada palabra base y cada regla de `basedOnEmail` |
+| `apps/api` | `src/infra/evidence.ts` | `test/evidence-chain.test.ts` (Db falsa en memoria) | El hash de cada evento y `verifyRows`: un mutante que sobrevive es una evidencia alterada que la verificación no detecta |
+| `apps/api` | `src/modules/webhooks.ts`: sólo `signPayload` e `isPrivateAddress` (el resto, entre `// Stryker disable all` y `// Stryker restore all`) | `test/ssrf.test.ts`, `test/webhook-signature.test.ts` | La clasificación de direcciones internas: un mutante que sobrevive es un SSRF. La firma que verifican los SDK |
+| `packages/sdk-node` | `src/index.ts`: sólo la verificación de webhooks entrantes (el cliente HTTP, entre comentarios `Stryker disable`) | `test/webhooks.test.ts`, `test/unit.test.ts` | `constructWebhookEvent`: un mutante que sobrevive es una firma falsa, vieja o de otro secreto que el integrador acepta |
 
 Un módulo nuevo entra si es crítico, puro (sin base ni red) y tiene un test unitario enfocado: se suma a `mutate` en
-el `stryker.config.mjs` y su test al `include` del `vitest.stryker.config.ts`.
+el `stryker.config.mjs` y su test al `include` del `vitest.stryker.config.ts`. Si sólo una parte del archivo es pura,
+el resto va entre `// Stryker disable all` y `// Stryker restore all` (sus mutantes quedan «Ignored» y no cuentan).
 
 ### 8.2 Medido el 29-Oct-2026
 
@@ -319,9 +326,52 @@ el `stryker.config.mjs` y su test al `include` del `vitest.stryker.config.ts`.
   sin el incremental eran 6 (98 %). No vuelve a probar los mutantes de constantes del módulo (las listas, las regex)
   si sólo cambió el test. Para medir o subir el piso: `./scripts/mutacion.sh --completo`.
 
+**Medido el 3-Nov-2026** (módulos nuevos; «antes» es con los tests enfocados que ya existían, `stryker run --force`):
+
+| Módulo | Mutantes | Muertos | Sobreviven | Sin cobertura | Puntaje total | Sobre lo cubierto |
+|---|---|---|---|---|---|---|
+| `api` `util.ts` (antes: sólo `crypto-gcm-tag.test.ts`) | 221 | 22 | 11 | 188 | 10 % | 67 % |
+| `api` `util.ts` (con `util.test.ts`) | 221 | 212 | 9 | 0 | **96 %** | 96 % |
+| `api` `password-policy.ts` (antes: sin test unitario) | 130 | 0 | 0 | 130 | 0 % | — |
+| `api` `password-policy.ts` (con `password-policy.test.ts`) | 130 | 122 | 7 | 1 | **94 %** | 95 % |
+| `api` `evidence.ts` (antes: sin test unitario) | 54 | 0 | 0 | 54 | 0 % | — |
+| `api` `evidence.ts` (con `evidence-chain.test.ts`) | 54 | 54 | 0 | 0 | **100 %** | 100 % |
+| `api` `webhooks.ts`, firma y SSRF (antes: `ssrf.test.ts`) | 270 | 190 | 62 | 18 | 70 % | 75 % |
+| `api` `webhooks.ts`, firma y SSRF (con los casos nuevos y la corrección) | 286 | 263 | 21 | 2 | **92 %** | 93 % |
+| `sdk` verificación de webhooks (antes: `unit.test.ts`) | 66 | 45 | 19 | 2 | 68 % | 70 % |
+| `sdk` verificación de webhooks (con `webhooks.test.ts`) | 66 | 64 | 2 | 0 | **97 %** | 97 % |
+
+- **Bug encontrado** (`isPrivateAddress`): con los extremos de cada rango salió que `::ffff:0:a.b.c.d` (IPv4
+  traducida, SIIT) y el NAT64 de uso local `64:ff9b:1::/48` (RFC 8215) se clasificaban como públicas aunque llevaran
+  una IPv4 interna, y en general nada de `::/8` (reservado, no se enruta) estaba bloqueado. Ahora la traducida valida
+  su IPv4, el NAT64 conocido es exactamente `64:ff9b::/96` y el resto de `::/8` cuenta como interna.
+- Los 62 sobrevivientes de la primera corrida de `webhooks.ts` eran casi todos rangos IPv4 sin su borde probado
+  (`169.254` comparando sólo un octeto, `100.64/10` y `172.16/12` sin el último valor, cada `a === …` de
+  documentación): ahora `ssrf.test.ts` prueba los dos extremos de cada rango y la dirección pública de al lado.
+- **Equivalentes que quedan** (no cambian el resultado; anotados para no volver a mirarlos):
+  - `webhooks.ts` (21 + 2 sin cobertura): las defensas de `ipv6Groups` (`parts.length !== 8`, `NaN` o fuera de rango,
+    `if (!g)`) nunca se activan porque sólo se llama con lo que `isIP` ya aceptó como IPv6; `toUpperCase` en vez de
+    `toLowerCase` (`parseInt(…, 16)` no distingue mayúsculas); las regex sin `$` (el `.*` o la IPv4 punteada ya
+    llegan al final); `tail !== ""` y el `fill("")` (un grupo vacío se lee como `"0"`); `includes("")` (sin `::` el
+    relleno da 0); y `:: / ::1` (si no los ataja la primera línea, los ataja la de IPv4 compatible como `0.0.0.x`).
+  - `util.ts` (9): la caché de la clave (`if (secretKey)`: recalcularla da la misma), el `.trim()` de `secret.key`
+    (el decodificador base64 de Node ignora el salto de línea), `"utf8"` → `""` en `update` (Node usa UTF-8 igual),
+    `tag ?? "…"` (cualquier texto da un tag que no mide 16), `{ authTagLength: 16 }` en `decrypt` (el largo ya se
+    controla antes), las dos variantes de la regex de `bearerToken` (el `trim()` y el flag `s` las igualan) y la
+    constante SQL `BUMP_UPDATED_AT` (la prueban los tests de edición concurrente sobre PGlite, no un unitario).
+  - `password-policy.ts` (7 + 1 sin cobertura): la caché de la lista, el `filter(Boolean)` (una entrada vacía nunca
+    se consulta), las regex sin `+` o sin `$`, `?? ""` tras `split("@")`, el `% === 0` (sin él `repeat` redondea
+    para abajo y no coincide) y `base.length >= 4` (la lista sólo tiene entradas de 10 o más).
+  - `sdk` (2): `typeof payload === "string"` → `false` o `""`: pasar un string por `Buffer.from(…).toString("utf8")`
+    da el mismo string (y `createHmac` ya codifica en UTF-8 los surrogates sueltos igual).
+- **Caché a nivel de módulo = falso sobreviviente.** Stryker reusa el módulo entre mutantes: la lista de contraseñas
+  comunes, cargada una vez, quedaba de una corrida anterior y los mutantes de su carga «sobrevivían» aunque el test
+  los mata (verificado inyectándolos a mano). `password-policy.test.ts` y `util.test.ts` importan el módulo de nuevo
+  en cada test (`vi.resetModules()`); un test nuevo sobre un módulo con caché tiene que hacer lo mismo.
+
 ### 8.3 El piso
 
-Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **97** desde el 3-Nov-2026): si baja, la
+Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **85**, sdk **96**): si baja, la
 corrida falla. Cuando un test nuevo lo sube, el piso sube el mismo día, igual que el trinquete de `check-calidad.mjs`.
 
 **Cuándo correrlo**: al tocar un módulo mutado (o su test), y una vez por mes. No va en `qa.sh` ni en el deploy: tarda

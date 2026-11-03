@@ -3,16 +3,17 @@
 # `<=`, un `true` por `false`, borra una línea…) y corre los tests. Si los tests siguen verdes, ese mutante
 # «sobrevivió»: hay un comportamiento que ningún test verifica.
 #
-#   ./scripts/mutacion.sh            pdf y api (los módulos de cada stryker.config.mjs)
+#   ./scripts/mutacion.sh            pdf, api y sdk (los módulos de cada stryker.config.mjs)
 #   ./scripts/mutacion.sh pdf        sólo packages/pdf
 #   ./scripts/mutacion.sh api        sólo apps/api
+#   ./scripts/mutacion.sh sdk        sólo packages/sdk-node (la verificación de webhooks)
 #   ./scripts/mutacion.sh --completo [paquete]   sin el incremental (stryker run --force): para medir el puntaje
 #
 # Lento a propósito: no va en qa.sh. Correrlo al tocar un módulo mutado y una vez por mes. Incremental: la segunda
 # corrida sólo prueba los mutantes de lo que cambió (var/mutacion/*-incremental.json). Informe en var/mutacion/*.html.
 # 🔴 El incremental no vuelve a probar los mutantes de constantes del módulo (listas, regex) cuando sólo cambió el test:
 # los sigue dando por vivos. Para medir el puntaje o subir el piso, --completo.
-# Un comando pesado a la vez: los dos paquetes van uno después del otro.
+# Un comando pesado a la vez: los paquetes van uno después del otro.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -21,11 +22,12 @@ mkdir -p var/mutacion
 force=""
 if [ "${1:-}" = "--completo" ]; then force="--force"; shift; fi
 rc=0
-for p in ${1:-pdf api}; do
+for p in ${1:-pdf api sdk}; do
   case "$p" in
     pdf) dir=packages/pdf ;;
     api) dir=apps/api ;;
-    *) echo "paquete desconocido: $p (pdf o api)" >&2; exit 2 ;;
+    sdk) dir=packages/sdk-node ;;
+    *) echo "paquete desconocido: $p (pdf, api o sdk)" >&2; exit 2 ;;
   esac
   echo "▶ mutación: $dir"
   (cd "$dir" && ./node_modules/.bin/stryker run $force) 2>&1 | tee "var/mutacion/$p.log" | grep -E "Mutation score|Killed|Survived|Timeout|NoCoverage|All files|^\S+\.ts|Final mutation|ERROR|break" || true

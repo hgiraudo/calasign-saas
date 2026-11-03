@@ -6,6 +6,10 @@
 //     subject: "Contrato", documents: [{ content: pdfBytes }], recipients: [{ name: "Ana", email: "ana@x.com" }],
 //     fields: [{ type: "signature", anchor: { text: "[[firma]]", width: 150, height: 40 } }],
 //   });
+//
+// Mutation testing (docs/estandares/tests-automatizados.md §8): Stryker sólo muta la verificación de webhooks
+// entrantes (al final del archivo); el cliente HTTP queda afuera.
+// Stryker disable all
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
   ApiEvent,
@@ -1000,6 +1004,7 @@ class BrandsApi {
 }
 
 // ───────────────────────────── Webhooks entrantes ─────────────────────────────
+// Stryker restore all
 
 export interface VerifyWebhookInput {
   /** Cuerpo CRUDO del POST (string o bytes), sin parsear. */
@@ -1051,5 +1056,6 @@ export function constructWebhookEvent(i: VerifyWebhookInput): WebhookEventPayloa
     throw new WebhookSignatureError("El cuerpo del webhook no es JSON válido");
   }
 }
+// Stryker disable all
 
 export default CalaSign;

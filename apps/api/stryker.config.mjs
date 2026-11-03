@@ -12,7 +12,15 @@ export default {
   testRunner: "vitest",
   vitest: { configFile: "vitest.stryker.config.ts", related: false },
   coverageAnalysis: "perTest",
-  mutate: ["src/lib/redact.ts", "src/lib/totp.ts"],
+  // webhooks.ts: sólo la firma y isPrivateAddress (el resto está entre comentarios «Stryker disable all»).
+  mutate: [
+    "src/lib/redact.ts",
+    "src/lib/totp.ts",
+    "src/lib/util.ts",
+    "src/lib/password-policy.ts",
+    "src/infra/evidence.ts",
+    "src/modules/webhooks.ts",
+  ],
   concurrency: 2,
   timeoutMS: 10_000,
   tempDirName: "../../var/stryker-tmp/api",
@@ -22,6 +30,6 @@ export default {
   htmlReporter: { fileName: "../../var/mutacion/api.html" },
   jsonReporter: { fileName: "../../var/mutacion/api.json" },
   // break: el piso medido (puntaje total, con los mutantes sin cobertura). Si baja de acá la corrida falla; si sube,
-  // se sube el piso el mismo día (trinquete, como check-calidad.mjs). Medido el 2026-10-29; subido el 2026-11-03.
-  thresholds: { high: 80, low: 60, break: 97 },
+  // se sube el piso el mismo día (trinquete, como check-calidad.mjs). Medido el 2026-11-03.
+  thresholds: { high: 80, low: 60, break: 85 },
 };

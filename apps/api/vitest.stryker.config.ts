@@ -3,4 +3,20 @@
 import { defineConfig, mergeConfig } from "vitest/config";
 import base from "./vitest.config";
 
-export default mergeConfig(base, defineConfig({ test: { include: ["test/redact.test.ts", "test/totp.test.ts"] } }));
+export default mergeConfig(
+  base,
+  defineConfig({
+    test: {
+      include: [
+        "test/redact.test.ts",
+        "test/totp.test.ts",
+        "test/util.test.ts",
+        "test/crypto-gcm-tag.test.ts",
+        "test/password-policy.test.ts",
+        "test/evidence-chain.test.ts",
+        "test/ssrf.test.ts",
+        "test/webhook-signature.test.ts",
+      ],
+    },
+  }),
+);

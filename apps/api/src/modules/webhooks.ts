@@ -1,5 +1,9 @@
 // Webhooks (Fase 3): endpoints por organización, entregas firmadas con HMAC-SHA256, reintentos con
 // backoff exponencial (vía la cola de jobs), registro de entregas y reenvío manual.
+//
+// Mutation testing (docs/estandares/tests-automatizados.md §8): Stryker sólo muta la firma (signPayload) y la
+// clasificación de direcciones internas (isPrivateAddress); el resto del archivo usa la base y la red.
+// Stryker disable all
 import { createHmac } from "node:crypto";
 import dns from "node:dns";
 import { lookup } from "node:dns/promises";
@@ -51,6 +55,7 @@ export function webhookEventId(envelopeId: string, seq: number, type: string) {
 export const SIGNATURE_HEADER = "CalaSign-Signature";
 
 // ───────────────────────────── Firma ─────────────────────────────
+// Stryker restore all
 
 /**
  * Encabezado `t=<unix>,v1=<hex>` con HMAC-SHA256(secret, "<t>.<body>"). Con varios secretos (rotación con período de
@@ -65,6 +70,7 @@ export function signPayload(secret: string | string[], body: string, timestamp =
 
 // ───────────────────────────── Validación de URL (SSRF) ─────────────────────────────
 
+// Stryker disable all
 const isLocalEnv = () => config.environment === "local";
 
 function validateUrl(raw: string) {
@@ -83,6 +89,7 @@ function validateUrl(raw: string) {
   return u.toString();
 }
 
+// Stryker restore all
 /** IPv6 en sus 8 grupos de 16 bits (acepta "::" y una IPv4 punteada al final). null si no es válida. */
 function ipv6Groups(ip: string): number[] | null {
   let x = ip.toLowerCase().replace(/%.*$/, "");
@@ -117,7 +124,11 @@ export function isPrivateAddress(ip: string): boolean {
     // Formatos con una IPv4 adentro: se valida la IPv4.
     if (zeros(0, 5) && g[5] === 0xffff) return isPrivateAddress(v4FromGroups(g[6], g[7])); // ::ffff:a.b.c.d
     if (zeros(0, 6)) return isPrivateAddress(v4FromGroups(g[6], g[7])); // ::a.b.c.d (IPv4-compatible)
-    if (g[0] === 0x64 && g[1] === 0xff9b) return isPrivateAddress(v4FromGroups(g[6], g[7])); // NAT64
+    if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0) return isPrivateAddress(v4FromGroups(g[6], g[7])); // ::ffff:0:a.b.c.d (SIIT)
+    if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return isPrivateAddress(v4FromGroups(g[6], g[7])); // NAT64 64:ff9b::/96
+    // El resto de ::/8 no se enruta en internet: reservado por el IETF, o el NAT64 de uso local 64:ff9b:1::/48
+    // (RFC 8215), que traduce un equipo de la red propia y no lleva la IPv4 en los últimos 32 bits.
+    if (g[0] < 0x0100) return true;
     if (g[0] === 0x2002) return isPrivateAddress(v4FromGroups(g[1], g[2])); // 6to4
     return false;
   }
@@ -139,6 +150,7 @@ export function isPrivateAddress(ip: string): boolean {
   );
 }
 
+// Stryker disable all
 /** Rechaza destinos que resuelven a direcciones internas (metadata de la nube, red privada). */
 export async function assertPublicDestination(url: string) {
   if (isLocalEnv()) return;

@@ -70,7 +70,7 @@ consumo del mes contra el del plan vigente.
 
 | Variable | Default | Uso |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Sin clave (ni `ANTHROPIC_AUTH_TOKEN`) → proveedor mock. **En producción** (`NODE_ENV=production`) nunca se usa el mock: sin clave la IA queda deshabilitada (503 `ai_unavailable`, `provider: "none"` en la consola) y se loguea un error al arrancar |
+| `ANTHROPIC_API_KEY` | — | Sin clave (ni `ANTHROPIC_AUTH_TOKEN`) → proveedor mock. **En producción** (`APP_ENV=prod`; dev corre con `NODE_ENV=production` y `APP_ENV=dev`, y usa el mock) nunca se usa el mock: sin clave la IA queda deshabilitada (503 `ai_unavailable`, `provider: "none"` en la consola) y se loguea un error al arrancar |
 | `ANTHROPIC_AUTH_TOKEN` | — | Alternativa a la API key (token Bearer; lo lee el SDK) |
 | `AI_PROVIDER` | auto | `mock` o `anthropic` para forzar |
 | `AI_MODEL` | `claude-opus-5-5` | Modelo |

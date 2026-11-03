@@ -46,7 +46,8 @@ simula una clave caída. Nunca disponible en producción.
 ## 2. Celdas (residencia de datos)
 
 Cada organización tiene una celda (`tenant_directory.cell`, el directorio global tenant → celda) que fija
-dónde se guardan sus archivos. Se elige al darse de alta («Dónde se guardan tus documentos»,
+dónde se guardan sus archivos (los proveedores externos —correo, IA, SMS, pagos, KYC— procesan donde procesa cada uno,
+sea cual sea la celda: [`PROVEEDORES.md`](PROVEEDORES.md)). Se elige al darse de alta («Dónde se guardan tus documentos»,
 `GET /v1/public/cells`). La web ofrece **todas** las del catálogo como disponibles (decisión del 30-Oct-2026); si se
 elige una que el despliegue no tiene configurada (`available: false` en la API), la organización queda en la celda
 por defecto y la región pedida se guarda en `tenants.requested_cell` (migración 0125) para migrarla cuando esa celda

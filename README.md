@@ -17,6 +17,7 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/MARCA-BLANCA.md`](docs/MARCA-BLANCA.md) | Marca blanca: sub-marcas, textos y plantillas propios, remitente y dominios de correo/sub-marca |
 | [`docs/API-ROADMAP.md`](docs/API-ROADMAP.md) | Comparación de la API con la de otros proveedores de firma, brechas y roadmap |
 | [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
+| [`docs/PROVEEDORES.md`](docs/PROVEEDORES.md) | Proveedores que reciben datos: qué reciben, para qué, dónde y cómo se apagan (SEG-30) |
 | [`docs/FIRMA-CON-CERTIFICADO.md`](docs/FIRMA-CON-CERTIFICADO.md) | Firma con el certificado del titular (token PKCS#11, almacén de Windows, .p12) y el Firmador CalaSign |
 | [`docs/MCP-CONECTORES.md`](docs/MCP-CONECTORES.md) | Conectores MCP para Claude, ChatGPT, Claude Code y Gemini: registro dinámico de clientes OAuth (RFC 7591), `resource` (RFC 8707), herramientas |
 | [`docs/estandares/`](docs/estandares/README.md) | **Estándares de código, calidad y tests**: backend, frontend, SQL y migraciones, decisiones, cómo contribuir, mapa de tests y reglas de seguridad `SEG-NN` |

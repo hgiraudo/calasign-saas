@@ -14,6 +14,7 @@ import {
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
+import { inlineStyle } from "../lib/csp";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
@@ -303,7 +304,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         .code(410)
         .type("text/html; charset=utf-8")
         .send(
-          `<!doctype html><meta charset="utf-8"><title>Link vencido · Link expired</title><body style="font-family:sans-serif;padding:32px;color:#0b1f3a">` +
+          `<!doctype html><meta charset="utf-8"><title>Link vencido · Link expired</title>` +
+            inlineStyle(reply, "body{font-family:sans-serif;padding:32px;color:#0b1f3a}") +
+            `<body>` +
             `<h1>Link vencido</h1><p>Este link de firma ya se usó o venció, o el sobre ya no está disponible. Volvé a la aplicación para obtener uno nuevo.</p>` +
             `<p>Link expirado · Link expired</p>`,
         );

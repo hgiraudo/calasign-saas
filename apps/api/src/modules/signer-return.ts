@@ -17,6 +17,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../config";
 import type { Db } from "../infra/db";
+import { inlineStyle } from "../lib/csp";
 import { decrypt, encrypt, hmacEqual, hmacSign } from "../lib/util";
 import { PLATFORM_NAME } from "../notifications/templates";
 import { resolveToken } from "./signing";
@@ -171,8 +172,9 @@ export function neutralReturnPage(
     .type("text/html; charset=utf-8")
     .send(
       `<!doctype html><html lang="${o.locale ?? "es"}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(product)}</title>` +
-        `<body style="font-family:sans-serif;padding:32px;color:#0b1f3a;max-width:560px">` +
-        `<h1 style="color:${color}">${esc(t.title(t.what[kind], product))}</h1><p>${esc(t.body)}</p></body></html>`,
+        // Sin atributos style (la CSP no los permite): un <style> con su hash en el CSP de la respuesta.
+        inlineStyle(reply, `body{font-family:sans-serif;padding:32px;color:#0b1f3a;max-width:560px}h1{color:${color}}`) +
+        `<body><h1>${esc(t.title(t.what[kind], product))}</h1><p>${esc(t.body)}</p></body></html>`,
     );
 }
 

@@ -116,6 +116,11 @@ Es la pantalla que más importa y la que peor se prueba en un escritorio. Lo que
 - **Teclado**: todo lo clickeable es un `<button>` o un `<a>`, con foco visible. Al cambiar de ruta el foco va al
   contenido; hay «saltar al contenido». Un modal atrapa el foco y lo devuelve al cerrar.
 - **Etiquetas**: todo `<input>` tiene `<label>` (o `aria-label`); cada página tiene título (`useTitle`).
+- **Sin estilos en línea en el HTML** (la CSP no admite `'unsafe-inline'` en `style-src`, seguridad §5.2): nada de
+  `<style>` creados desde el script, `setAttribute("style", …)`, `innerHTML` con `style="…"` ni iframes `srcdoc` con
+  CSS (heredan la CSP de la página). El `style={{…}}` de React sí (va por CSSOM). CSS dinámico → una hoja construida
+  (`adoptedStyleSheets`, como el tema de la marca en `lib/white-label.ts`); HTML de terceros o de correos → el marco
+  `/brand-preview` (`PreviewFrame` en `Branding.tsx`). Lo vigila `e2e/seguridad.e2e.ts` (cero violaciones de la CSP).
 - **Rutas cargadas bajo demanda** (`lazy`) y pdf.js en un chunk aparte: la entrada pasó de 1,68 MB a 564 kB. Una
   dependencia pesada nueva va en su propio chunk.
 

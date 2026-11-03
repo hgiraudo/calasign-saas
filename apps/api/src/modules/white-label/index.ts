@@ -6,10 +6,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import type { BlobStore } from "../../infra/storage";
+import { inlineStyle } from "../../lib/csp";
 import { sha256Hex } from "../../lib/util";
 import type { Services } from "../context";
 import { signerTokenHash } from "../signer-token";
 import { assetPath, productLabel, publicTheme, rebrands, resolveBrand, type ResolvedBrand } from "./brand";
+import { brandPreviewFrame } from "./preview-frame";
 import { brandFromKeyOrHost, whiteLabelRoutes } from "./routes";
 
 export { applyEnvelopeBrand, recheckWhiteLabelDomains } from "./routes";
@@ -94,8 +96,11 @@ function indexHtml(): string | null {
 
 const escAttr = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-/** index.html con la marca: título, favicon, color, CSS del tema y los datos que lee la web al arrancar. */
-export function injectBrand(html: string, b: ResolvedBrand, opts: { verify?: boolean } = {}): string {
+/**
+ * index.html con la marca: título, favicon, color, CSS del tema y los datos que lee la web al arrancar. El CSS va en un
+ * <style> con su hash en el CSP de `reply` (sin 'unsafe-inline').
+ */
+export function injectBrand(html: string, b: ResolvedBrand, reply: FastifyReply, opts: { verify?: boolean } = {}): string {
   // En /verify, tema restringido (sin el CSS propio): ver publicTheme. El completo va aparte (pageCss), solo en los datos
   // para la web: lo restaura al salir de /verify navegando dentro de la aplicación.
   const theme = publicTheme(b, { verify: opts.verify, withPageCss: opts.verify });
@@ -121,7 +126,8 @@ export function injectBrand(html: string, b: ResolvedBrand, opts: { verify?: boo
     out = out.replace(/<link rel="manifest"[^>]*>/, put(`<link rel="manifest" href="/manifest.webmanifest?b=${encodeURIComponent(b.key)}">`));
   const head = [
     theme.fontCssUrl ? `<link rel="stylesheet" href="${escAttr(theme.fontCssUrl)}">` : "",
-    theme.css ? `<style id="brand-theme">${theme.css.replace(/<\//g, "<\\/")}</style>` : "",
+    // La web lo reemplaza al arrancar por una hoja construida (lib/white-label.ts), que no depende de la CSP.
+    theme.css ? inlineStyle(reply, theme.css, "brand-theme") : "",
     // Bloque de datos (no ejecutable, la CSP no lo bloquea): la web lo lee antes del primer render, sin parpadeo.
     `<script type="application/json" id="brand-data">${JSON.stringify(theme).replace(/</g, "\\u003c")}</script>`,
   ].join("");
@@ -137,7 +143,7 @@ export async function sendBrandedIndex(db: Db, req: FastifyRequest, reply: Fasti
   reply
     .header("cache-control", "no-cache")
     .type("text/html; charset=utf-8")
-    .send(injectBrand(html, b, { verify: isVerifyPath(req.url.split("?")[0]) }));
+    .send(injectBrand(html, b, reply, { verify: isVerifyPath(req.url.split("?")[0]) }));
   return true;
 }
 
@@ -145,6 +151,7 @@ export async function sendBrandedIndex(db: Db, req: FastifyRequest, reply: Fasti
 
 export async function whiteLabelModule(app: FastifyInstance, s: Services) {
   await whiteLabelRoutes(app, s);
+  brandPreviewFrame(app);
 
   // En el dominio de una marca: favicon, ícono y manifest propios (no los de la plataforma).
   app.addHook("onRequest", async (req, reply) => {
@@ -178,13 +185,16 @@ export async function whiteLabelModule(app: FastifyInstance, s: Services) {
       if (!rebrands(b)) return;
       // Página sin conexión del service worker: con el nombre y el color de la marca (la de la plataforma la nombra).
       const name = escAttr(productLabel(b));
-      // Los colores se validan #RRGGBB al guardarse; se revisan igual acá porque van crudos a un atributo style.
+      // Los colores se validan #RRGGBB al guardarse; se revisan igual acá porque van crudos al CSS.
       const bg = HEX_COLOR.test(b.theme.backgroundColor ?? "") ? b.theme.backgroundColor : "#f4f6fa";
       const fg = HEX_COLOR.test(b.theme.primaryColor ?? "") ? b.theme.primaryColor : "#0b1f3a";
-      // name va escapado (escAttr) y los colores validados: nada del cliente llega crudo al HTML.
-      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name}</title></head>
-<body style="font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:${bg}">
-<main style="text-align:center;padding:24px"><h1 style="color:${fg}">${name}</h1><p>Sin conexión · Sem conexão · You're offline</p></main></body></html>`;
+      // name va escapado (escAttr) y los colores validados: nada del cliente llega crudo al HTML. El <style> va con su
+      // hash en el CSP (el service worker guarda la respuesta entera: el hash viaja con ella).
+      const css =
+        `body{font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:${bg}}` +
+        `main{text-align:center;padding:24px}h1{color:${fg}}`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name}</title>${inlineStyle(reply, css)}</head>
+<body><main><h1>${name}</h1><p>Sin conexión · Sem conexão · You're offline</p></main></body></html>`;
       return reply.header("cache-control", "no-cache").type("text/html; charset=utf-8").send(html);
     }
     const p = assetPath(b, "favicon");

@@ -62,20 +62,32 @@ export interface SobreEnviado {
   token: string;
 }
 
+export interface OpcionesSobre {
+  locale?: string;
+  /** Textos del sobre (por defecto, los de un sobre común con el stamp de la cuenta). */
+  subject?: string;
+  message?: string;
+  signerName?: string;
+  fileName?: string;
+}
+
 /** Sobre con un PDF, un firmante (firma + nombre) y enviado. Devuelve el token del link de firma del buzón. */
-export async function sobreEnviado(request: APIRequestContext, cuenta: Cuenta, { locale = "es" } = {}): Promise<SobreEnviado> {
+export async function sobreEnviado(request: APIRequestContext, cuenta: Cuenta, o: OpcionesSobre = {}): Promise<SobreEnviado> {
+  const locale = o.locale ?? "es";
   const { envelope } = await ok<{ envelope: { id: string } }>(
-    await request.post("/v1/envelopes", { data: { subject: `Contrato web ${cuenta.stamp}`, message: "Por favor firmá" } }),
+    await request.post("/v1/envelopes", {
+      data: { subject: o.subject ?? `Contrato web ${cuenta.stamp}`, message: o.message ?? "Por favor firmá" },
+    }),
     "crear sobre",
   );
   const doc = await ok<{ id: string }>(
     await request.post(`/v1/envelopes/${envelope.id}/documents`, {
-      multipart: { file: { name: "contrato.pdf", mimeType: "application/pdf", buffer: tinyPdf() } },
+      multipart: { file: { name: o.fileName ?? "contrato.pdf", mimeType: "application/pdf", buffer: tinyPdf() } },
     }),
     "subir PDF",
   );
   const recipientId = crypto.randomUUID();
-  const signerName = `José Pérez ${cuenta.stamp}`;
+  const signerName = o.signerName ?? `José Pérez ${cuenta.stamp}`;
   await ok(
     await request.put(`/v1/envelopes/${envelope.id}/recipients`, {
       data: {

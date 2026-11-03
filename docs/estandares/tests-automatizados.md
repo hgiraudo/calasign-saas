@@ -2,7 +2,7 @@
 
 > Lo que no puede fallar en CalaSign es **la evidencia de una firma**: que el PDF sellado sea el que se firmó, que la
 > cadena de eventos esté completa y que nadie vea un sobre de otra organización. El centro de gravedad está en los
-> tests de la API y de `packages/pdf`; el navegador tiene un smoke de los caminos críticos (§6).
+> tests de la API y de `packages/pdf`; el navegador tiene un smoke de los caminos críticos y sus pruebas de seguridad (§6).
 >
 > Este doc es el **mapa**: qué capa caza qué, qué test escribir para cada cambio, y el comando que corre todo.
 
@@ -23,7 +23,7 @@ dependencias instaladas.
 | 5 | **Integraciones y SDKs** | `integrations/test/*`, `smoke_test.py` | **~10 s** | skill, MCPB, conectores de Office/Google, SDK de Python sin red | — |
 | 6 | **e2e locales** | `qa.sh --solo-e2e` | **~5 min** · 23 suites | flujos de punta a punta contra una API de verdad: firmar, sellar, CRM, conectores, certificado propio, SDKs | la web en un navegador; B-LT/B-LTA (sin PKI de laboratorio) |
 | 7 | **e2e contra dev** | `node scripts/<suite>.mjs https://dev.calasign.com` | minutos | lo mismo sobre Postgres, S3, KMS y Caddy reales | las suites que sólo existen en local (§5.1) |
-| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1 min** · 16 tests (build 19 s + 40 s) | el firmante de punta a punta en Chromium de escritorio y de celular y en WebKit (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript | pantallas fuera del smoke |
+| 8 | **Web en navegador** | `qa.sh --web` (Playwright) | **~1,5 min** · 25 tests (build 19 s + ~70 s) | el firmante de punta a punta en Chromium de escritorio y de celular y en WebKit (consentimiento, PDF dibujado, firma, descarga idéntica al sellado), login, `/verify`, `/developers`, excepciones de JavaScript; violaciones de la CSP, XSS almacenado, enmarcado y sesión tras salir (`seguridad.e2e.ts`) | pantallas fuera del smoke |
 | 9 | **Seguridad nocturna** | `sast.sh --completo`, `dast.sh`, `dast.sh --remoto https://dev.calasign.com` (QA nocturno) | **~20 min** | rulesets públicos de Semgrep, dependencias con vulnerabilidad (osv-scanner, informativo), configuración insegura de `infra/` (Trivy); OWASP ZAP **atacando** la API efímera autenticado con la spec OpenAPI (inyección, XSS, traversal, cabeceras, errores que filtran internos) y en pasivo dev, más TLS (SEG-49) | lógica de negocio y autorización entre organizaciones (eso es `tenant-isolation-routes.test.ts`) |
 
 **`qa.sh` las agrupa:**
@@ -199,7 +199,7 @@ manuales, receptores en 127.0.0.1). El resto también corre contra `https://dev.
 
 ## 6. e2e de la web en navegador (Playwright)
 
-**Estado (29-Oct-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 16 tests, ~45 s
+**Estado (3-Nov-2026).** Vigente: `apps/web/e2e/`, con su [`README`](../../apps/web/e2e/README.md). 25 tests, ~70 s
 más ~19 s de compilar la web. Corren en `qa.sh --web` y dentro de `qa.sh --e2e`.
 
 **Por qué.** Hay regresiones que **sólo** se ven en un navegador y que la pasada 147 tuvo que arreglar a mano: el
@@ -214,9 +214,15 @@ ya no existe, la barra del firmante ilegible con colores de marca claros.
 | `consola.e2e.ts` | Chromium | Login por la pantalla, el sobre en la lista y en el detalle, contraseña equivocada |
 | `firma-importar-celular.e2e.ts` | Chromium | Firma **importada** de una imagen (SVG rechazado) y firma **dibujada en el celular** (link `/h/…` en otra página, un solo uso, la computadora la recibe y finaliza), con la evidencia de cada una |
 | `publicas.e2e.ts` | Chromium | `/verify` con el PDF sellado («Documento válido»), con **un byte cambiado** y con un PDF ajeno («No coincide»); `/developers` y cambio de idioma |
+| `seguridad.e2e.ts` | Chromium | **Cero violaciones de la CSP** (sin `'unsafe-inline'`) en el firmante con marca, el pase al celular, la consola (lista, detalle, editor, Marca con sus vistas previas), `/verify` y `/developers`; la marca se sigue aplicando. **XSS almacenado** en asunto, mensaje, firmante y archivo (firmante y consola, con la CSP apagada para probar el escape) y `javascript:` en un link de la marca. **Enmarcado**: cabeceras de las páginas y un sitio ajeno real que no puede enmarcar login, firmante ni firma embebida (el integrador autorizado sí). **Sesión**: tras salir, ni Atrás ni una ruta de la consola muestran datos |
 
 Todos fallan además si la página tira una excepción de JavaScript. Visto fallar con un bug inyectado: con la traba
-del consentimiento quitada, el test del firmante da rojo («Expected: disabled / Received: enabled»).
+del consentimiento quitada, el test del firmante da rojo («Expected: disabled / Received: enabled»). Los de
+`seguridad.e2e.ts`, cada uno con el suyo (3-Nov-2026): la vista previa de Marca otra vez en `srcdoc` y el tema por
+`<style>.textContent` (violaciones de la CSP), un `dangerouslySetInnerHTML` del asunto en el firmante y en el detalle
+(`window.__xss = "asunto"`), `javascript:` aceptado en los links de la marca (200 en vez de 400), `frame-ancestors *`
+(las cabeceras y el sitio ajeno, que mostraba la app), el logout sin llamar a la API (la consola seguía abierta) y
+`'unsafe-inline'` de vuelta en `style-src`.
 
 ### 6.2 Cómo corre
 
@@ -224,7 +230,7 @@ del consentimiento quitada, el test del firmante da rojo («Expected: disabled /
   `apps/web/dist`. 🔴 Si el puerto está ocupado **falla**: no corre contra una API ajena.
 - **Los datos se arman por la API** (`helpers/api.ts`); la UI sólo para lo que se prueba.
 - **Un worker**: comparten la API y la máquina tiene poca RAM.
-- **Navegadores**: Chromium siempre; **WebKit** (Safari, 13 tests más, ~2 min) con `E2E_WEBKIT=1`: lo corre siempre el
+- **Navegadores**: Chromium siempre; **WebKit** (Safari, 22 tests más, ~3 min) con `E2E_WEBKIT=1`: lo corre siempre el
   QA nocturno, y a mano conviene después de tocar el visor de PDF, el lienzo de la firma o estilos. Playwright **1.64.1**
   (la 1.49 sólo traía WebKit para Ubuntu 24.04). Una vez por máquina: `./node_modules/.bin/playwright install chromium
   webkit` (en `apps/web`) y `sudo apt-get install libevent-2.1-7t64 libavif16 libmanette-0.2-0`.

@@ -94,16 +94,29 @@ describe("textos de la verificación con marca blanca", () => {
   });
 
   it("al salir de /verify navegando dentro de la web se restaura el CSS completo de la marca", () => {
+    // El CSS de la marca va en una hoja construida (adoptedStyleSheets): la CSP no admite <style> en línea.
+    class FakeSheet {
+      text = "";
+      replaceSync(css: string) {
+        this.text = css;
+      }
+    }
     const els = new Map<string, any>();
     const fakeDoc = {
       head: { appendChild: (el: any) => els.set(el.id, el) },
       getElementById: (id: string) => els.get(id) ?? null,
       createElement: () => ({ id: "", textContent: "", remove() {} }),
       querySelector: () => null,
+      adoptedStyleSheets: [] as FakeSheet[],
     };
-    const g = globalThis as { document?: unknown };
+    // El <style> que manda el servidor (con su hash en el CSP): la web lo reemplaza por la hoja construida.
+    let ssrRemoved = false;
+    els.set("brand-theme", { id: "brand-theme", textContent: ":root{--navy:#000000}", remove: () => (ssrRemoved = els.delete("brand-theme")) });
+    const g = globalThis as { document?: unknown; CSSStyleSheet?: unknown };
     const prev = g.document;
+    const prevSheet = g.CSSStyleSheet;
     g.document = fakeDoc;
+    g.CSSStyleSheet = FakeSheet;
     try {
       setVerifyPageMode(true);
       setBrandTheme({
@@ -112,13 +125,19 @@ describe("textos de la verificación con marca blanca", () => {
         pageCss: ":root{--navy:#112233}\n.x{}",
         texts: {},
       } as unknown as PublicBrandTheme);
-      expect(els.get("brand-theme").textContent).not.toContain(".x{}");
+      expect(ssrRemoved).toBe(true);
+      expect(fakeDoc.adoptedStyleSheets).toHaveLength(1);
+      expect(fakeDoc.adoptedStyleSheets[0].text).not.toContain(".x{}");
       setVerifyPageMode(false);
-      expect(els.get("brand-theme").textContent).toBe(":root{--navy:#112233}\n.x{}");
+      expect(fakeDoc.adoptedStyleSheets).toHaveLength(1);
+      expect(fakeDoc.adoptedStyleSheets[0].text).toBe(":root{--navy:#112233}\n.x{}");
+      // Ningún <style> creado por la web.
+      expect(els.has("brand-theme")).toBe(false);
     } finally {
       setBrandTheme(null);
       setVerifyPageMode(false);
       g.document = prev;
+      g.CSSStyleSheet = prevSheet;
     }
   });
 });

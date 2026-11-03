@@ -156,9 +156,28 @@ en `~/.local/share/semgrep-venv`, `pip install semgrep==…`), testssl.sh 3.2.4 
 
 Primera corrida (31-Oct-2026): ZAP activo 12 min sobre ~730 URLs autenticadas, **0 altas**; 4 medias/bajas aceptadas
 por diseño (CORS `*` de `/oauth/*` para clientes MCP, `client_secret_basic`, XSS en JSON de baja confianza) y
-`style-src 'unsafe-inline'` en la CSP (pendiente: sacar los estilos inline). dev.calasign.com: cabeceras correctas
+`style-src 'unsafe-inline'` en la CSP (**resuelto el 3-Nov-2026**, ver abajo). dev.calasign.com: cabeceras correctas
 (CSP, HSTS, `nosniff`, `frame-ancestors 'none'`), TLS sin problemas altos; testssl marca BREACH (gzip) como medio:
 aceptado, el HTML comprimido no mezcla secretos con texto del atacante.
+
+**CSP sin `'unsafe-inline'` en `style-src` (3-Nov-2026).** Queda `style-src 'self' https://fonts.googleapis.com` en
+toda respuesta de la API y de la web: un HTML inyectado ya no puede meter `<style>` (leer tokens de la página con
+selectores de atributo, tapar o mover botones) ni `style="…"`. Lo que lo necesitaba y cómo quedó:
+
+| Qué | Ahora |
+|---|---|
+| Tema de la marca (color, fuente, CSS propio) que la web aplicaba con un `<style>` creado por script | Hoja construida (`adoptedStyleSheets`, `lib/white-label.ts`), que la CSP no frena. En navegadores sin hojas construidas (Safari < 16.4) queda el `<style>` que manda el servidor; un cambio de marca dentro de la sesión se ve al recargar |
+| `<style id="brand-theme">` del `index.html` con la marca, página sin conexión de la marca, página neutra de vuelta de un proveedor, link embebido vencido | `<style>` con su hash `'sha256-…'` en el CSP de esa respuesta (`apps/api/src/lib/csp.ts` `inlineStyle`); sin atributos `style` |
+| `offline.html` de la plataforma (estático) | Estilos en `/offline.css`, guardado por el service worker junto con la página |
+| Vistas previas de Marca (página de firma y correos, que van con `style="…"`): iframes `srcdoc`, que heredan la CSP | Marco `/brand-preview` con su propia CSP (`white-label/preview-frame.ts`): estilos en línea sí; script sólo el suyo por hash; sin red, formularios ni `allow-same-origin`. Recibe el HTML por `postMessage` |
+
+Fuera de la CSP de la web, con la suya propia y `'unsafe-inline'` en estilos a propósito: el complemento de Office
+(`/integrations/office/*`, lo exige office.js), las páginas de pago simulado (`billing/mock-page.ts`, sólo local), los
+SVG de logo y archivos de marca (`sandbox`, sin scripts) y la UI local del firmador de escritorio. Lo prueban
+`apps/api/test/http-headers-estilos.test.ts` (ninguna respuesta pide `'unsafe-inline'`; cada `<style>` lleva su hash)
+y `apps/web/e2e/seguridad.e2e.ts` (cero violaciones de la CSP en firmante, consola, Marca, `/verify`, `/developers` y
+el pase al celular, en Chromium y WebKit). WebKit reporta `style-src-attr` al crear un `<select>` (su árbol interno
+del control; el control se dibuja bien): el test lo descuenta.
 
 ### 5.3 Revisión white-box (pentest interno) del 31-Oct-2026
 

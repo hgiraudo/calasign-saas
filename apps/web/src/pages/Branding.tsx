@@ -102,7 +102,36 @@ function clean(c: BrandConfigInput): BrandConfigInput {
   };
 }
 
-/** HTML de la vista previa de la página de firma (iframe sin scripts). */
+/**
+ * Vista previa en un marco con su propia CSP (/brand-preview, API white-label/preview-frame.ts). Un srcdoc hereda la de
+ * la consola, que no admite <style> ni style="…" en línea: el CSS de la marca y el de los correos no se aplicaban. El
+ * marco va sin allow-same-origin (origen opaco: no ve la sesión) y recibe el HTML por postMessage cada vez que carga o
+ * cambia; los scripts del HTML no corren (DOMParser y la CSP del marco).
+ */
+function PreviewFrame({ title, height, html }: { title: string; height: number; html: string }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  // Cuenta las cargas del marco: tras recargarse (p. ej. un link de la vista previa) se le vuelve a mandar el HTML.
+  const [loads, setLoads] = useState(0);
+  useEffect(() => {
+    // Origen opaco (sandbox sin allow-same-origin): no hay un origen que nombrar. El destino es el marco propio
+    // (contentWindow de este iframe, no una ventana que nos abrió o enmarca) y el contenido, la vista previa de la marca.
+    // nosemgrep: calasign-postmessage-a-cualquier-origen — marco propio de origen opaco, ver arriba
+    if (loads) ref.current?.contentWindow?.postMessage({ html }, "*");
+  }, [loads, html]);
+  return (
+    <iframe
+      ref={ref}
+      title={title}
+      className="card"
+      style={{ width: "100%", height, border: 0 }}
+      sandbox="allow-scripts"
+      src="/brand-preview"
+      onLoad={() => setLoads((n) => n + 1)}
+    />
+  );
+}
+
+/** HTML de la vista previa de la página de firma (en PreviewFrame, sin scripts). */
 function signerMockHtml(o: {
   css: string;
   fontCssUrl: string | null;
@@ -642,7 +671,7 @@ export function BrandingPage() {
 
         <div className="stack">
           <h3>{w("preview.signer")}</h3>
-          <iframe title={w("preview.signer")} className="card" style={{ width: "100%", height: 380, border: 0 }} sandbox="" srcDoc={mockHtml} />
+          <PreviewFrame title={w("preview.signer")} height={380} html={mockHtml} />
           {tab === "email" && <EmailPreview brandId={sel} cfg={cfg} />}
         </div>
       </div>
@@ -922,7 +951,7 @@ function EmailPreview({ brandId, cfg }: { brandId: string; cfg: BrandConfigInput
             <br />
             {prev.subject}
           </p>
-          <iframe title={w("email.preview")} className="card" style={{ width: "100%", height: 460, border: 0 }} sandbox="" srcDoc={prev.html} />
+          <PreviewFrame title={w("email.preview")} height={460} html={prev.html} />
         </>
       )}
     </div>

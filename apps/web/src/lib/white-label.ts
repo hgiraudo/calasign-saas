@@ -38,13 +38,36 @@ function ensure<T extends HTMLElement>(id: string, tag: string, parent: HTMLElem
   return el;
 }
 
+let themeSheet: CSSStyleSheet | null = null;
+
+/**
+ * CSS del tema de la marca. La CSP no admite <style> en línea (seguridad §5.2): va en una hoja construida
+ * (adoptedStyleSheets), que se arma desde el script y la CSP no frena. Se agrega después de las hojas del documento,
+ * como antes el <style> al final del <head>. El <style id="brand-theme"> que manda el servidor (con su hash en el
+ * CSP, para que no haya parpadeo al cargar) se reemplaza en la misma tarea, sin un cuadro sin tema en el medio.
+ */
+function setThemeCss(css: string) {
+  const ssr = document.getElementById("brand-theme");
+  if (typeof CSSStyleSheet === "undefined" || !("replaceSync" in CSSStyleSheet.prototype) || !("adoptedStyleSheets" in document)) {
+    // Sin hojas construidas (Safari < 16.4): queda el <style> del servidor. Un cambio de marca dentro de la sesión (o
+    // entrar y salir de /verify) no se refleja hasta recargar; sin marca, se saca.
+    if (!css) ssr?.remove();
+    return;
+  }
+  ssr?.remove();
+  if (!themeSheet) {
+    themeSheet = new CSSStyleSheet();
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeSheet];
+  }
+  themeSheet.replaceSync(css);
+}
+
 function apply(t: PublicBrandTheme | null) {
   if (typeof document === "undefined") return;
-  const style = ensure<HTMLStyleElement>("brand-theme", "style");
   // En /verify solo barra, botones y fuente (verifyPageTheme): con el CSS propio una marca podía ocultar el veredicto.
   // El tema pudo llegar completo desde la página del firmante (navegación dentro de la web): se recalcula. Y al revés: el
   // que inyecta el servidor en /verify trae `css` restringido y el completo en `pageCss`, que se restaura al salir.
-  style.textContent = t ? (verifyPage ? verifyCss(t) : (t.pageCss ?? t.css)) : "";
+  setThemeCss(t ? (verifyPage ? verifyCss(t) : (t.pageCss ?? t.css)) : "");
   const font = document.getElementById("brand-font") as HTMLLinkElement | null;
   if (t?.fontCssUrl) {
     const l = font ?? ensure<HTMLLinkElement>("brand-font", "link");

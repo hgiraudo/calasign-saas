@@ -14,6 +14,7 @@ import type { BlobStore } from "./infra/storage";
 import { AppError, rateLimitError } from "./lib/errors";
 import { markBearerAuthRoutes, rateLimitIdentity, rateLimitIpKey, type RateLimitIdentity } from "./lib/ip";
 import { bearerToken, requestPath } from "./lib/util";
+import { addCspSource } from "./lib/csp";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
@@ -67,18 +68,7 @@ export const TURNSTILE_PAGE_PREFIXES = ["/f/", "/wf/"] as const;
 
 /** Suma `origin` a script-src y frame-src de un CSP (frame-src se crea si no está, con 'self' como el default-src). */
 export function withTurnstile(csp: string, origin: string): string {
-  const parts = csp
-    .split(";")
-    .map((d) => d.trim())
-    .filter(Boolean);
-  const add = (name: string, fallback: string) => {
-    const k = parts.findIndex((d) => d.split(/\s+/)[0].toLowerCase() === name);
-    if (k >= 0) parts[k] = `${parts[k]} ${origin}`;
-    else parts.push(`${name} ${fallback} ${origin}`);
-  };
-  add("script-src", "'self'");
-  add("frame-src", "'self'");
-  return parts.join(";");
+  return addCspSource(addCspSource(csp, "script-src", origin), "frame-src", origin);
 }
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
@@ -116,8 +106,12 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
+        // Sin 'unsafe-inline' (seguridad §5.2): un HTML inyectado no puede meter <style> ni style="…" (leer tokens de la
+        // página con selectores, tapar o mover botones). El `style={…}` de React va por CSSOM y la CSP no lo frena; el
+        // CSS de la marca va en una hoja construida (web: lib/white-label.ts) o en un <style> con su hash en la respuesta
+        // (API: lib/csp.ts inlineStyle). Las vistas previas de marca blanca, con su propia CSP (white-label/preview-frame.ts).
         // Google Fonts: tipografía de la marca blanca (white-label/brand.ts).
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        styleSrc: ["'self'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
         workerSrc: ["'self'", "blob:"],

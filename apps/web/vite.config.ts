@@ -40,6 +40,8 @@ export default defineConfig({
     proxy: {
       "/v1": "http://localhost:4000",
       "/dev": "http://localhost:4000",
+      // Marco de las vistas previas de marca blanca (Branding.tsx PreviewFrame), con su propia CSP.
+      "/brand-preview": "http://localhost:4000",
     },
   },
   // pdf.js (legacy, ~1,4 MB entre la biblioteca y su worker) y el portal de desarrolladores se cargan aparte; el aviso

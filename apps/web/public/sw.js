@@ -4,7 +4,9 @@
 const VERSION = "calasign-v1";
 const STATIC = `${VERSION}-static`;
 const OFFLINE_URL = "/offline.html";
-const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon.svg", "/manifest.webmanifest"];
+// Sus estilos van aparte (la CSP no admite <style> en línea): sin conexión salen de la caché, como la página.
+const OFFLINE_CSS = "/offline.css";
+const PRECACHE = [OFFLINE_URL, OFFLINE_CSS, "/icons/icon-192.png", "/icons/icon.svg", "/manifest.webmanifest"];
 // VERSION no cambia en cada deploy: sin un tope, los /assets con hash de cada versión vieja (unos 3 MB por deploy) se
 // acumulaban para siempre en la caché. Se conservan los más recientes (keys() devuelve el orden de inserción).
 const MAX_ASSETS = 40;
@@ -52,6 +54,11 @@ self.addEventListener("fetch", (event) => {
   // Navegación (páginas de la app): siempre de la red; sin conexión, la página offline.
   if (req.mode === "navigate") {
     event.respondWith(fetch(req).catch(() => caches.match(OFFLINE_URL)));
+    return;
+  }
+
+  if (url.origin === self.location.origin && url.pathname === OFFLINE_CSS) {
+    event.respondWith(caches.match(OFFLINE_CSS).then((hit) => hit ?? fetch(req)));
     return;
   }
 

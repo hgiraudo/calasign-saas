@@ -371,7 +371,7 @@ el resto va entre `// Stryker disable all` y `// Stryker restore all` (sus mutan
 
 ### 8.3 El piso
 
-Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **85**, sdk **96**): si baja, la
+Cada `stryker.config.mjs` tiene `thresholds.break` con el puntaje total medido (pdf **38**, api **95**, sdk **96**, medidos el 3-Nov-2026 con `--completo`): si baja, la
 corrida falla. Cuando un test nuevo lo sube, el piso sube el mismo día, igual que el trinquete de `check-calidad.mjs`.
 
 **Cuándo correrlo**: al tocar un módulo mutado (o su test), y una vez por mes. No va en `qa.sh` ni en el deploy: tarda

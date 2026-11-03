@@ -31,5 +31,5 @@ export default {
   jsonReporter: { fileName: "../../var/mutacion/api.json" },
   // break: el piso medido (puntaje total, con los mutantes sin cobertura). Si baja de acá la corrida falla; si sube,
   // se sube el piso el mismo día (trinquete, como check-calidad.mjs). Medido el 2026-11-03.
-  thresholds: { high: 80, low: 60, break: 85 },
+  thresholds: { high: 80, low: 60, break: 95 },
 };

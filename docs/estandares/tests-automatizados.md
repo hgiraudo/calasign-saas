@@ -30,10 +30,10 @@ dependencias instaladas.
 
 | Modo | Capas | Tarda | Cuándo |
 |---|---|---|---|
-| `./scripts/qa.sh --rapido` | 1-2 | ~105 s | lo corre `deploy-dev.sh`; antes de un commit chico |
-| `./scripts/qa.sh` | 1-5 | ~7,5 min | antes de commitear un cambio de comportamiento |
+| `./scripts/qa.sh --rapido` | 1-2 | ~105 s | antes de un commit chico; `deploy-dev.sh` con `QA_DEPLOY=rapido` |
+| `./scripts/qa.sh` | 1-5 | ~15 min | antes de commitear un cambio de comportamiento; lo corre `deploy-dev.sh` si ese commit no lo pasó (§4.3) |
 | `./scripts/qa.sh --web` | 8 | ~1 min | después de tocar la web |
-| `./scripts/qa.sh --e2e` | 1-6 y 8 | ~11 min | antes de un deploy grande, después de un merge de ramas, al cerrar una pasada de review |
+| `./scripts/qa.sh --e2e` | 1-6 y 8 | ~17 min | antes de un deploy grande, después de un merge de ramas, al cerrar una pasada de review |
 
 ---
 
@@ -138,9 +138,13 @@ número de `qa.sh` y de `package.json` (`lint`) baja en el mismo commit.
 
 ### 4.3 Cableado al deploy
 
-`scripts/deploy-dev.sh` corre `qa.sh --rapido` antes de compilar y subir (unos 75 s sobre un deploy de varios
-minutos). `SKIP_QA=1 ./scripts/deploy-dev.sh` lo saltea: es para una emergencia, y se dice en el commit o en la sesión.
-El completo no va en el camino del deploy: 5 minutos cada vez terminarían salteándose siempre.
+**Desde el 3-Nov-2026 (SEG-45)** `scripts/deploy-dev.sh` corre el **completo** (`qa.sh`, con los tests unitarios)
+antes de compilar y subir, **salvo que ese commit ya lo haya pasado**: `qa.sh` completo o `--e2e` en verde sobre un
+árbol sin cambios deja una marca por commit en el directorio común de git (`.git/calasign-qa-verde/<sha>`), que ven
+todos los worktrees, también el del QA nocturno. Así el costo se paga una vez por commit y no en cada deploy (antes iba
+sólo el rápido porque repetir el completo en cada deploy terminaba salteándose). Con cambios sin commitear se corre
+siempre. `QA_DEPLOY=rapido` corre sólo el rápido (un cambio que no toca código; queda dicho en la salida) y
+`SKIP_QA=1` lo saltea: es para una emergencia, y se dice en el commit o en la sesión.
 
 ### 4.4 QA nocturno
 

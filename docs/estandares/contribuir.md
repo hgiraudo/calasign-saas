@@ -106,10 +106,11 @@ Los secretos de verdad van a SSM (`/calasign-saas/<entorno>/<VARIABLE>`, los lee
 ```bash
 ./scripts/qa.sh                    # verde
 git status --short                 # limpio (o sabiendo qué viaja)
-./scripts/deploy-dev.sh            # corre qa.sh --rapido, compila, sube, migra, reinicia y espera /healthz
+./scripts/deploy-dev.sh            # corre qa.sh (si ese commit no lo pasó), compila, sube, migra, reinicia y espera /healthz
 ```
 
-- **`deploy-dev.sh` corre `qa.sh --rapido` primero** y aborta si está en rojo. `SKIP_QA=1` lo saltea, sólo en una
+- **`deploy-dev.sh` corre `qa.sh` completo primero** (salvo que ese commit ya lo haya pasado: `tests-automatizados.md`
+  §4.3) y aborta si está en rojo. `QA_DEPLOY=rapido` corre sólo el rápido; `SKIP_QA=1` lo saltea, sólo en una
   emergencia y diciéndolo.
 - Empaqueta **lo versionado más sus cambios sin commitear**; un archivo nuevo sin `git add` aborta el deploy (el server
   arrancaría sin él).

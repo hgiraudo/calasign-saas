@@ -172,7 +172,7 @@ archivo (no total) para que nadie «pague» su `any` nuevo con el arreglo de otr
 ## 10. `scripts/qa.sh` como un comando, sin CI 🟡
 
 **Decisión.** La verificación es `./scripts/qa.sh` (typecheck + trinquete + códigos de error + unit + integraciones;
-con `--e2e`, también las 23 suites contra una API efímera). `deploy-dev.sh` corre `--rapido` antes de subir.
+con `--e2e`, también las 23 suites contra una API efímera). `deploy-dev.sh` corre el completo antes de subir, salvo que ese commit ya lo haya pasado (desde el 3-Nov-2026, SEG-45).
 
 **Por qué.** No hay un remoto con runners: el repo vive en esta máquina, que es a la vez la de desarrollo. Un comando
 que corre lo mismo en todos lados (a mano, en el deploy, en un timer) es lo que se puede sostener. Los tiempos medidos

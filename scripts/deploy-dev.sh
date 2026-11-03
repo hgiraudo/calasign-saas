@@ -1,6 +1,6 @@
 #!/bin/bash
 # Despliega el working tree actual en dev.calasign.com.
-#   0. corre ./scripts/qa.sh --rapido (typecheck + reglas; SKIP_QA=1 lo saltea)
+#   0. corre ./scripts/qa.sh completo, salvo que ese commit ya lo haya pasado (SKIP_QA=1 lo saltea; QA_DEPLOY=rapido)
 #   1. compila la web
 #   2. empaqueta el repo (archivos versionados, con sus cambios sin commitear, + apps/web/dist) y lo sube a S3
 #   3. por SSM (sin SSH): descarga, instala dependencias, rota el symlink, reinicia y espera /healthz
@@ -22,13 +22,22 @@ if [ -n "$NEW_SRC" ]; then
   echo "$NEW_SRC" >&2
   exit 1
 fi
-# QA antes de subir (docs/estandares/tests-automatizados.md §4.3): typecheck de los 7 paquetes, trinquete de calidad,
-# migraciones y códigos de error, ~45 s. SKIP_QA=1 lo saltea (emergencias: decilo en el commit o en la sesión).
+# QA completo antes de subir (SEG-45, docs/estandares/tests-automatizados.md §4.3): typecheck, reglas, SAST y los tests
+# unitarios (~15 min). Si ese mismo commit ya pasó el completo o --e2e sin cambios (a mano, en otro worktree o en el QA
+# nocturno), no se repite: qa.sh deja la marca. Con cambios sin commitear se corre siempre.
+# SKIP_QA=1 lo saltea (emergencias: decilo en el commit o en la sesión); QA_DEPLOY=rapido corre sólo el rápido (~2 min,
+# para un cambio que no toca código: queda dicho en la salida).
 if [ "${SKIP_QA:-0}" != "1" ]; then
-  echo "▶ QA rápido (SKIP_QA=1 lo saltea)"
-  if ! ./scripts/qa.sh --rapido; then
-    echo "QA en rojo: deploy abortado sin tocar dev. Corré ./scripts/qa.sh --rapido para ver qué falla." >&2
-    exit 1
+  HEAD_SHA=$(git rev-parse HEAD)
+  MARK="$(git rev-parse --path-format=absolute --git-common-dir)/calasign-qa-verde/$HEAD_SHA"
+  if [ -z "$(git status --porcelain --untracked-files=no)" ] && [ -f "$MARK" ]; then
+    echo "▶ QA ya verde para $(git rev-parse --short HEAD): $(cat "$MARK")"
+  elif [ "${QA_DEPLOY:-completo}" = "rapido" ]; then
+    echo "▶ QA rápido (QA_DEPLOY=rapido: sin los tests unitarios)"
+    ./scripts/qa.sh --rapido || { echo "QA en rojo: deploy abortado sin tocar dev. Corré ./scripts/qa.sh --rapido para ver qué falla." >&2; exit 1; }
+  else
+    echo "▶ QA completo (~15 min; SKIP_QA=1 lo saltea, QA_DEPLOY=rapido corre sólo el rápido)"
+    ./scripts/qa.sh || { echo "QA en rojo: deploy abortado sin tocar dev. Corré ./scripts/qa.sh para ver qué falla." >&2; exit 1; }
   fi
 fi
 REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$([ -z "$(git status --porcelain --untracked-files=no)" ] || echo -dirty)"

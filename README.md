@@ -92,10 +92,10 @@ Todo junto, en un comando (mapa de capas y qué test escribir para cada cambio e
 [`docs/estandares/tests-automatizados.md`](docs/estandares/tests-automatizados.md)):
 
 ```bash
-./scripts/qa.sh            # typecheck + formato + lint + reglas + SAST + unit + integraciones + SDKs (~7,5 min)
-./scripts/qa.sh --rapido   # typecheck + formato + lint + reglas + SAST (~105 s; lo corre deploy-dev.sh)
+./scripts/qa.sh            # typecheck + formato + lint + reglas + SAST + unit + integraciones + SDKs (~15 min; lo corre deploy-dev.sh)
+./scripts/qa.sh --rapido   # typecheck + formato + lint + reglas + SAST (~105 s)
 ./scripts/qa.sh --web      # la web en navegador con Playwright (~1 min; ver apps/web/e2e/README.md)
-./scripts/qa.sh --e2e      # todo: lo anterior + las 23 suites e2e contra una API efímera en :4199 (~11 min)
+./scripts/qa.sh --e2e      # todo: lo anterior + las 23 suites e2e contra una API efímera en :4199 (~17 min)
 corepack pnpm format       # Prettier sobre todo el TS/JS (corepack pnpm lint: ESLint)
 ./scripts/mutacion.sh      # mutation testing con Stryker de los módulos críticos (~6 min; no va en qa.sh)
 ./scripts/sast.sh          # SAST: Semgrep (reglas propias) + gitleaks del historial (~30 s; va en qa.sh)

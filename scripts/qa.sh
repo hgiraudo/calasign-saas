@@ -14,6 +14,9 @@
 #   QA_TSA=1         la API efímera usa la TSA por defecto (red); sin esto, TSA_URL vacío (sello sin red, determinístico)
 #   QA_KEEP=1        conserva var/qa/<corrida>/ (logs y datos de la e2e) aunque todo pase
 #
+# El completo y --e2e en verde sobre un árbol sin cambios dejan una marca por commit (en el directorio común de git:
+# la ven todos los worktrees, también el del QA nocturno). deploy-dev.sh la usa para no repetir el QA de ese commit.
+#
 # Corre UN comando pesado a la vez (la máquina tiene 14 GB y otras sesiones compilan en paralelo). Sale con ≠0 si algo
 # falló y deja los logs en var/qa/<corrida>/ (var/ no se versiona).
 set -uo pipefail
@@ -39,6 +42,8 @@ mkdir -p "$RUN"
 SUMMARY=()
 FAILED=0
 T0=$(date +%s)
+HEAD0=$(git rev-parse HEAD)
+CLEAN0=$([ -z "$(git status --porcelain --untracked-files=no)" ] && echo 1 || echo 0)
 
 if [ -t 1 ]; then
   c_green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -204,6 +209,12 @@ TOTAL=$(( $(date +%s) - T0 ))
 echo
 if [ $FAILED -eq 0 ]; then
   c_green "✓ QA $MODE verde en ${TOTAL}s"
+  # Marca de QA verde: sólo si se probó exactamente ese commit (sin cambios al empezar ni al terminar y el mismo HEAD).
+  if { [ "$MODE" = completo ] || [ "$MODE" = e2e ]; } && [ "$CLEAN0" = 1 ] && [ "$(git rev-parse HEAD)" = "$HEAD0" ] \
+    && [ -z "$(git status --porcelain --untracked-files=no)" ]; then
+    MARKS="$(git rev-parse --path-format=absolute --git-common-dir)/calasign-qa-verde"
+    mkdir -p "$MARKS" && echo "$MODE $(date -Iseconds)" > "$MARKS/$HEAD0"
+  fi
   [ "${QA_KEEP:-0}" = "1" ] || rm -rf "$RUN"
   exit 0
 fi

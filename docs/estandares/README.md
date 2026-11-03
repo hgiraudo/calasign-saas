@@ -58,7 +58,7 @@ review. Varias reglas son **nuevas** y el código existente no las cumple: la di
 | Cada ruta registrada está en el OpenAPI | ✅ Vigente | `apps/api/test/openapi-contract.test.ts` |
 | Trinquete de calidad: no sube la cuenta de `any`, `catch` vacíos, `console.log` en la API, `TODO` sin fecha, `@ts-ignore` | 🟡 **Nuevo**: baseline 1.164 `any` · 109 `catch` vacíos · 2 `console` · 1 `TODO` · 0 `@ts-ignore` | `scripts/check-calidad.mjs` (en `qa.sh` y en el hook) |
 | Ningún secreto en texto plano en un commit | ✅ **Activado el 30-Oct-2026** en el clon de trabajo (`git config core.hooksPath scripts/hooks`; un clon nuevo lo tiene que activar) | `scripts/hooks/pre-commit` |
-| QA antes del deploy a dev | 🟡 **Nuevo**: `deploy-dev.sh` corre `qa.sh --rapido` (~75 s); `SKIP_QA=1` lo saltea | `scripts/deploy-dev.sh` |
+| QA antes del deploy a dev | 🟡 **Nuevo**: `deploy-dev.sh` corre `qa.sh` completo, salvo que ese commit ya lo haya pasado (marca por commit); `QA_DEPLOY=rapido` y `SKIP_QA=1` | `scripts/deploy-dev.sh` |
 | e2e en un comando, contra una API efímera | 🟡 **Nuevo**: `qa.sh --e2e` | `scripts/qa.sh` |
 | Formato con Prettier (ancho 150, sólo TS/JS) | ✅ **Adoptado el 29-Oct-2026**: todo el repo reformateado en `e93f8fc` (ignorado por `git blame`). Ver [decisiones §7](decisiones-de-diseno.md#7-prettier-adoptado-con-un-único-commit-de-reformateo-) | `prettier --check` en `qa.sh` y en el hook |
 | ESLint (typescript-eslint + react-hooks) | ✅ **Adoptado el 29-Oct-2026**: 0 errores; 4 avisos de `exhaustive-deps` que no pueden subir. Ver [decisiones §8](decisiones-de-diseno.md#8-eslint-sin-reglas-de-tipos-errores-en-cero-) | `eslint --max-warnings 4` en `qa.sh`; errores en el hook |

@@ -218,3 +218,30 @@ describe("SSRF", () => {
     expect(mod.isPrivateAddress(ip)).toBe(internal);
   });
 });
+
+// TOTVS Protheus: la URL del REST la carga la organización (on-premise o TOTVS Cloud con puerto propio).
+describe("SSRF: URL del REST de TOTVS", () => {
+  let totvs: typeof import("../src/modules/crm/totvs");
+  beforeAll(async () => {
+    totvs = await import("../src/modules/crm/totvs");
+  });
+
+  it("fuera del entorno local rechaza IP internas literales, localhost y http", () => {
+    for (const u of [
+      "https://10.0.0.5/rest",
+      "https://169.254.169.254:8400/rest",
+      "https://[::ffff:a9fe:a9fe]/rest",
+      "https://[fd00::1]:8400/rest",
+      "https://localhost:8443/rest",
+    ])
+      expect(() => totvs.validateTotvsBaseUrl(u), u).toThrow(/dirección interna/);
+    expect(() => totvs.validateTotvsBaseUrl("http://localhost:8080/rest")).toThrow(/https/);
+    expect(totvs.validateTotvsBaseUrl("https://8.8.8.8:8400/rest")).toBe("https://8.8.8.8:8400/rest");
+  });
+
+  it("cada llamada va por safeRequest: un nombre que resuelve a una dirección interna no conecta", async () => {
+    await expect(totvs.totvsFetch("https://localhost:8443/rest/api/oauth2/v1/token?grant_type=password", { method: "POST" })).rejects.toThrow(
+      /dirección interna/,
+    );
+  });
+});

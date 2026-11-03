@@ -1,12 +1,14 @@
 # CRM y ERP (Fase 6)
 
-Conectores por organización (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra)
+Conectores por organización (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra,
+TOTVS Protheus)
 para enviar a firmar desde un CRM y devolver el resultado, y para dejar el documento firmado en el ERP. Código:
 `apps/api/src/modules/crm/` (`providers.ts` clientes HTTP y despacho, `mapping.ts` mapeo puro, `index.ts` rutas y
-trabajos, `pipedrive.ts`, `rdstation.ts` y `kommo.ts` un cliente por proveedor). Web: Ajustes → **CRM y ERP**
+trabajos, `pipedrive.ts`, `rdstation.ts`, `kommo.ts` y `totvs.ts` un cliente por proveedor). Web: Ajustes → **CRM y ERP**
 (`/app/settings/crm`). Migraciones `0015_crm.sql`, `0046_crm_zoho.sql` (agrega `zoho` a los proveedores),
 `0047_crm_pipedrive.sql` (redefine el CHECK de proveedor con `zoho` y `pipedrive`) y `0051_crm_rdstation_kommo.sql`
-(redefine el CHECK con todos: `hubspot`, `salesforce`, `siigo`, `alegra`, `zoho`, `pipedrive`, `rdstation`, `kommo`).
+(redefine el CHECK con todos: `hubspot`, `salesforce`, `siigo`, `alegra`, `zoho`, `pipedrive`, `rdstation`, `kommo`)
+y `0127_crm_totvs.sql` (lo vuelve a redefinir agregando `totvs`).
 
 ## Qué hace
 
@@ -17,6 +19,7 @@ trabajos, `pipedrive.ts`, `rdstation.ts` y `kommo.ts` un cliente por proveedor).
 | **Zoho CRM** / **Bigin** | CRM | OAuth 2.0 **con PKCE S256**, multi-DC (com, eu, in, com.au, jp, ca, sa, uk, com.cn). Se elige el producto (CRM o Bigin) al conectar | Desde un **Deal** (contacto principal `Contact_Name` + `Contact_Roles` por rol) o un **Contact** (el propio contacto). En Bigin, desde un **Pipeline** (contacto principal) o un Contact. Botón «Enviar a firmar con CalaSign» en Deals con la extensión de `integrations/connectors/zoho-crm/`. | Estado en un campo (`CalaSign_Status` u otro, con `trigger: []` para no disparar reglas de flujo) y **PDF firmado** como adjunto del registro (`/Attachments`) + **nota** con hash y enlace (`/Notes`, `Parent_Id`). |
 | **Siigo** (CO) | ERP | Usuario de API + access key | — | Busca el **cliente** por la identificación de un firmante y agrega la referencia del documento firmado a `comments`. |
 | **Alegra** | ERP | Correo + token (Basic) | — | Busca el **contacto** por identificación y le adjunta el PDF; también se puede vincular una **factura** con `POST /v1/crm/links` y se le adjunta el PDF. |
+| **TOTVS Protheus** (BR) | ERP | **URL del REST** de la organización (on-premise o TOTVS Cloud, https) + usuario y contraseña del Protheus (token OAuth2 `password`); empresa y filial opcionales (`tenantId`) | — | Busca el **Cliente** (SA1) por el **CPF/CNPJ** de un firmante y le deja una **Anotação** con el asunto, el SHA-256 del PDF y el link al sobre. El PDF no se sube (la API estándar no recibe archivos para el banco de conhecimento). También se puede vincular a mano un cliente con `POST /v1/crm/links` (`objectId` = `filial|código|loja` o `código|loja`). |
 | **RD Station CRM** (BR) | CRM | OAuth 2.0 de la **RD Station App Store** (API v2 del CRM; sin PKCE documentado) | Desde una **Negociação** (`deal`): sus **contatos** en el orden de `contact_ids` (el primero es el principal, contacto 0). Campos de la negociação y **personalizados** por su `slug` o por su nombre. | Estado en un **campo personalizado** de la negociação (texto, u opción: se valida contra las opciones del campo). **PDF firmado** en los **Anexos** (`POST /deals/{id}/files`) + **anotação** con el SHA-256 y el link (`POST /deals/{id}/notes`). |
 | **Kommo** (ex amoCRM) | CRM | OAuth 2.0 **por cuenta**: el token se pide al subdominio (`<cuenta>.kommo.com`) que vuelve en `referer`; refresh token que rota | Desde un **Lead** (`deal`): el **contacto principal** del lead (contacto 0) y los demás en orden. Campos del lead y **personalizados** por nombre, código o id (los de lista se leen como texto). Botón «Enviar a firmar con CalaSign» con el widget de `integrations/connectors/kommo/`. | Estado en un **campo del lead** (texto, o lista: se busca la opción y se escribe su `enum_id`). **PDF firmado** al drive de la cuenta (Files API: sesión + partes) **vinculado al lead**, más una **nota** con el SHA-256 y el link. Sin el permiso «Access to files», solo la nota. |
 | **Pipedrive** | CRM | OAuth (app del Marketplace); se guarda el `api_domain` de la compañía | Desde un **Deal** (`deal`): la persona del deal es el contacto principal (contacto 0) y los **participantes** siguen en orden; o desde una **Person** (`contact`). Campos del registro, también **personalizados** por su key hash (40 caracteres) o por su nombre; los de opción única se leen como su etiqueta. También con la acción **Enviar a firmar con CalaSign** de la app (`integrations/connectors/pipedrive/`). | Estado en un **campo del deal** (o de la persona): texto, o opción única (se busca la opción por su etiqueta y se escribe su id). **PDF firmado** con la Files API (`deal_id` / `person_id`) y una **nota** con el SHA-256 y el link al sobre. |
@@ -56,7 +59,7 @@ Piezas comunes:
 - **Desconectar** (`DELETE /v1/crm/connections/{id}`): revoca los tokens OAuth en el proveedor cuando hay endpoint
   documentado (HubSpot `DELETE /oauth/v1/refresh-tokens/{token}`, Salesforce `/services/oauth2/revoke`, Zoho
   `/oauth/v2/token/revoke`, Pipedrive `/oauth/revoke`); RD Station y Kommo no publican uno, y los tokens de app privada
-  de HubSpot o las claves de Siigo/Alegra se revocan en el proveedor. La revocación va **después** de borrar la
+  de HubSpot o las claves de Siigo/Alegra/TOTVS se revocan en el proveedor. La revocación va **después** de borrar la
   conexión. En HubSpot y Pipedrive, donde revocar el refresh token desinstala la app de toda la cuenta, no se hace si
   otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la misma cuenta (`portalId`,
   `companyId`; sin la cuenta guardada, cualquier otra conexión OAuth del proveedor) (`tokenRevoked: "shared"`). En
@@ -83,7 +86,7 @@ Piezas comunes:
   solos (quedan como fallidos con el error visible, también en la conexión) y se reintentan a mano
   (`POST /v1/crm/runs/:id/retry`). Un envío manual fallido se rehace desde el registro.
 - Tokens cifrados en la base; OAuth con refresh automático (por vencimiento y ante un 401); Siigo renueva su token
-  de 24 h solo.
+  de 24 h solo y TOTVS el de 1 h (con el usuario y la contraseña guardados, cifrados).
 
 ## Variables de entorno
 
@@ -118,7 +121,9 @@ Sin credenciales OAuth, la tarjeta del proveedor muestra "OAuth no configurado";
   *Homepage URL* `{APP_URL}`, *Authorized Redirect URIs* `{APP_URL}/v1/crm/oauth/zoho/callback`. En *Settings* del
   cliente, activar **Multi-DC** (y los centros de datos que se quieran atender: US, EU, IN, AU, JP, CA, SA, UK, CN):
   sin eso las cuentas de fuera de zoho.com reciben `invalid_client`. El mismo cliente sirve para Zoho CRM y Bigin.
-- Siigo y Alegra: no usan redirect (token).
+- Siigo, Alegra y TOTVS: no usan redirect (token). En TOTVS, el REST del Protheus tiene que estar publicado en https
+  hacia internet (o en TOTVS Cloud) con la autenticación por token habilitada (LIB 20190705 o posterior), y el usuario
+  necesita acceso a las APIs `customerVendor` y `notes` (módulo CRM, `CRMA100`).
 - Pipedrive → Developer Hub, app pública, *OAuth & access scopes*: Callback URL
   `{APP_URL}/v1/crm/oauth/pipedrive/callback`; scopes `base`, `deals:full`, `contacts:full`, `users:read`.
   *App extensions → Link actions*: «Enviar a firmar con CalaSign» → `{APP_URL}/integrations/connectors/pipedrive/send.html`
@@ -224,6 +229,38 @@ en una organización (sin publicar) y para empaquetarla y publicarla en Zoho Mar
   (la última devuelve `uuid`), `PUT /api/v4/leads/{id}/files` `[{ file_uuid }]`. Un 403/404 del drive (sin el permiso
   «Access to files» o sin drive) deja solo la nota; **verificar** con una cuenta real si las partes llevan el Bearer y
   el formato exacto de `PUT …/files`.
+- **TOTVS Protheus** (`crm/totvs.ts`): se eligió **Protheus** (no RM, Datasul ni Fluig) porque es la línea del
+  backoffice de la mayoría de los clientes de TOTVS y la que publica las APIs REST estándar ("APIs TOTVS", T-Talk) en
+  el servidor REST de la organización; Fluig es BPM/ECM y no tiene el cadastro de clientes. La **URL base la carga la
+  organización** (p. ej. `https://erp.empresa.com.br:8400/rest`): se valida al conectar y en cada uso (https, sin
+  credenciales, query ni fragmento, sin IP internas; al conectar, además, que el nombre no resuelva a una dirección
+  interna → `400 invalid_url`) y **todas las llamadas van por `safeRequest`** (validación en la misma resolución DNS
+  que usa la conexión, sin redirecciones, tope de 5 MB), como los webhooks. Token:
+  `POST {base}/api/oauth2/v1/token?grant_type=password` con `username` y `password` **en encabezados**, como documenta
+  TDN ([API para obtenção do token](https://tdn.totvs.com/pages/releaseview.action?pageId=465383509)); así la
+  contraseña no queda en los logs de acceso del servidor ni de un proxy. Responde `access_token` (1 h, no
+  configurable), `refresh_token` (24 h) y `expires_in`. **El refresh token no se usa**: TOTVS lo pide en la query y
+  vencería en un día sin uso; con la contraseña guardada se pide otro token al vencer o ante un 401 (como el login de
+  Siigo). Credenciales rechazadas (400/401/403) o una URL sin el endpoint de token (404) dejan la conexión para
+  reconectar; un 5xx se reintenta. Encabezado opcional `tenantId: <grupo>[,<filial>]` (sin él, el REST usa la primera
+  empresa válida de su `PrepareIn`; [foro de TOTVS](https://forum.totvs.io/t/tenantid-somente-com-empresa-filial-aleatoria/17139)).
+  Cliente: `GET {base}/api/crm/v1/customerVendor/Customer?governmentalInformation.id=<CPF/CNPJ sin puntuación>&page=1&pageSize=20`
+  (API CustomerVendor, adaptador `MATS030`, Protheus 12.1.21+: `jsonschema/apis/CustomerVendor_v1_000.json` del repo
+  [totvs/ttalk-standard-message](https://github.com/totvs/ttalk-standard-message), publicado en
+  [api.totvs.com.br](https://api.totvs.com.br)). El filtro es el "filtro simple" `propriedade_pai.filho=valor` del
+  [Guia de implementação das APIs TOTVS](https://tdn.totvs.com/display/public/INT/Guia+de+implementacao+das+APIs+TOTVS);
+  como no todas las versiones lo implementan, **el documento se vuelve a comparar contra cada resultado** (solo los
+  `governmentalInformation` de nombre CPF/CNPJ): si el servidor ignora el filtro, no se vincula otro cliente. Un 404
+  («Entidade não localizada») es "no está". El vínculo guarda `filial|código|loja` (`branchId`, `code`, `storeId`).
+  Anotação: `POST {base}/api/crm/v1/notes` (API Notes, adaptador `CRMA100`, `Notes_v1_000.json`) con
+  `{ ResourceType: "SA1", ResourceCode: filial+código+loja, Description: "CalaSign: «asunto» assinado", Content:
+  "SHA-256 do PDF: …\n<link>\nEnvelope <id>", Date }` (`AOB_TITULO` y `AOB_CONTEU`, 250 caracteres cada uno). **Por
+  qué no se sube el PDF:** la API de documentos (`/api/crm/v1/documents`, banco de conhecimento, `CRMS120`) solo
+  registra el nombre del archivo (`ACB_OBJETO`) y no recibe su contenido: el archivo tendría que estar en el directorio
+  `MV_DIRDOC` del servidor. Errores `{ code, message, detailedMessage }`. **Verificar con un Protheus real:** que
+  `customerVendor` acepte el filtro `governmentalInformation.id` (si no, se compara solo la primera página: subir
+  `pageSize` o usar `$filter`), el formato de `AOB_CHAVE` (`ResourceCode`: con o sin filial, con relleno de espacios)
+  y que la API `notes` esté disponible sin el módulo SIGACRM licenciado.
 - **Acción de Pipedrive** (`integrations/connectors/pipedrive/send.html`): Link action que Pipedrive abre en una
   pestaña nueva con `resource` y `selectedIds`; usa la sesión de CalaSign del navegador (sin API keys), lista
   `GET /v1/crm/mappings?provider=pipedrive` (alcanza con `envelopes:create`) y llama a
@@ -250,7 +287,10 @@ CRM: OAuth sin PKCE, envío desde una negociação (contatos en orden), write-ba
 con el refresh token rotado guardado, PDF en Anexos (`data[file]`) + anotação, ids inválidos → 404. En Kommo: OAuth con
 `referer` (token en el subdominio, JSON), instalación sin `state`, `referer` ajeno rechazado sin pedir token, envío
 desde un lead (contacto principal primero), campo de lista (`enum_id`), refresh, PDF por la Files API vinculado al lead
-+ nota, lead inexistente (204) → 404.
++ nota, lead inexistente (204) → 404. En TOTVS Protheus: URL del REST rechazada (`invalid_url`: otro esquema, query,
+credenciales), contraseña rechazada sin aparecer en el error, conexión con `tenantId` (exigido por el simulador),
+usuario y contraseña siempre en encabezados, búsqueda del cliente por el CNPJ normalizado, token nuevo ante un 401
+(reinicio del REST), reintento de la anotação tras un 500 y vínculo `filial|código|loja` con la referencia de la nota.
 `apps/api/test/integrations-hardening.test.ts` (app sobre PGlite): cuenta obligatoria de Pipedrive/Kommo al conectar
 y al enviar, revocación al desconectar con la actividad conservada, eventos propios de HubSpot, bucle de write-back,
 reanudación del adjunto de HubSpot, `portalId` obligatorio con token, retención de ejecuciones y auditoría.
@@ -258,6 +298,9 @@ Unitarias: `apps/api/test/crm-mapping.test.ts` (mapeo), `apps/api/test/crm-zoho.
 dominios aceptados, refresh en el DC de la cuenta, registros, write-back y adjuntos) y
 `apps/api/test/crm-pipedrive.test.ts` (Pipedrive con un fetch falso), `apps/api/test/crm-rdstation.test.ts` y
 `apps/api/test/crm-kommo.test.ts` (RD Station y Kommo con un fetch falso: dominios de Kommo y del drive validados,
-refresh, registros, write-back, adjunto en partes, nota). `apps/api/test/crm-writeback-race.test.ts` cubre también a
+refresh, registros, write-back, adjunto en partes, nota), `apps/api/test/crm-totvs.test.ts` (TOTVS con `safeRequest`
+falso: URL base, token con credenciales en encabezados, nuevo token al vencer y ante 401, credenciales rechazadas vs.
+REST caído, búsqueda verificada contra la respuesta, anotação y sus topes) y `apps/api/test/ssrf.test.ts` (la URL de
+TOTVS fuera del entorno local: IP internas y nombres que resuelven a una). `apps/api/test/crm-writeback-race.test.ts` cubre también a
 los dos. El widget de Kommo se prueba en `integrations/test/connectors.mjs`. La acción del Marketplace de Pipedrive se prueba
 en `integrations/test/connectors.mjs`.

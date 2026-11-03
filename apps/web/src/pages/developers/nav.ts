@@ -244,8 +244,9 @@ export const NAV: NavGroup[] = [
           h("pipedrive", "g.crm.pipedrive.h"),
           h("rdstation", "g.crm.rdstation.h"),
           h("kommo", "g.crm.kommo.h"),
+          h("totvs", "g.crm.totvs.h"),
         ],
-        keywords: "hubspot salesforce zoho bigin siigo alegra pipedrive rd station rdstation kommo amocrm",
+        keywords: "hubspot salesforce zoho bigin siigo alegra pipedrive rd station rdstation kommo amocrm totvs protheus",
       },
       {
         path: "guides/hr-contracts",

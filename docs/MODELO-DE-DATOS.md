@@ -194,6 +194,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0124_signature_handoffs` | Firma importada (`adopted_signatures.kind` acepta `uploaded`) y pases de firma del celular (`signature_handoffs`, `signature_handoff_sends`). |
 | `0125_tenants_requested_cell` | `tenants.requested_cell`: la región que la organización eligió en el alta cuando el despliegue todavía no la tiene configurada (quedó en la celda por defecto). Sirve para saber a quién migrar cuando esa celda exista; NULL si quedó en la que eligió |
 | `0126_storage_exports_evidence_ref` | `storage_exports.evidence_ref`: la referencia del certificado de evidencia exportado (como `remote_ref` para el PDF). La re-exportación tras renovar el sello reemplaza ese archivo y no uno del cliente con el mismo nombre; NULL en las exportadas antes (la evidencia se sube como nueva) |
+| `0127_crm_totvs` | Agrega `totvs` (TOTVS Protheus, ERP) al CHECK de `crm_connections.provider`, redefinido completo con todos los proveedores como en `0051` |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

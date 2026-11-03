@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { Link, useSearchParams } from "react-router-dom";
 import {
   CHANNELS,
+  CRM_KIND,
   CRM_PROVIDER_OBJECTS,
   type CrmConnection,
   type CrmMapping,
@@ -40,22 +41,30 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
   );
 }
 
-const TOKEN_FIELDS: Record<CrmProvider, { key: string; label: string; secret?: boolean; type?: string }[]> = {
-  hubspot: [{ key: "accessToken", label: "hubspot.token", secret: true }],
-  salesforce: [],
-  zoho: [],
-  siigo: [
-    { key: "username", label: "siigo.username" },
-    { key: "accessKey", label: "siigo.accessKey", secret: true },
-  ],
-  alegra: [
-    { key: "email", label: "alegra.email", type: "email" },
-    { key: "token", label: "alegra.token", secret: true },
-  ],
-  pipedrive: [],
-  rdstation: [],
-  kommo: [],
-};
+const TOKEN_FIELDS: Record<CrmProvider, { key: string; label: string; secret?: boolean; type?: string; optional?: boolean; placeholder?: string }[]> =
+  {
+    hubspot: [{ key: "accessToken", label: "hubspot.token", secret: true }],
+    salesforce: [],
+    zoho: [],
+    siigo: [
+      { key: "username", label: "siigo.username" },
+      { key: "accessKey", label: "siigo.accessKey", secret: true },
+    ],
+    alegra: [
+      { key: "email", label: "alegra.email", type: "email" },
+      { key: "token", label: "alegra.token", secret: true },
+    ],
+    pipedrive: [],
+    rdstation: [],
+    kommo: [],
+    // TOTVS Protheus: el REST de la organización (on-premise o TOTVS Cloud), con usuario y contraseña del Protheus.
+    totvs: [
+      { key: "baseUrl", label: "totvs.baseUrl", type: "url", placeholder: "https://erp.empresa.com.br:8400/rest" },
+      { key: "username", label: "totvs.username" },
+      { key: "password", label: "totvs.password", secret: true },
+      { key: "tenantId", label: "totvs.tenantId", optional: true, placeholder: "01,0101" },
+    ],
+  };
 
 /** Proveedores que se conectan con OAuth (botón «Conectar con OAuth» o "OAuth no configurado"). */
 const OAUTH_PROVIDERS: readonly CrmProvider[] = ["hubspot", "salesforce", "zoho", "pipedrive", "rdstation", "kommo"];
@@ -144,7 +153,9 @@ export function CrmSettingsPage() {
     setConnecting(p);
     try {
       await act(async () => {
-        await api("/v1/crm/connections", { method: "POST", body: { provider: p, name: names[p] || t(`p.${p}`), ...(tokenForm[p] ?? {}) } });
+        // Un campo opcional que se dejó vacío no se manda (vacío no pasa la validación del campo).
+        const fields = Object.fromEntries(Object.entries(tokenForm[p] ?? {}).filter(([, v]) => v.trim() !== ""));
+        await api("/v1/crm/connections", { method: "POST", body: { provider: p, name: names[p] || t(`p.${p}`), ...fields } });
         setTokenForm((c) => ({ ...c, [p]: {} }));
       }, t("connected"));
     } finally {
@@ -232,7 +243,8 @@ export function CrmSettingsPage() {
                         <label key={f.key} className="field">
                           <span>{t(f.label)}</span>
                           <input
-                            required
+                            required={!f.optional}
+                            placeholder={f.placeholder}
                             type={f.secret ? "password" : (f.type ?? "text")}
                             autoComplete={f.secret ? "new-password" : "off"}
                             value={tokenForm[pv.provider]?.[f.key] ?? ""}
@@ -543,7 +555,7 @@ function MappingEditor({
   const [connectionId, setConnectionId] = useState(mapping?.connectionId ?? connections[0]?.id ?? "");
   const conn = connections.find((c) => c.id === connectionId);
   const provider = conn?.provider ?? "hubspot";
-  const isErp = provider === "siigo" || provider === "alegra";
+  const isErp = CRM_KIND[provider] === "erp";
   const [name, setName] = useState(mapping?.name ?? "");
   const [objectType, setObjectType] = useState<string>(mapping?.objectType ?? CRM_PROVIDER_OBJECTS[provider][0]);
   const [templateId, setTemplateId] = useState<string>(mapping?.templateId ?? "");
@@ -732,6 +744,7 @@ function MappingEditor({
 
       {provider === "pipedrive" && <p className="muted small">{t(objectType === "contact" ? "pipedrive.hint.person" : "pipedrive.hint.deal")}</p>}
       {(provider === "rdstation" || provider === "kommo") && <p className="muted small">{t(`${provider}.hint.deal`)}</p>}
+      {provider === "totvs" && <p className="muted small">{t("totvs.hint.customer")}</p>}
 
       {!isErp && (
         <>

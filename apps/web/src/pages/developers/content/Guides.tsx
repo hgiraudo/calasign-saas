@@ -423,6 +423,7 @@ export function CrmGuide() {
           [<strong key="p">Pipedrive</strong>, t("g.crm.pipedrive")],
           [<strong key="r">RD Station CRM</strong>, t("g.crm.rdstation")],
           [<strong key="k">Kommo</strong>, t("g.crm.kommo")],
+          [<strong key="t">TOTVS Protheus</strong>, t("g.crm.totvs")],
         ]}
       />
       <H2 id="mappings">{t("g.crm.mappings.h")}</H2>
@@ -433,6 +434,8 @@ export function CrmGuide() {
       <Md text={t("g.crm.rdstation.p")} />
       <H2 id="kommo">{t("g.crm.kommo.h")}</H2>
       <Md text={t("g.crm.kommo.p")} />
+      <H2 id="totvs">{t("g.crm.totvs.h")}</H2>
+      <Md text={t("g.crm.totvs.p")} />
     </DocPage>
   );
 }

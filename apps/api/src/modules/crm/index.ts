@@ -68,6 +68,8 @@ import {
   type CrmOAuthProvider,
 } from "./providers";
 import { validateKommoDomain } from "./kommo";
+import { validateTotvsBaseUrl } from "./totvs";
+import { assertPublicDestination } from "../webhooks";
 import { validatePipedriveDomain } from "./pipedrive";
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -694,7 +696,7 @@ function checkMappingInput(
     throw badRequest("crm_object_type", `${provider} admite: ${CRM_PROVIDER_OBJECTS[provider].join(", ")}`);
   }
   const kind = CRM_KIND[provider];
-  if (kind === "crm" && trigger === "on_completion") throw badRequest("crm_trigger", "on_completion es para ERP (Siigo, Alegra)");
+  if (kind === "crm" && trigger === "on_completion") throw badRequest("crm_trigger", "on_completion es para ERP (Siigo, Alegra, TOTVS)");
   if (kind === "erp" && trigger !== "on_completion")
     throw badRequest("crm_trigger", "En un ERP el mapeo se dispara al completarse el sobre (on_completion)");
   if (kind === "crm" && !templateId) throw badRequest("crm_template_required", "El mapeo necesita una plantilla");
@@ -749,13 +751,32 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/crm/connections", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const a = A(req);
     const input = CreateCrmTokenConnectionInput.parse(req.body);
-    const creds =
-      input.provider === "hubspot"
-        ? { token: input.accessToken }
-        : input.provider === "siigo"
-          ? { username: input.username, accessKey: input.accessKey }
-          : { email: input.email, token: input.token };
-    const row: any = { id: uuidv7(), provider: input.provider, auth_type: "token", credentials_enc: encrypt(JSON.stringify(creds)), config: {} };
+    let connConfig: Record<string, unknown> = {};
+    let creds: Record<string, string>;
+    if (input.provider === "hubspot") creds = { token: input.accessToken };
+    else if (input.provider === "siigo") creds = { username: input.username, accessKey: input.accessKey };
+    else if (input.provider === "alegra") creds = { email: input.email, token: input.token };
+    else {
+      // TOTVS: la URL del REST la carga la organización (on-premise o TOTVS Cloud). Se valida la forma y que no resuelva
+      // a una dirección interna antes de mandarle la contraseña; cada llamada lo vuelve a validar (safeRequest).
+      let baseUrl: string;
+      try {
+        baseUrl = validateTotvsBaseUrl(input.baseUrl);
+        await assertPublicDestination(baseUrl);
+      } catch (err) {
+        const msg = (err as Error).message;
+        throw badRequest("invalid_url", (err instanceof CrmError ? msg : `No se puede usar la URL del REST de TOTVS (${msg})`).slice(0, 300));
+      }
+      creds = { username: input.username, password: input.password };
+      connConfig = { baseUrl, ...(input.tenantId ? { tenantId: input.tenantId } : {}) };
+    }
+    const row: any = {
+      id: uuidv7(),
+      provider: input.provider,
+      auth_type: "token",
+      credentials_enc: encrypt(JSON.stringify(creds)),
+      config: connConfig,
+    };
     const conn = new CrmConn(row, null);
     let test;
     try {
@@ -766,7 +787,16 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     await s.db.query(
       `INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config, account_label, created_by, last_success_at)
        VALUES ($1,$2,$3,$4,'token',$5,$6,$7,$8, now())`,
-      [row.id, a.tenantId, input.provider, input.name, encrypt(JSON.stringify(conn.creds)), JSON.stringify(test.config ?? {}), test.label, a.userId],
+      [
+        row.id,
+        a.tenantId,
+        input.provider,
+        input.name,
+        encrypt(JSON.stringify(conn.creds)),
+        JSON.stringify({ ...connConfig, ...(test.config ?? {}) }),
+        test.label,
+        a.userId,
+      ],
     );
     await auditFromRequest(s.db, req, a, "crm.connected", {
       targetType: "crm_connection",

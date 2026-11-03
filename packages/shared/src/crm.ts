@@ -14,6 +14,8 @@ export const CRM_PROVIDERS = [
   "rdstation",
   // Kommo (ex amoCRM; API v4, OAuth por cuenta/subdominio): Lead (objectType "deal") con sus contactos.
   "kommo",
+  // TOTVS Protheus (ERP; API REST del servidor de la organización, OAuth2 password): Cliente (SA1) por CPF/CNPJ.
+  "totvs",
 ] as const;
 export type CrmProvider = (typeof CRM_PROVIDERS)[number];
 
@@ -30,6 +32,7 @@ export const CRM_PROVIDER_OBJECTS: Record<CrmProvider, readonly CrmObjectType[]>
   pipedrive: ["deal", "contact"],
   rdstation: ["deal"],
   kommo: ["deal"],
+  totvs: ["customer"],
 };
 
 /** CRM (envían desde un registro) vs ERP (reciben el documento firmado al completarse). */
@@ -42,6 +45,7 @@ export const CRM_KIND: Record<CrmProvider, "crm" | "erp"> = {
   pipedrive: "crm",
   rdstation: "crm",
   kommo: "crm",
+  totvs: "erp",
 };
 
 /**
@@ -73,6 +77,22 @@ export const CreateCrmTokenConnectionInput = z.discriminatedUnion("provider", [
     name: z.string().trim().min(1).max(120),
     email: z.string().trim().email().max(320),
     token: z.string().trim().min(8).max(500),
+  }),
+  z.object({
+    provider: z.literal("totvs"),
+    name: z.string().trim().min(1).max(120),
+    /** URL del REST del Protheus de la organización, con el contexto (p. ej. https://erp.empresa.com.br:8400/rest). */
+    baseUrl: z.string().trim().url().max(500),
+    /** Usuario y contraseña de un usuario del Protheus (con acceso a Clientes y Anotações). */
+    username: z.string().trim().min(1).max(200),
+    password: z.string().min(1).max(500),
+    /** Opcional: grupo de empresas y filial donde trabajar (encabezado tenantId: "99" o "99,01"). Sin él, la del REST. */
+    tenantId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9]{1,12}(,[A-Za-z0-9 ]{1,12})?$/)
+      .optional()
+      .nullable(),
   }),
 ]);
 export type CreateCrmTokenConnectionInput = z.infer<typeof CreateCrmTokenConnectionInput>;

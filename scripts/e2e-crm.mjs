@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra, Pipedrive, RD Station CRM,
-// Kommo) contra servidores simulados.
+// Kommo, TOTVS Protheus) contra servidores simulados.
 // Es autocontenida: levanta los simuladores y su propia API (puerto 4115) con las URLs de los proveedores
 // apuntando a ellos. Uso: node scripts/e2e-crm.mjs   (un argumento de URL se ignora)
 import { spawn } from "node:child_process";
@@ -21,6 +21,7 @@ const P = { hs: MB, sf: MB + 1, sg: MB + 2, al: MB + 3, zo: MB + 4, zoEu: MB + 5
 P.pd = MB + 6; // Pipedrive (OAuth y API en el mismo simulador)
 P.rd = MB + 7; // RD Station CRM (authorize, token y API v2)
 P.km = MB + 8; // Kommo (authorize, cuenta: token + API v4, y drive de archivos)
+P.tv = MB + 9; // TOTVS Protheus (REST de la organización: token, CustomerVendor y Notes)
 const HS_SECRET = "hs-client-secret-e2e";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (m) => console.log(`✓ ${m}`);
@@ -283,6 +284,62 @@ await serve(P.al, async ({ req, url, body, send }) => {
     return send(201, { id: al.attachments.length, name: "documento.pdf" });
   }
   send(404, { message: `alegra mock: ${req.method} ${path}` });
+});
+
+// TOTVS Protheus: REST de la organización bajo /rest (la URL la carga la organización, no una variable de entorno).
+// Token con usuario y contraseña en encabezados; exige el tenantId de la conexión; la primera anotação falla (500) para
+// ver el reintento de la cola; `restart()` invalida el token emitido (reinicio del REST) para ver el nuevo token ante 401.
+const tv = {
+  token: null,
+  logins: 0,
+  credsInUrl: false,
+  failNextNote: 1,
+  notes: [],
+  searches: [],
+  customers: [
+    {
+      branchId: "01",
+      code: "000123",
+      storeId: "01",
+      name: "ACME INDUSTRIA LTDA",
+      governmentalInformation: [
+        { name: "CNPJ", scope: "Federal", id: "11222333000181" },
+        { name: "INSCRICAO ESTADUAL", scope: "State", id: "110042490114" },
+      ],
+    },
+  ],
+  restart() {
+    this.token = "reiniciado";
+  },
+};
+await serve(P.tv, async ({ req, url, json, send }) => {
+  if (!url.pathname.startsWith("/rest/")) return send(404, { code: "404", message: "sin contexto /rest" });
+  const path = url.pathname.slice("/rest".length);
+  if (url.searchParams.has("username") || url.searchParams.has("password")) tv.credsInUrl = true;
+  if (path === "/api/oauth2/v1/token") {
+    if (req.method !== "POST" || url.searchParams.get("grant_type") !== "password") return send(400, { code: "400", message: "grant_type inválido" });
+    if (req.headers.username !== "integracao" || req.headers.password !== "s3nha-Protheus")
+      return send(401, { code: "401", message: "Usuário ou senha inválidos", detailedMessage: "" });
+    tv.logins++;
+    tv.token = `tv-token-${tv.logins}`;
+    return send(200, { access_token: tv.token, refresh_token: "tv-rt", scope: "default", token_type: "Bearer", expires_in: 3600, hasMFA: false });
+  }
+  if (req.headers.authorization !== `Bearer ${tv.token}`) return send(401, { code: "401", message: "Unauthorized" });
+  if (req.headers.tenantid !== "01,0101") return send(400, { code: "400", message: "tenantId inválido" });
+  if (path === "/api/crm/v1/customerVendor/Customer" && req.method === "GET") {
+    const doc = url.searchParams.get("governmentalInformation.id");
+    if (doc) tv.searches.push(doc);
+    const items = doc ? tv.customers.filter((c) => c.governmentalInformation.some((g) => g.id === doc)) : tv.customers;
+    if (!items.length) return send(404, { code: "404", message: "Entidade não localizada na base!" });
+    return send(200, { items, hasNext: false });
+  }
+  if (path === "/api/crm/v1/notes" && req.method === "POST") {
+    if (tv.failNextNote-- > 0) return send(500, { code: "500", message: "erro temporário" });
+    const b = json();
+    tv.notes.push(b);
+    return send(201, { ...b, Code: String(tv.notes.length).padStart(6, "0") });
+  }
+  send(404, { code: "404", message: `totvs mock: ${req.method} ${path}` });
 });
 
 // Pipedrive: OAuth (Basic client_id:client_secret, api_domain en el token) y API v1 sobre ese dominio.
@@ -1697,6 +1754,85 @@ assert(
 );
 await waitFor(() => al.attachments.some((a) => a.kind === "contacts" && a.id === "55" && a.pdf), "adjunto al contacto de Alegra");
 step("ERP: al completarse se busca por identificación; Siigo reintenta tras un 500 y agrega la referencia; Alegra recibe el PDF");
+
+// ── ERP: TOTVS Protheus (URL del REST de la organización, usuario y contraseña) ──
+assert(
+  byP.totvs?.kind === "erp" && byP.totvs.tokenSupported && !byP.totvs.oauthConfigured && byP.totvs.objectTypes.join() === "customer",
+  "proveedor TOTVS",
+);
+const TV_BASE = `http://127.0.0.1:${P.tv}/rest`;
+const tvBody = {
+  provider: "totvs",
+  name: "Protheus ACME",
+  baseUrl: `${TV_BASE}/`,
+  username: "integracao",
+  password: "s3nha-Protheus",
+  tenantId: "01,0101",
+};
+for (const baseUrl of [`ftp://127.0.0.1:${P.tv}/rest`, `${TV_BASE}?empresa=01`, `http://admin:x@127.0.0.1:${P.tv}/rest`]) {
+  const bad = await api("POST", "/v1/crm/connections", { ...tvBody, baseUrl }, { expect: 400 });
+  assert(bad.error.code === "invalid_url", `URL del REST rechazada (${baseUrl}): ${bad.error.code}`);
+}
+const tvBad = await api("POST", "/v1/crm/connections", { ...tvBody, password: "otra-senha" }, { expect: 400 });
+assert(
+  tvBad.error.code === "crm_test_failed" && /Usuário ou senha/.test(tvBad.error.message) && !tvBad.error.message.includes("otra-senha"),
+  "contraseña rechazada",
+);
+const tvConn = await api("POST", "/v1/crm/connections", tvBody);
+assert(
+  tvConn.accountLabel === `TOTVS Protheus · 127.0.0.1:${P.tv} · 01,0101` && tvConn.authType === "token",
+  `conexión TOTVS (${tvConn.accountLabel})`,
+);
+assert(!tv.credsInUrl, "el usuario y la contraseña van en encabezados, nunca en la URL");
+await api("POST", "/v1/crm/mappings", { connectionId: tvConn.id, name: "x", objectType: "customer", trigger: "manual" }, { expect: 400 });
+await api("POST", "/v1/crm/mappings", { connectionId: tvConn.id, name: "x", objectType: "deal", trigger: "on_completion" }, { expect: 400 });
+await api("POST", "/v1/crm/mappings", {
+  connectionId: tvConn.id,
+  name: "Clientes Protheus",
+  objectType: "customer",
+  trigger: "on_completion",
+  triggerConfig: { matchBy: "recipient_id_document", templateId: template.id },
+});
+step("TOTVS: URL del REST validada (invalid_url), contraseña rechazada, conexión con tenantId probada al crearla; mapeo al completarse");
+
+tv.restart(); // el REST se reinició: el token guardado ya no sirve y la primera llamada da 401
+const loginsBefore = tv.logins;
+const clienteBr = `Cliente BR ${stamp}`;
+const vendedorBr = `VendBR ${stamp}`;
+const tvEnv = await api("POST", "/v1/envelopes/from-template", {
+  templateId: template.id,
+  send: true,
+  recipients: [
+    { role: "Cliente", name: clienteBr, email: `br+${stamp}@cliente.test`, idDocumentType: "other", idDocumentNumber: "11.222.333/0001-81" },
+    { role: "Vendedor", name: vendedorBr, email: `ventas3+${stamp}@acme.test`, idDocumentType: "cpf", idDocumentNumber: "123.456.789-09" },
+  ],
+});
+await signAll(tvEnv.envelope.id, [clienteBr, vendedorBr]);
+const tvRun = await waitFor(
+  async () =>
+    (await api("GET", `/v1/crm/runs?envelopeId=${tvEnv.envelope.id}`)).items.find((r) => r.connectionId === tvConn.id && r.status === "succeeded"),
+  "TOTVS (con un reintento)",
+  40_000,
+);
+assert(tvRun.attempts >= 2, "TOTVS: la anotação falló una vez (500) y la cola reintentó");
+assert(tv.logins > loginsBefore, "TOTVS: ante el 401 se pidió un token nuevo con usuario y contraseña");
+assert(tv.searches.includes("11222333000181"), `búsqueda por el CNPJ normalizado (${tv.searches.join()})`);
+assert(tv.notes.length === 1, `una sola anotação (${tv.notes.length})`);
+const tvNote = tv.notes[0];
+assert(tvNote.ResourceType === "SA1" && tvNote.ResourceCode === "0100012301", `anotação en el cliente SA1 (${tvNote.ResourceCode})`);
+assert(
+  /SHA-256 do PDF: [0-9a-f]{64}/.test(tvNote.Content) &&
+    tvNote.Content.includes(`/app/envelopes/${tvEnv.envelope.id}`) &&
+    tvNote.Content.length <= 250,
+  "anotação con el hash y el link al sobre",
+);
+const tvLinks = (await api("GET", `/v1/crm/links?envelopeId=${tvEnv.envelope.id}`)).items.filter((l) => l.connectionId === tvConn.id);
+assert(
+  tvLinks.length === 1 && tvLinks[0].objectId === "01|000123|01" && tvLinks[0].remoteRef === "note:000001",
+  `vínculo con el cliente (${JSON.stringify(tvLinks)})`,
+);
+assert(!tv.credsInUrl, "nunca credenciales en la URL");
+step("TOTVS: al completarse busca el cliente por CNPJ, renueva el token ante un 401, reintenta tras un 500 y deja la anotação con hash y link");
 
 // ── Vínculo manual + token revocado + reintento manual ──
 al.revoked = true;

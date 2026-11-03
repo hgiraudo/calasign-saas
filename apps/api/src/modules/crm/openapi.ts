@@ -78,7 +78,7 @@ export const CRM_OPS: Op[] = [
     tag: C,
     summary: "Proveedores disponibles",
     description:
-      "HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo (CRM) y Siigo, Alegra (ERP); si OAuth está configurado en el servidor; URIs de redirección de cada proveedor OAuth y URL del webhook de HubSpot.",
+      "HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo (CRM) y Siigo, Alegra, TOTVS Protheus (ERP); si OAuth está configurado en el servidor; URIs de redirección de cada proveedor OAuth y URL del webhook de HubSpot.",
   },
   { method: "get", path: "/v1/crm/connections", tag: C, summary: "Conexiones" },
   {
@@ -86,9 +86,11 @@ export const CRM_OPS: Op[] = [
     path: "/v1/crm/connections",
     tag: C,
     summary: "Conectar con token",
-    description: "HubSpot (token de app privada), Siigo (usuario + access key) o Alegra (correo + token). Se prueba antes de guardar.",
+    description:
+      "HubSpot (token de app privada), Siigo (usuario + access key), Alegra (correo + token) o TOTVS Protheus (`baseUrl` del REST de la organización, https; usuario y contraseña del Protheus; `tenantId` opcional `grupo[,filial]`). Se prueba antes de guardar. TOTVS: una URL que no es https, lleva credenciales o apunta a una dirección interna da 400 `invalid_url`.",
     body: CreateCrmTokenConnectionInput,
     status: 201,
+    errors: ["invalid_url"],
   },
   {
     method: "post",

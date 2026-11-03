@@ -10,7 +10,7 @@ agrupa las guías de cada conector.
 |---|---|---|---|---|
 | Low-code / iPaaS | Power Automate / Logic Apps, Zapier, Make, n8n | Artefacto descargable (se importa en la plataforma) | `integrations/connectors/<id>/` | `/developers/connectors` |
 | CRM / ERP | Dynamics 365 (sobre Power Automate) | Artefacto + script de Dataverse | `integrations/connectors/dynamics365/` | `/developers/connectors#dynamics365` |
-| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Pipedrive (Deal y Person), RD Station CRM (Negociação), Kommo (Lead), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
+| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Pipedrive (Deal y Person), RD Station CRM (Negociação), Kommo (Lead), Siigo, Alegra, TOTVS Protheus (Cliente SA1) | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
 | CRM / ERP | Zoho CRM: botón «Enviar a firmar con CalaSign» en Deals (sobre el conector nativo) | Artefacto: función Deluge + guía de la extensión de Zoho Marketplace | `integrations/connectors/zoho-crm/` | `/developers/guides/crm` |
 | CRM / ERP | Pipedrive Marketplace: acción «Enviar a firmar con CalaSign» (sobre el conector nativo) | Artefacto (Link action) + guía del Developer Hub | `integrations/connectors/pipedrive/` | `/developers/guides/crm#pipedrive` |
 | CRM / ERP | Kommo Marketplace: widget «Enviar a firmar con CalaSign» en Leads (sobre el conector nativo) | Artefacto (zip del widget) + página `send.html` + guía de la integración | `integrations/connectors/kommo/` | `/developers/guides/crm#kommo` |
@@ -45,7 +45,7 @@ marketplace, peso en los cuatro mercados (RD, HN, CO, BR) y costo de construir y
 | 6 | **n8n** | Más de 200 mil usuarios activos y más de 3.000 clientes enterprise ([TechCrunch](https://techcrunch.com/2025/03/24/fair-code-pioneer-n8n-raises-60m-for-ai-powered-workflow-automation)). Serie C con valuación de USD 2.500 M ([Pulse2](https://pulse2.com/n8n-180-million-series-c-at-2-5-billion-valuation-raised-for-expanding-ai-orchestration-platform)). | **Ninguno con nodo oficial**: solo nodos de la comunidad ([foro](https://community.n8n.io/t/docusign-node/8059)). | **Hecho**: `n8n` |
 | 7 | **Make** | 3,1 M de usuarios (+68 % en 2024) y más de 2.100 apps ([Make](https://www.make.com/en/blog/2024-automation-wrap-up)). Fuerte en LATAM y España. | DocuSign y Adobe Sign. | **Hecho**: `make` |
 | 8 | **Odoo** | Más de 170 mil clientes ([Glorium](https://gloriumtech.com/odoo-statistics/)). Peso en pymes de CO, RD y HN. | Solo módulos de terceros para DocuSign; Odoo Enterprise trae su propio Sign. | Pendiente (módulo para apps.odoo.com) |
-| 9 | **TOTVS + RD Station** (BR) | TOTVS tiene el 34 % del ERP brasileño, empatado con SAP ([FGV](https://convergenciadigital.com.br/mercado/sap-e-totvs-esto-empatadas-com-33-do-mercado-nacional-de-erp)). RD Station supera los 60 mil clientes. | Clicksign y D4Sign (locales). | RD Station CRM: **hecho** (conector nativo, `crm/rdstation.ts`). TOTVS: pendiente. |
+| 9 | **TOTVS + RD Station** (BR) | TOTVS tiene el 34 % del ERP brasileño, empatado con SAP ([FGV](https://convergenciadigital.com.br/mercado/sap-e-totvs-esto-empatadas-com-33-do-mercado-nacional-de-erp)). RD Station supera los 60 mil clientes. | Clicksign y D4Sign (locales). | **Hecho** los dos: RD Station CRM (conector nativo, `crm/rdstation.ts`) y TOTVS Protheus (ERP nativo, `crm/totvs.ts`: al completarse, busca el Cliente SA1 por CPF/CNPJ y le deja una anotação con el hash y el link). |
 | 10 | **SAP** (Business One; S/4HANA vía BTP) | 34 % del ERP en Brasil y líder en grandes empresas de CO. | DocuSign solo a través de partners en SAP Store. | Pendiente |
 | — | Workato, Boomi (Leaders del Gartner MQ iPaaS 2025), MuleSoft, Tray, Pipedream, Apps Script | Enterprise o de nicho. | DocuSign y Adobe tienen conector en Workato. | Se pueden usar con la API REST y el OpenAPI. Construir conector cuando haya demanda. |
 | — | Siigo, Alegra (CO) | Siigo: más de 1,2 M de clientes. Alegra: unos 476 mil usuarios ([GuíaDeSoftware](https://www.guiadesoftware.com/software/siigo)). | — | Ya existía: write-back en `crm/` |
@@ -190,7 +190,21 @@ Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefi
     validador pide otros tamaños).
   - Probar con una cuenta real (subida en partes al drive, `PUT /leads/{id}/files`, nota) y pedir la revisión del
     Kommo Marketplace (cuenta de socio) con los textos en es/en/pt.
-- **Siguientes conectores del ranking**: Odoo, TOTVS y SAP Business One.
+- **TOTVS Protheus** (ERP nativo, `apps/api/src/modules/crm/totvs.ts`; detalle y fuentes en [CRM.md](CRM.md)):
+  - Qué hace: la organización carga la URL de su REST del Protheus (on-premise o TOTVS Cloud; validada contra SSRF y
+    con todas las llamadas por `safeRequest`), un usuario y su contraseña. Al completarse un sobre busca el **Cliente**
+    (SA1) por el CPF/CNPJ de un firmante con la API estándar `GET /api/crm/v1/customerVendor/Customer` y le deja una
+    **Anotação** (`POST /api/crm/v1/notes`) con el SHA-256 del PDF y el link al sobre. Token con
+    `POST /api/oauth2/v1/token?grant_type=password` y las credenciales en encabezados
+    ([TDN](https://tdn.totvs.com/pages/releaseview.action?pageId=465383509)); APIs según el
+    [catálogo de APIs TOTVS](https://api.totvs.com.br) (repo `totvs/ttalk-standard-message`).
+  - Por qué Protheus y no Fluig o RM: es la línea del backoffice de la mayoría de los clientes y la que expone las
+    APIs estándar de clientes y anotações; Fluig es BPM/ECM.
+  - No sube el PDF: la API estándar del banco de conhecimento (`/api/crm/v1/documents`) no recibe el archivo. Si un
+    cliente lo pide, la vía es un endpoint ADVPL propio (fuera de alcance).
+  - Probar con un Protheus real: el filtro `governmentalInformation.id` de `customerVendor`, el formato de
+    `ResourceCode` (`AOB_CHAVE`) y la API `notes` sin SIGACRM. Publicar en la TOTVS Store / programa de parceiros.
+- **Siguientes conectores del ranking**: Odoo y SAP Business One.
 
 ## RR. HH. (HRIS), contratos (CLM) y gestores documentales (DMS)
 
@@ -621,7 +635,7 @@ JCE).
 | 14 | Odoo | ERP en crecimiento en CO y LATAM | M | Módulo en Odoo Apps |
 | 15 | Workday y SuccessFactors | Solo para cuentas enterprise | L | Partner o certificación con cada fabricante |
 
-Quedaron afuera por ahora: Stripe, Mercado Pago o Wompi como conector; Gupy y Buk; TOTVS y Omie; Xero y QuickBooks;
+Quedaron afuera por ahora: Stripe, Mercado Pago o Wompi como conector; Gupy y Buk; Omie (TOTVS Protheus ya está, como ERP nativo); Xero y QuickBooks;
 Jotform y Typeform (se cubren con Zapier); Coupa y Ariba.
 
 **Dropbox y OneDrive:** hoy CalaSign archiva ahí el firmado, pero no se puede *enviar a firmar* desde ellos. En

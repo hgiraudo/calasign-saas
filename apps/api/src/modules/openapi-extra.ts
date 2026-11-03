@@ -1680,7 +1680,7 @@ export const TAGS: [string, string][] = [
   ["Documentos generados", "Plantillas de documentos con variables y cláusulas que generan el PDF y el sobre."],
   ["Workflows", "Flujos de aprobación y recolección de datos antes de firmar."],
   ["Negociación", "Redlining y propuestas entre las partes antes de firmar."],
-  ["CRM y ERP", "HubSpot, Salesforce, Siigo y Alegra: enviar desde un registro y devolver el resultado."],
+  ["CRM y ERP", "HubSpot, Salesforce, Zoho, Pipedrive, RD Station, Kommo, Siigo, Alegra y TOTVS: enviar desde un registro y devolver el resultado."],
   [
     "RR. HH. y contratos",
     "BambooHR, HiBob, Factorial, Ironclad y Juro: enviar desde un empleado o contrato y devolver el documento firmado con su evidencia.",

@@ -1,11 +1,11 @@
-// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra).
+// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra, TOTVS).
 import { brandText } from "./white-label";
 import { formatNumber, formatText, useI18n } from "./i18n";
 
 const es = {
   "card.crm": "CRM y ERP",
   "card.crm.desc":
-    "Enviar a firmar desde HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM o Kommo y devolver el documento firmado al CRM, Siigo o Alegra.",
+    "Enviar a firmar desde HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM o Kommo y devolver el documento firmado al CRM, Siigo, Alegra o TOTVS.",
   back: "← Ajustes",
   title: "CRM y ERP",
   intro:
@@ -50,6 +50,14 @@ const es = {
   "siigo.accessKey": "Access key",
   "alegra.email": "Correo del usuario",
   "alegra.token": "Token de la API",
+  // TOTVS Protheus
+  "p.totvs": "TOTVS Protheus",
+  "totvs.baseUrl": "URL del REST del Protheus",
+  "totvs.username": "Usuario del Protheus",
+  "totvs.password": "Contraseña",
+  "totvs.tenantId": "Empresa y filial (opcional, ej. 01,0101)",
+  "totvs.hint.customer":
+    "TOTVS Protheus · Cliente (SA1): al completarse el sobre se busca el cliente por el CPF o CNPJ de un firmante y se le agrega una anotação con el hash del PDF y el link al sobre (la API del Protheus no recibe el archivo).",
   connected: "Conexión creada.",
   error: "No se pudo conectar ({code}).",
   connections: "Conexiones",
@@ -139,7 +147,7 @@ type Key = keyof typeof es;
 const pt: Record<Key, string> = {
   "card.crm": "CRM e ERP",
   "card.crm.desc":
-    "Enviar para assinatura a partir do HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM ou Kommo e devolver o documento assinado ao CRM, Siigo ou Alegra.",
+    "Enviar para assinatura a partir do HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM ou Kommo e devolver o documento assinado ao CRM, Siigo, Alegra ou TOTVS.",
   back: "← Configurações",
   title: "CRM e ERP",
   intro:
@@ -184,6 +192,14 @@ const pt: Record<Key, string> = {
   "siigo.accessKey": "Access key",
   "alegra.email": "E-mail do usuário",
   "alegra.token": "Token da API",
+  // TOTVS Protheus
+  "p.totvs": "TOTVS Protheus",
+  "totvs.baseUrl": "URL do REST do Protheus",
+  "totvs.username": "Usuário do Protheus",
+  "totvs.password": "Senha",
+  "totvs.tenantId": "Empresa e filial (opcional, ex. 01,0101)",
+  "totvs.hint.customer":
+    "TOTVS Protheus · Cliente (SA1): ao concluir o envelope, o cliente é buscado pelo CPF ou CNPJ de um signatário e recebe uma anotação com o hash do PDF e o link do envelope (a API do Protheus não recebe o arquivo).",
   connected: "Conexão criada.",
   error: "Não foi possível conectar ({code}).",
   connections: "Conexões",
@@ -271,7 +287,7 @@ const pt: Record<Key, string> = {
 const en: Record<Key, string> = {
   "card.crm": "CRM & ERP",
   "card.crm.desc":
-    "Send for signature from HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM or Kommo and push the signed document back to the CRM, Siigo or Alegra.",
+    "Send for signature from HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM or Kommo and push the signed document back to the CRM, Siigo, Alegra or TOTVS.",
   back: "← Settings",
   title: "CRM & ERP",
   intro:
@@ -315,6 +331,14 @@ const en: Record<Key, string> = {
   "siigo.accessKey": "Access key",
   "alegra.email": "User email",
   "alegra.token": "API token",
+  // TOTVS Protheus
+  "p.totvs": "TOTVS Protheus",
+  "totvs.baseUrl": "Protheus REST URL",
+  "totvs.username": "Protheus user",
+  "totvs.password": "Password",
+  "totvs.tenantId": "Company and branch (optional, e.g. 01,0101)",
+  "totvs.hint.customer":
+    "TOTVS Protheus · Customer (SA1): when the envelope completes, the customer is looked up by a signer's CPF or CNPJ and gets an annotation with the PDF hash and the envelope link (the Protheus API doesn't accept the file itself).",
   connected: "Connection created.",
   error: "Could not connect ({code}).",
   connections: "Connections",

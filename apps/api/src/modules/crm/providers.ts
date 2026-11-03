@@ -1,5 +1,5 @@
 // Clientes HTTP de cada proveedor CRM/ERP. Las URLs base salen de variables de entorno (las pruebas apuntan a
-// servidores simulados); nunca del usuario, salvo el instance_url de Salesforce, que se valida.
+// servidores simulados); nunca del usuario, salvo el instance_url de Salesforce y la URL del REST de TOTVS, que se validan.
 //
 // Supuestos tomados de la documentación pública de cada API (ver docs/CRM.md):
 //  · HubSpot   CRM v3 (deals, contacts, associations), Files v3 y notes con hs_attachment_ids.
@@ -12,6 +12,8 @@
 //  · Pipedrive API v1 sobre el api_domain de la compañía (ver pipedrive.ts).
 //  · RD Station CRM API v2 en api.rd.services/crm/v2 con OAuth de la App Store (ver rdstation.ts).
 //  · Kommo     API v4 sobre el subdominio de la cuenta; OAuth contra ese subdominio (ver kommo.ts).
+//  · TOTVS     Protheus: APIs REST estándar en el servidor de la organización (URL que carga el cliente, validada y
+//              por safeRequest), token OAuth2 password con usuario y contraseña (ver totvs.ts).
 import type { CrmObjectType, CrmProvider, CrmRecord, ZohoProduct, ZohoRegion } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
@@ -20,6 +22,7 @@ import { BodyTooLargeError, readCappedJson, readCappedText } from "../../lib/htt
 import { kommoAttach, kommoFetchRecord, kommoTest, kommoWriteStatus, validateKommoDomain } from "./kommo";
 import { pipedriveAttach, pipedriveFetchRecord, pipedriveTest, pipedriveWriteStatus, validatePipedriveDomain } from "./pipedrive";
 import { rdstationAttach, rdstationFetchRecord, rdstationTest, rdstationWriteStatus } from "./rdstation";
+import { totvsAttach, totvsFetch, totvsFindCustomer, totvsLogin, totvsTenantHeader, totvsTest, validateTotvsBaseUrl, type TotvsCreds } from "./totvs";
 
 const env = process.env;
 
@@ -194,7 +197,7 @@ export function oauthApp(p: CrmOAuthProvider, opts: { accounts?: string; product
 }
 
 export const oauthConfigured = (p: CrmProvider) => isOAuthProvider(p) && Boolean(oauthApp(p).clientId && oauthApp(p).clientSecret);
-export const tokenSupported = (p: CrmProvider) => p === "hubspot" || p === "siigo" || p === "alegra";
+export const tokenSupported = (p: CrmProvider) => p === "hubspot" || p === "siigo" || p === "alegra" || p === "totvs";
 /** Kommo: endpoint de token del subdominio de la cuenta (validado). */
 export const kommoTokenUrl = (baseDomain: string) => `${validateKommoDomain(baseDomain)}/oauth2/access_token`;
 export const crmRedirectUri = (p: CrmOAuthProvider) => `${config.appUrl}/v1/crm/oauth/${p}/callback`;
@@ -437,6 +440,11 @@ async function authHeader(c: CrmConn): Promise<Record<string, string>> {
     if (!cr.access_token || (cr.expires_at ?? 0) - 60_000 < Date.now()) await siigoLogin(c);
     return { authorization: `Bearer ${c.creds.access_token}`, "Partner-Id": env.SIIGO_PARTNER_ID ?? "CalaSign" };
   }
+  if (c.provider === "totvs") {
+    const cr = c.creds as TotvsCreds;
+    if (!cr.access_token || (cr.expires_at ?? 0) - 60_000 < Date.now()) await totvsLogin(c);
+    return { authorization: `Bearer ${c.creds.access_token}`, ...totvsTenantHeader(c) };
+  }
   if (c.row.auth_type === "token") return { authorization: `Bearer ${(c.creds as HubspotTokenCreds).token}` };
   const cr = c.creds as OAuthCreds;
   if (cr.expires_at && cr.expires_at - 60_000 < Date.now()) await refreshOAuth(c);
@@ -466,11 +474,19 @@ function baseFor(c: CrmConn): string {
     case "kommo":
       if (!c.cfg.baseDomain) throw new CrmError("conexión de Kommo sin el dominio de la cuenta");
       return validateKommoDomain(c.cfg.baseDomain);
+    case "totvs":
+      if (!c.cfg.baseUrl) throw new CrmError("conexión de TOTVS sin la URL del REST");
+      return validateTotvsBaseUrl(c.cfg.baseUrl);
   }
 }
 
-/** La ruta que va en mensajes de error (se guardan en last_error y se muestran): sin el token de HubSpot. */
-const redactPath = (path: string) => path.replace(/\/access-tokens\/[^/?]+/, "/access-tokens/***");
+/**
+ * La ruta que va en mensajes de error (se guardan en last_error, se muestran y el worker los registra en el log): sin el
+ * token de HubSpot ni el documento de identidad de las búsquedas de ERP (Siigo y Alegra ?identification=, TOTVS
+ * ?governmentalInformation.id=), que es un dato personal del firmante.
+ */
+export const redactPath = (path: string) =>
+  path.replace(/\/access-tokens\/[^/?]+/, "/access-tokens/***").replace(/([?&](?:identification|governmentalInformation\.id)=)[^&]+/gi, "$1***");
 
 export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any> {
   const headers: Record<string, string> = { accept: "application/json", ...(await authHeader(c)), ...(r.headers ?? {}) };
@@ -480,7 +496,9 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
     body = JSON.stringify(r.json);
   } else if (r.form) body = r.form;
   else if (r.raw) body = new Blob([Buffer.from(r.raw)]);
-  const res = await fetch(`${r.base ?? baseFor(c)}${r.path}`, {
+  // TOTVS: la URL base la eligió la organización, así que va por safeRequest (sin destinos internos ni redirecciones).
+  const send = c.provider === "totvs" ? totvsFetch : fetch;
+  const res = await send(`${r.base ?? baseFor(c)}${r.path}`, {
     method: r.method ?? (body ? "POST" : "GET"),
     headers,
     body,
@@ -490,6 +508,10 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
     // Token vencido o revocado: se intenta renovar una vez (OAuth con refresh, o login de Siigo).
     if (c.provider === "siigo") {
       await siigoLogin(c);
+      return crmFetch(c, r, true);
+    }
+    if (c.provider === "totvs") {
+      await totvsLogin(c);
       return crmFetch(c, r, true);
     }
     if (c.row.auth_type === "oauth" && c.creds.refresh_token) {
@@ -606,6 +628,8 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
       return rdstationTest(c);
     case "kommo":
       return kommoTest(c);
+    case "totvs":
+      return totvsTest(c);
   }
 }
 
@@ -785,6 +809,7 @@ export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: st
   if (c.provider === "pipedrive") return pipedriveAttach(c, objectType, id, a);
   if (c.provider === "rdstation") return rdstationAttach(c, objectType, id, a);
   if (c.provider === "kommo") return kommoAttach(c, objectType, id, a);
+  if (c.provider === "totvs") return totvsAttach(c, objectType, id, a);
   const note = `CalaSign: "${a.subject}" firmado. Sobre ${a.envelopeId} · SHA-256 ${a.sha256} · ${a.url}`;
   if (c.provider === "hubspot") {
     const form = new FormData();
@@ -845,8 +870,9 @@ export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: st
   return `customer:${id}:comments`;
 }
 
-/** Busca un registro del ERP por número de identificación (NIT, cédula). */
+/** Busca un registro del ERP por número de identificación (NIT, cédula, CPF/CNPJ). */
 export async function findByIdentification(c: CrmConn, objectType: CrmObjectType, identification: string): Promise<string | null> {
+  if (c.provider === "totvs") return totvsFindCustomer(c, objectType, identification);
   const q = encodeURIComponent(identification.replace(/[^0-9A-Za-z-]/g, ""));
   if (c.provider === "siigo") {
     const r = await crmFetch(c, { path: `/v1/customers?identification=${q}` });

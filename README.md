@@ -163,12 +163,16 @@ Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
   # Se recrea la base: --clean no borraría tablas que una migración posterior al dump haya creado.
   runuser -u postgres -- dropdb calasign
   runuser -u postgres -- createdb -O calasign calasign
+  # pg_trgm (búsqueda de acuerdos, migración 0088) es «trusted»: la crea el dueño de la base, sin superusuario.
+  runuser -u calasign -- psql -v ON_ERROR_STOP=1 -d calasign -c "CREATE EXTENSION IF NOT EXISTS pg_trgm"
   # El dump se restaura como calasign (el dueño de la base), nunca como postgres: el rol de la instancia —el mismo
   # que usa la app— puede escribir en backups/, así que un dump podría estar armado por la app comprometida, y
   # restaurado por un superusuario ejecutaría su SQL con todos los privilegios (COPY ... FROM PROGRAM corre comandos
-  # como el usuario postgres del sistema; un SET ROLE no alcanza, el dump podría hacer RESET ROLE). La base no usa
-  # extensiones: las entradas EXTENSION del dump (plpgsql) se sacan de la lista porque solo postgres puede tocarlas.
+  # como el usuario postgres del sistema; un SET ROLE no alcanza, el dump podría hacer RESET ROLE). Las entradas
+  # EXTENSION del dump se sacan de la lista (plpgsql es de postgres; pg_trgm ya se creó arriba como calasign). Si el dump
+  # trae otra extensión, revisarla antes: scripts/prueba-restauracion.sh corta con una que no conoce.
   runuser -u calasign -- pg_restore -l /var/tmp/restore.dump | grep -vE ' EXTENSION - | COMMENT - EXTENSION ' > /var/tmp/restore.list
+  chown calasign /var/tmp/restore.list   # la escribió root con umask 077: sin esto pg_restore no la lee (prueba del 3-Nov-2026)
   runuser -u calasign -- pg_restore --single-transaction --no-owner --no-privileges -L /var/tmp/restore.list \
     -d calasign /var/tmp/restore.dump
   rm -f /var/tmp/restore.dump /var/tmp/restore.list
@@ -177,6 +181,9 @@ Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
   ```
 
   Los archivos (PDF, imágenes) viven en S3 con versionado y no se tocan al restaurar la base.
+- **Prueba de restauración** (SEG-43, una vez por trimestre): `./scripts/prueba-restauracion.sh` restaura el último
+  backup en una base aparte del EC2 (sin cortar el servicio), recalcula la cadena de evidencia, la compara con la base en
+  uso y la borra. Anotar la fecha y los tiempos en `docs/estandares/seguridad-y-cumplimiento.md`.
 - **Logs de Caddy:** las rutas y queries con secretos (links de firma, invitaciones, descargas, callbacks OAuth) se
   escriben como `[redacted]`.
 - **Estado de Terraform:** es local (`infra/dev/terraform.tfstate`) y contiene `SECRET_KEY` en claro: no se versiona,

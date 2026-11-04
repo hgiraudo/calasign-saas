@@ -57,7 +57,9 @@ avisar() {
   notify-send -u critical "CalaSign: QA nocturno en ROJO" "$1" 2>/dev/null || true
 }
 
-{
+# Subshell, no llaves: con { … } el `exit` de adentro terminaba todo el script y nunca se escribía ultimo.txt ni
+# salía el aviso (así pasó en rojo la noche del 4-Nov-2026 sin que nadie se enterara).
+(
   echo "QA nocturno — $(date '+%F %T')"
   [ -d "$WT" ] || { echo "✗ no existe el worktree $WT (./scripts/qa-nocturno.sh --instalar)"; exit 1; }
   # main es una rama del mismo repo: el worktree la ve sin pull. --force descarta lo que haya quedado de una corrida vieja.
@@ -74,7 +76,7 @@ avisar() {
   echo; ./scripts/dast.sh || rc=1
   if [ -n "${DAST_REMOTO-https://dev.calasign.com}" ]; then echo; ./scripts/dast.sh --remoto "${DAST_REMOTO-https://dev.calasign.com}" || rc=1; fi
   exit $rc
-} >"$LOG" 2>&1
+) >"$LOG" 2>&1
 RC=$?
 
 COMMIT="$(git -C "$WT" log -1 --format='%h' 2>/dev/null)"

@@ -115,7 +115,8 @@ function PreviewFrame({ title, height, html }: { title: string; height: number; 
   useEffect(() => {
     // Origen opaco (sandbox sin allow-same-origin): no hay un origen que nombrar. El destino es el marco propio
     // (contentWindow de este iframe, no una ventana que nos abrió o enmarca) y el contenido, la vista previa de la marca.
-    // nosemgrep: calasign-postmessage-a-cualquier-origen — marco propio de origen opaco, ver arriba
+    // La regla propia y la del ruleset público (p/javascript) marcan lo mismo: las dos van en la excepción.
+    // nosemgrep: calasign-postmessage-a-cualquier-origen, javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration — marco propio de origen opaco, ver arriba
     if (loads) ref.current?.contentWindow?.postMessage({ html }, "*");
   }, [loads, html]);
   return (

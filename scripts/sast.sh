@@ -7,7 +7,7 @@
 #                                 osv-scanner sobre los lockfiles y Trivy sobre infra/ (lo corre el QA nocturno; red)
 #
 # Sale con ≠0 ante un hallazgo nuevo. Las excepciones, siempre con el motivo:
-#   Semgrep   // nosemgrep: <regla> — <motivo>   en la línea
+#   Semgrep   // nosemgrep: <regla> — <motivo>   en la línea (con dos reglas, propia y pública: <r1>, <r2> — <motivo>)
 #   gitleaks  .gitleaks.toml (rutas de datos de prueba) y .gitleaksignore (fingerprint)
 #   osv       se mira, no corta: las altas/críticas de producción ya las corta pnpm audit (SEG-41)
 #   Trivy     .trivyignore

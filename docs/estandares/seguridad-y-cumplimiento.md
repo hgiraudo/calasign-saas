@@ -214,5 +214,7 @@ Los dos que habían quedado para decidir, resueltos el 3-Nov-2026:
 - [ ] Destino saliente elegido por el cliente → `assertPublicDestination` (SEG-31)
 - [ ] Webhook entrante → verificar la firma antes de leer (SEG-33)
 - [ ] Proveedor externo nuevo → al catálogo (SEG-30) y a su doc, antes de integrarlo
-- [ ] `./scripts/sast.sh` verde (lo corre `qa.sh`); una excepción, con `nosemgrep` y el motivo (SEG-48)
+- [ ] `./scripts/sast.sh` verde (lo corre `qa.sh`); una excepción, con `nosemgrep` y el motivo (SEG-48). Si una regla
+  propia y una de los rulesets públicos marcan lo mismo, la excepción nombra **las dos** (separadas por coma): los
+  públicos sólo corren con `--completo`, de noche, y el rápido no lo detecta
 - [ ] Dependencia nueva → `pnpm audit` sin altas nuevas; si trae script de instalación, revisarlo antes de sumarlo a `onlyBuiltDependencies` (SEG-40, SEG-41)

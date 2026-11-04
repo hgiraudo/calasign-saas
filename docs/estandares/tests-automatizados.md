@@ -177,6 +177,11 @@ La lección de Milhouse que hay que copiar: **la señal de que el QA corre es `s
 verde y la fecha de `ultimo.txt`, no la ausencia de aviso**. El suyo estuvo rojo 26 noches sin que nadie lo viera
 porque moría antes de correr un test y no mandaba nada.
 
+Nos pasó lo mismo del 1 al 4-Nov-2026: el cuerpo del script iba entre llaves (`{ … } >"$LOG"`) y su `exit` terminaba
+el script entero antes de escribir `ultimo.txt` y de avisar. Ninguna noche dejó `ultimo.txt` y la del 4-Nov quedó en
+rojo (SAST) sin aviso. Desde `490b13c` es un subshell. Si `--estado` dice «Nunca corrió» con logs en
+`var/qa-nocturno/`, el script está roto, no el timer.
+
 ---
 
 ## 5. Lo que NO hay que hacer al escribir un test o comparar resultados

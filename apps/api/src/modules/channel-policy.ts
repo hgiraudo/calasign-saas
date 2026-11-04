@@ -23,6 +23,7 @@ export function channelDisabledError(who: string, v: ChannelPolicyViolation, pat
     recipient: who,
     channel: v.channel,
     via: v.via,
+    // nosemgrep: calasign-url-en-error-o-log — el campo del cuerpo del pedido (recipients[0].channels), no una URL
     ...(path ? { path } : {}),
   });
 }

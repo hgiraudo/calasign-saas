@@ -8,6 +8,7 @@ import { SsoDiscoverInput, SsoSettingsInput, type SsoDiscoverResponse, type SsoS
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, badRequest, forbidden } from "../../lib/errors";
+import { redactUrl } from "../../lib/redact";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { auditFromRequest, changedValues, recordAudit } from "../audit";
 import { authenticate, clientInfo, setSessionCookie, type AuthContext, type Services } from "../context";
@@ -241,11 +242,11 @@ async function getJson(url: string, init?: { method?: string; headers?: Record<s
   try {
     body = JSON.parse(res.body.toString("utf8"));
   } catch {
-    throw new Error(`${url}: respuesta no JSON (HTTP ${res.status})`);
+    throw new Error(`${redactUrl(url)}: respuesta no JSON (HTTP ${res.status})`);
   }
   if (res.status < 200 || res.status >= 300) {
     const code = typeof body?.error === "string" ? `: ${body.error.slice(0, 60)}` : "";
-    throw new Error(`${url}: HTTP ${res.status}${code}`);
+    throw new Error(`${redactUrl(url)}: HTTP ${res.status}${code}`);
   }
   return body;
 }

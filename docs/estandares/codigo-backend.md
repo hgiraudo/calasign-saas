@@ -149,9 +149,22 @@ cuenta): pino pasa por la redacción de `lib/redact.ts`, `console` no.
 | `debug` | Casi no se usa. Nunca dentro de un loop por página, por campo o por destinatario |
 
 🔴 **Nada de datos personales ni secretos en un log**: ni el token del link de firma, ni el código OTP, ni el documento
-de identidad, ni el contenido del PDF, ni un `Authorization`. Las rutas con secreto se redactan solas
-(`lib/redact.ts`: `/s/:token`, `/embed/…`, `?code=`…); **una ruta nueva con un secreto en el path o la query se agrega
-ahí**, con su test en `test/redact.test.ts`.
+de identidad, ni el correo o el teléfono del firmante, ni el contenido del PDF, ni un `Authorization`. Se loguea el id
+(`recipientId`, `userId`) y, si hace falta el destino, `maskDestination()`. Hay dos redes (SEG-20), que no reemplazan
+la regla:
+
+- **En ejecución**, `lib/redact.ts` (`safeLoggerOptions`, en la API y en el worker): las rutas con secreto se redactan
+  solas (`/s/:token`, `/embed/…`, `?code=`…), y también la query con un dato personal (`?q=`, `?login_hint=`,
+  `?identification=`); cualquier objeto logueado sale con las claves de un dato personal censuradas (`email`, `phone`,
+  `cpf`, `signerEmail`…; `recipient` y `body` enteros) y los correos de cualquier texto, enmascarados. **Una ruta nueva
+  con un secreto en el path o la query, o un parámetro con un dato personal, se agrega ahí**, con su test en
+  `test/redact.test.ts`. `console.*` no pasa por esta red.
+- **En el código**, Semgrep: `calasign-dato-personal-en-log`, `calasign-dato-personal-en-error` y
+  `calasign-url-en-error-o-log`.
+
+El texto de un error también es un log: termina en `last_error`, en el log del worker y en la respuesta, que puede leer
+otra persona. La URL de una llamada saliente va por `redactUrl()` (o sólo el host); un contacto se nombra por su rol
+(«el destinatario del rol "Cliente"»), no por su nombre ni su correo.
 
 Lo que **la persona** tiene que ver no va al log: va a la respuesta (`AppError`), a la auditoría o a un aviso
 (`admin-alerts`, `security-notices`).

@@ -187,3 +187,107 @@ rules:
       - pattern: new Function(...)
       - pattern: vm.runInNewContext(...)
       - pattern: vm.runInThisContext(...)
+
+  # ── Datos personales fuera de su lugar (SEG-20) ──
+  # La defensa en ejecución (lib/redact.ts, safeLoggerOptions) censura por el NOMBRE de la clave y enmascara los correos
+  # en cualquier texto. Estas reglas miran el VALOR: lo que la clave no delata ({ to: r.email }, `${signer.cpf}`), lo
+  # que no pasa por pino (console.*, el texto de un Error que termina en last_error o en la respuesta) y las URL.
+  - id: calasign-dato-personal-en-log
+    message: >-
+      Log con un dato personal (correo, teléfono, documento, nombre de una persona, el destinatario entero o el cuerpo del
+      pedido). Logueá el id (recipientId, userId) y, si hace falta el destino, maskDestination(); lo que la persona tiene
+      que ver va a la respuesta o a la auditoría, no al log (SEG-20).
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["apps/web/**", "integrations/**", "**/test/**", "**/e2e/**", "scripts/*.mjs", "scripts/*.ts", "scripts/dast/**", "*.test.ts"]
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: $L.$LVL(...)
+                  - pattern-inside: $L?.$LVL(...)
+              - metavariable-regex:
+                  metavariable: $LVL
+                  regex: ^(trace|debug|info|warn|error|fatal)$
+              - metavariable-regex:
+                  metavariable: $L
+                  regex: (?i)^([\w$]+\??\.)*(log|logger)\??$
+          - pattern-inside: console.$C(...)
+      - pattern: $E
+      - metavariable-regex:
+          metavariable: $E
+          regex: (?i)^([\w$]+\??\.)*(\w*(email|phone|telefono|telefone|celular|cpf|cnpj|cuit|cuil|dni|curp|taxid|tax_id|nationalid|documentnumber|document_number|idnumber|id_number|identification|passport|fullname|full_name|firstname|first_name|lastname|last_name|birthdate|dateofbirth)|recipient|recipients|signer|signers|contact|contacts|(recipient|signer|contact|user|member|invitee|person)\??\.name)$|^(req|request)\.body$
+      - pattern-not-inside: maskDestination(...)
+      - pattern-not-inside: scrubPii(...)
+      - pattern-not-inside: maskEmails(...)
+      - pattern-not-inside: $X.length
+      - pattern-not-inside: "!$X"
+      - pattern-not-inside: Boolean($X)
+
+  - id: calasign-dato-personal-en-error
+    message: >-
+      Error armado con un dato personal (correo, teléfono, documento, nombre de una persona, IP). El texto de un error
+      termina en last_error, en el log del worker y en la respuesta, que puede leer otra persona: nombrá el rol o el id
+      ("el firmante del rol «Cliente»"), no el dato. Si es el dato que mandó quien llama, marcalo con nosemgrep y el
+      motivo (SEG-20).
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["apps/web/**", "integrations/**", "**/test/**", "**/e2e/**", "scripts/*.mjs", "scripts/*.ts", "scripts/dast/**", "*.test.ts"]
+    patterns:
+      - pattern-inside: new $ERR(...)
+      - metavariable-regex:
+          metavariable: $ERR
+          regex: .*Error$
+      - pattern: $E
+      - metavariable-regex:
+          metavariable: $E
+          regex: (?i)^([\w$]+\??\.)*(\w*(email|phone|telefono|telefone|celular|cpf|cnpj|cuit|cuil|dni|curp|taxid|tax_id|nationalid|documentnumber|document_number|idnumber|id_number|identification|passport|fullname|full_name|firstname|first_name|lastname|last_name|birthdate|dateofbirth)|recipient|recipients|signer|signers|contact|contacts|(recipient|signer|contact|user|member|invitee|person)\??\.name|ip|\w*ipaddress|\w*_ip|(?-i:\w+Ip)|remoteaddress)$|^(req|request)\.body$
+      - pattern-not-inside: maskDestination(...)
+      - pattern-not-inside: scrubPii(...)
+      - pattern-not-inside: maskEmails(...)
+      - pattern-not-inside: $X.length
+      - pattern-not-inside: "!$X"
+      - pattern-not-inside: Boolean($X)
+
+  - id: calasign-url-en-error-o-log
+    message: >-
+      URL (o ruta con query) en el texto de un error o en un log: la de una llamada saliente lleva en la query el
+      documento o el correo que se buscó (Siigo y Alegra ?identification=), y la de un link, el token. Pasala por
+      redactUrl() (lib/redact.ts), o poné sólo el host o la ruta sin la query (SEG-20).
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["apps/web/**", "integrations/**", "**/test/**", "**/e2e/**", "scripts/*.mjs", "scripts/*.ts", "scripts/dast/**", "*.test.ts"]
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-inside: new $ERR(...)
+              - metavariable-regex:
+                  metavariable: $ERR
+                  regex: .*Error$
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: $L.$LVL(...)
+                  - pattern-inside: $L?.$LVL(...)
+              - metavariable-regex:
+                  metavariable: $LVL
+                  regex: ^(trace|debug|info|warn|error|fatal)$
+              - metavariable-regex:
+                  metavariable: $L
+                  regex: (?i)^([\w$]+\??\.)*(log|logger)\??$
+          - pattern-inside: console.$C(...)
+      # El valor que va al texto: interpolado en un template o de valor de una propiedad (no el nombre de una función
+      # como objPath(t), ni la condición de un ternario, ni lo que se pasa por redactUrl o se corta antes del `?`).
+      - pattern-either:
+          - pattern: "`...${$E}...`"
+          - pattern: "{..., $K: $E, ...}"
+      - focus-metavariable: $E
+      - metavariable-regex:
+          metavariable: $E
+          regex: (?i)^([\w$]+\??\.)*\w*(url|uri|href|path)$
+      # Lo que no es de una persona: la configuración (config.appUrl) y las constantes (UPGRADE_URL).
+      - metavariable-regex:
+          metavariable: $E
+          regex: ^(?!config\.)(?!([\w$]+\.)*[A-Z][A-Z0-9_]*$)

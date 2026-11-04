@@ -103,3 +103,59 @@ async function sqlBuilders(req, db, params, reply) {
   // ok: calasign-sql-con-entrada-del-pedido
   await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`k:${req.body.id}`]);
 }
+
+// SEG-20: datos personales en logs y errores, y URL con query en el texto.
+function piiLogs(req, d, r, recipient, signer, signers, tpl, log, app) {
+  // ruleid: calasign-dato-personal-en-log
+  d.log.warn({ envelopeId: 1, to: r.email }, "aviso fallido");
+  // ruleid: calasign-dato-personal-en-log
+  req.log.info({ data: req.body }, "pedido");
+  // ruleid: calasign-dato-personal-en-log
+  log.error(`no salió el aviso a ${recipient.phone}`);
+  // ruleid: calasign-dato-personal-en-log
+  console.error("falló el aviso", recipient);
+  // ruleid: calasign-dato-personal-en-log
+  app.log?.warn({ who: signer.name, doc: r.input?.signerCpf }, "x");
+  // ok: calasign-dato-personal-en-log
+  d.log.warn({ envelopeId: 1, recipientId: r.id, to: maskDestination(r.email) }, "aviso fallido");
+  // ok: calasign-dato-personal-en-log
+  d.log.info({ signers: signers.length, hasPhone: !!r.phone, template: tpl.name }, "x");
+  // ok: calasign-dato-personal-en-log
+  d.log.warn({ err: scrubPii(String(r.email)) }, "x");
+}
+
+function piiErrors(r, signer, signers, req, file) {
+  // ruleid: calasign-dato-personal-en-error
+  throw new CrmError(`no se encontró ${r.cpf} en el ERP`);
+  // ruleid: calasign-dato-personal-en-error
+  throw new AppError(409, "already_signed", `Ya firmó ${signer.email}`);
+  // ruleid: calasign-dato-personal-en-error
+  throw new AppError(403, "ip_blocked", `La IP ${req.ip} está bloqueada`);
+  // ruleid: calasign-dato-personal-en-error
+  throw new MappingError("crm_contact_unreachable", `"${r.contact.fullName}" no tiene correo`);
+  // ok: calasign-dato-personal-en-error
+  throw new MappingError("crm_contact_unreachable", `El contacto del rol "${r.role}" no tiene correo ni teléfono`);
+  // ok: calasign-dato-personal-en-error
+  throw new AppError(422, "signers_missing", `Faltan ${signers.length} firmantes`, { hasEmail: Boolean(r.email) });
+  // ok: calasign-dato-personal-en-error
+  throw new Error(`zip inválido: ${file.zip}`);
+}
+
+function urlsInErrors(c, r, url, res, d, t) {
+  // ruleid: calasign-url-en-error-o-log
+  throw new CrmError(`${c.provider} ${r.path}: HTTP ${res.status}`);
+  // ruleid: calasign-url-en-error-o-log
+  d.log.warn({ url: res.url, status: res.status }, "llamada fallida");
+  // ruleid: calasign-url-en-error-o-log
+  throw new Error(`${url}: HTTP ${res.status}`);
+  // ok: calasign-url-en-error-o-log
+  throw new CrmError(`${c.provider} ${redactPath(r.path)}: HTTP ${res.status}`);
+  // ok: calasign-url-en-error-o-log
+  throw new Error(`${redactUrl(url)}: HTTP ${res.status}`);
+  // ok: calasign-url-en-error-o-log
+  d.log.warn({ host: new URL(url).host, path: r.path.split("?")[0] }, "llamada fallida");
+  // ok: calasign-url-en-error-o-log
+  throw new AppError(402, "plan_limit", `Ampliá el plan en ${UPGRADE_URL}`, { docs: config.appUrl });
+  // ok: calasign-url-en-error-o-log
+  throw new MappingError("crm_status_field", `No hay un campo en ${objPath(t)}`);
+}

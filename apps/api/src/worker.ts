@@ -1,6 +1,7 @@
 // Proceso worker dedicado (producción): escala aparte de la API.
 import pino from "pino";
 import { config } from "./config";
+import { safeLoggerOptions } from "./lib/redact";
 import { createDb } from "./infra/db";
 import { startWorker } from "./infra/queue";
 import { servedCells, servesAllCells } from "./infra/cells";
@@ -15,7 +16,8 @@ import { PDF_INGEST_LIMITS } from "@calasign/pdf";
 // Los jobs (conectores, documentos generados) no tienen a nadie esperando la respuesta: esperan lugar más tiempo.
 PDF_INGEST_LIMITS.maxConcurrent = config.pdfIngest.concurrency;
 PDF_INGEST_LIMITS.queueWaitMs = Math.max(config.pdfIngest.queueWaitMs, 120_000);
-const log = pino({ level: config.logLevel });
+// Las mismas opciones que la API (SEG-20): sin ellas, el log del worker no censuraba nada.
+const log = pino(safeLoggerOptions(config.logLevel));
 const db = await createDb();
 const blobs = createBlobStore(createTenantStorageResolver(db));
 await getSealProvider();

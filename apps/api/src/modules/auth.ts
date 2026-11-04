@@ -198,6 +198,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     }
     if ("ssoRequired" in pick) {
       throw new AppError(403, "sso_required", "Tu organización exige ingresar con inicio de sesión único (SSO)", {
+        // nosemgrep: calasign-dato-personal-en-error — el correo que escribió quien inicia sesión, de vuelta a esa persona
         startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(pick.ssoRequired.slug)}&login_hint=${encodeURIComponent(input.email)}`,
       });
     }

@@ -420,6 +420,7 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
     const uri = ref.getAttribute("URI") ?? "";
     if (!uri.startsWith("#")) continue;
     const target = findById(doc, uri.slice(1));
+    // nosemgrep: calasign-url-en-error-o-log — la referencia interna del XML firmado (#id), no una URL
     if (!target) throw new Error(`referencia sin destino ${uri}`);
     const dv = firstChildNS(ref, NS.ds, "DigestValue")!;
     dv.textContent = b64(digest(dAlg, canonicalize(target, c14nAlg)));

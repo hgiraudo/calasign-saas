@@ -1,7 +1,7 @@
 import { Writable } from "node:stream";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { LOG_REDACT_PATHS, redactUrl, safeRequestSerializer } from "../src/lib/redact";
+import { LOG_REDACT_PATHS, maskEmails, redactUrl, safeLoggerOptions, safeRequestSerializer, sanitizeLogValue } from "../src/lib/redact";
 
 const TOKEN = "Ab3dEfGhIjKlMnOpQrStUvWxYz0123456789_-abc";
 
@@ -182,5 +182,245 @@ describe("LOG_REDACT_PATHS", () => {
     expect(sinReq).not.toMatch(/secreto-[ab]/);
     expect(JSON.parse(conReq).req.headers).toMatchObject({ authorization: "[redactado]", cookie: "[redactado]", "x-api-key": "[redactado]" });
     expect(JSON.parse(sinReq).headers).toMatchObject({ authorization: "[redactado]", cookie: "[redactado]" });
+  });
+});
+
+// SEG-20: los datos personales no llegan al log aunque alguien los loguee.
+
+/** Lo que escribe pino con las opciones de la API y del worker (safeLoggerOptions). */
+function logueadoSeguro(log: (l: pino.Logger) => void, level = "info"): string {
+  let out = "";
+  const dest = new Writable({
+    write(chunk, _enc, cb) {
+      out += String(chunk);
+      cb();
+    },
+  });
+  log(pino(safeLoggerOptions(level), dest));
+  return out;
+}
+const linea = (log: (l: pino.Logger) => void) => JSON.parse(logueadoSeguro(log));
+
+describe("safeLoggerOptions", () => {
+  it("lleva las rutas de redact, el serializador del pedido y el nivel pedido", () => {
+    const o = safeLoggerOptions("warn");
+    expect(o.redact).toEqual({ paths: LOG_REDACT_PATHS, censor: "[redactado]" });
+    expect(o.serializers.req).toBe(safeRequestSerializer);
+    expect(logueadoSeguro((l) => l.info("no sale"), "warn")).toBe("");
+    expect(linea((l) => l.info({ req: { url: `/s/${TOKEN}`, method: "GET" } }, "x")).req.url).toBe("/s/[redactado]");
+  });
+});
+
+describe("maskEmails", () => {
+  it("deja las dos primeras letras y el dominio de cada correo del texto", () => {
+    expect(maskEmails("ana.perez@example.com")).toBe("an***@example.com");
+    expect(maskEmails("a@example.com")).toBe("a***@example.com");
+    expect(maskEmails("550 Ana.Perez+x%y-z_1@Sub-Dom.example.COM y bo@example.org no existen")).toBe(
+      "550 An***@Sub-Dom.example.COM y bo***@example.org no existen",
+    );
+  });
+  it("sin una dirección completa no toca nada", () => {
+    for (const s of ["sin correo", "@vite/client", "ana@localhost", "ana@example.c", "x@.com"]) expect(maskEmails(s)).toBe(s);
+  });
+});
+
+describe("redactUrl: datos personales en la query y en la ruta", () => {
+  const PARAMS_CON_DATO_PERSONAL = [
+    "q",
+    "search",
+    "login_hint",
+    "email",
+    "phone",
+    "identification",
+    "governmentalInformation.id",
+    "document",
+    "cpf",
+    "cnpj",
+    "dni",
+  ];
+  it.each(PARAMS_CON_DATO_PERSONAL)("?%s=<dato> se redacta y los demás parámetros quedan", (param) => {
+    expect(redactUrl(`/v1/algo?lang=es&${param}=12345678&page=2`)).toBe(`/v1/algo?lang=es&${param}=[redactado]&page=2`);
+  });
+  it("un correo en el valor de cualquier parámetro o en la ruta se enmascara (el filtro de SCIM)", () => {
+    const scim = redactUrl(`/scim/v2/Users?filter=${encodeURIComponent('userName eq "ana.perez@example.com"')}`);
+    expect(decodeURIComponent(scim)).toBe('/scim/v2/Users?filter=userName eq "an***@example.com"');
+    expect(redactUrl("/v1/contactos/ana.perez@example.com/ver")).toBe("/v1/contactos/an***@example.com/ver");
+  });
+});
+
+describe("safeLoggerOptions: datos personales en cualquier objeto logueado", () => {
+  const CLAVES_POR_EL_FINAL = [
+    "email",
+    "phone",
+    "phoneNumber",
+    "telefono",
+    "telefone",
+    "celular",
+    "cpf",
+    "cnpj",
+    "cuit",
+    "cuil",
+    "dni",
+    "curp",
+    "taxId",
+    "nationalId",
+    "documentNumber",
+    "idNumber",
+    "identification",
+    "passport",
+    "fullName",
+    "firstName",
+    "lastName",
+    "surname",
+    "givenName",
+    "familyName",
+    "displayName",
+    "userName",
+    "signerName",
+    "recipientName",
+    "contactName",
+    "birthDate",
+    "dateOfBirth",
+    "password",
+    "secret",
+    "token",
+    "apiKey",
+  ];
+  it.each(CLAVES_POR_EL_FINAL)("%s se censura sola, con un prefijo y escrita de otra forma", (clave) => {
+    const conPrefijo = `signer${clave[0].toUpperCase()}${clave.slice(1)}`;
+    const out = linea((l) => l.info({ [clave]: "dato-1", [conPrefijo]: "dato-2", [`OTRO_${clave.toUpperCase()}`]: "dato-3" }, "x"));
+    expect(out[clave]).toBe("[redactado]");
+    expect(out[conPrefijo]).toBe("[redactado]");
+    expect(out[`OTRO_${clave.toUpperCase()}`]).toBe("[redactado]");
+  });
+  const CLAVES_EXACTAS = [
+    "rut",
+    "rfc",
+    "nit",
+    "ssn",
+    "otp",
+    "authorization",
+    "cookie",
+    "body",
+    "recipient",
+    "recipients",
+    "signer",
+    "signers",
+    "contact",
+    "contacts",
+  ];
+  it.each(CLAVES_EXACTAS)("%s se censura entera (también en mayúsculas), pero no como final de otra palabra", (clave) => {
+    const out = linea((l) => l.info({ [clave]: { a: "dato-1" }, [clave.toUpperCase()]: ["dato-2"], [`x${clave}`]: "queda" }, "x"));
+    expect(out[clave]).toBe("[redactado]");
+    expect(out[clave.toUpperCase()]).toBe("[redactado]");
+    expect(out[`x${clave}`]).toBe("queda");
+  });
+  it("la clave se compara sin guiones, guiones bajos, puntos ni espacios", () => {
+    const out = linea((l) => l.info({ "e-mail": "a", recipient_phone: "b", "doc.cpf": "c", "Signer Email": "d" }, "x"));
+    expect(out).toEqual(
+      expect.objectContaining({ "e-mail": "[redactado]", recipient_phone: "[redactado]", "doc.cpf": "[redactado]", "Signer Email": "[redactado]" }),
+    );
+  });
+  it("lo que no es un dato personal queda: ids, nombres de cosas, códigos, la IP y los números o booleanos", () => {
+    const datos = {
+      recipientId: "r-1",
+      userId: "u-1",
+      name: "Contrato de alquiler",
+      title: "Plantilla",
+      code: "pdf_invalid",
+      ip: "203.0.113.7",
+      emailDomain: "example.com",
+    };
+    expect(linea((l) => l.info(datos, "x"))).toMatchObject(datos);
+    const out = linea((l) => l.info({ signers: 3, hasPhone: true, email: null, phone: undefined }, "x"));
+    expect(out).toMatchObject({ signers: 3, hasPhone: true, email: null });
+    expect(out).not.toHaveProperty("phone");
+  });
+  it("recorre objetos y arrays anidados y enmascara los correos en cualquier texto, también en el mensaje", () => {
+    const out = linea((l) =>
+      l.warn(
+        { job: { input: { to: "ana.perez@example.com", recipient: { email: "x" } } }, errors: [{ email: "x" }, "rebote de bo@example.org", 7] },
+        "aviso a ana.perez@example.com",
+      ),
+    );
+    expect(out.job.input).toEqual({ to: "an***@example.com", recipient: "[redactado]" });
+    expect(out.errors).toEqual([{ email: "[redactado]" }, "rebote de bo***@example.org", 7]);
+    expect(out.msg).toBe("aviso a an***@example.com");
+    expect(linea((l) => l.info("hola %s", "ana.perez@example.com")).msg).toBe("hola an***@example.com");
+  });
+  it("hasta seis niveles se recorre; más hondo se censura (y un objeto circular no cuelga)", () => {
+    const out = linea((l) => l.info({ a: { b: { c: { d: { e: { ok: "sí", email: "x", f: { ok: "no se ve" } } } } } } }, "x"));
+    expect(out.a.b.c.d.e).toEqual({ ok: "sí", email: "[redactado]", f: "[redactado]" });
+    const circular: Record<string, unknown> = { ok: "sí" };
+    circular.yo = circular;
+    expect(linea((l) => l.info({ circular }, "x")).circular.ok).toBe("sí");
+    expect(sanitizeLogValue([[[[[["hondo"]]]]]])).toEqual([[[[[["hondo"]]]]]]);
+    expect(sanitizeLogValue([[[[[[["hondo"]]]]]]])).toEqual([[[[[["[redactado]"]]]]]]);
+    expect(sanitizeLogValue("ana.perez@example.com", 99)).toBe("an***@example.com");
+    // Un número o un booleano más hondo que el tope no es un objeto: queda.
+    expect(sanitizeLogValue([[[[[[7, true]]]]]])).toEqual([[[[[[7, true]]]]]]);
+  });
+  it("un error se loguea como error (tipo, mensaje, stack) sin los datos: el `detail` de Postgres, una propiedad con el correo", () => {
+    class DatabaseError extends Error {
+      detail = "Key (email)=(ana.perez@example.com) already exists.";
+      email = "ana.perez@example.com";
+      code = "23505";
+    }
+    const err = new DatabaseError("duplicado: ana.perez@example.com");
+    const out = linea((l) => l.error({ err }, "falló"));
+    expect(out.err).toMatchObject({
+      type: "DatabaseError",
+      message: "duplicado: an***@example.com",
+      detail: "Key (email)=(an***@example.com) already exists.",
+      email: "[redactado]",
+      code: "23505",
+    });
+    expect(out.err.stack).toContain("duplicado: an***@example.com");
+    expect(JSON.stringify(out)).not.toContain("ana.perez");
+    // Un Error como primer argumento: pino lo pone en `err` y usa su mensaje.
+    const solo = linea((l) => l.error(err));
+    expect(solo.err.type).toBe("DatabaseError");
+    expect(solo.msg).toBe("duplicado: an***@example.com");
+    // El original no se toca: quien lo atrapó lo sigue viendo entero.
+    expect(err.message).toBe("duplicado: ana.perez@example.com");
+    expect(err.email).toBe("ana.perez@example.com");
+    expect(sanitizeLogValue(err)).toBeInstanceOf(Error);
+    expect(Object.keys(out.err).sort()).toEqual(["code", "detail", "email", "message", "stack", "type"]);
+  });
+  it("un DOMException (el TimeoutError de AbortSignal.timeout) se loguea sin reventar, y la causa también se limpia", () => {
+    const out = linea((l) => l.error({ err: new DOMException("venció ana.perez@example.com", "TimeoutError") }, "x"));
+    expect(out.err).toMatchObject({ type: "DOMException", message: "venció an***@example.com" });
+    const conCausa = linea((l) => l.error({ err: new Error("falló el aviso", { cause: new Error("550 ana.perez@example.com") }) }, "x"));
+    expect(conCausa.err.message).toBe("falló el aviso: 550 an***@example.com");
+    expect(JSON.stringify(conCausa)).not.toContain("ana.perez");
+    // Un mensaje que no es propio del error (un getter de la clase) también se copia y se enmascara.
+    class MensajeCalculado extends Error {
+      get message() {
+        return "rebote de ana.perez@example.com";
+      }
+    }
+    expect(linea((l) => l.error({ err: new MensajeCalculado() }, "x")).err).toMatchObject({
+      type: "MensajeCalculado",
+      message: "rebote de an***@example.com",
+    });
+  });
+  it("los objetos de una clase quedan como están (el pedido de Fastify, un Buffer, una fecha) y el original nunca cambia", () => {
+    class Pedido {
+      email = "ana.perez@example.com";
+    }
+    const req = new Pedido();
+    const buf = Buffer.from("x");
+    const fecha = new Date(0);
+    expect((sanitizeLogValue({ req }) as { req: unknown }).req).toBe(req);
+    expect(sanitizeLogValue(buf)).toBe(buf);
+    expect(sanitizeLogValue(fecha)).toBe(fecha);
+    // Sin prototipo (como la query que arma Fastify) sí se recorre.
+    const query = Object.assign(Object.create(null), { email: "x", lang: "es" });
+    expect(sanitizeLogValue(query)).toEqual({ email: "[redactado]", lang: "es" });
+    const original = { email: "ana.perez@example.com", lista: ["bo@example.org"] };
+    sanitizeLogValue(original);
+    expect(original).toEqual({ email: "ana.perez@example.com", lista: ["bo@example.org"] });
+    expect(sanitizeLogValue(null)).toBe(null);
+    expect(sanitizeLogValue(0)).toBe(0);
   });
 });

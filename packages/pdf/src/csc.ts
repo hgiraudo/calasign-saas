@@ -100,6 +100,7 @@ export class CscClient {
       signal: AbortSignal.timeout(20_000),
     });
     const body: any = await res.json().catch(() => ({}));
+    // nosemgrep: calasign-url-en-error-o-log — el método de la API CSC (credentials/list, signatures/signHash), sin query
     if (!res.ok) throw new CscError(`CSC ${path}: ${body?.error_description ?? body?.error ?? res.status}`, res.status, body);
     return body as T;
   }

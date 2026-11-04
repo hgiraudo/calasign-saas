@@ -557,7 +557,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // organización y la queja, de la persona): queda solo en el log del servidor, con la dirección enmascarada.
     const emailSuppressed = await isSuppressed(s.db, input.email, a.tenantId);
     if (emailSuppressed)
-      req.log.info({ tenantId: a.tenantId, invitationId: id, email: maskDestination(input.email) }, "invitación sin correo: dirección suprimida");
+      req.log.info({ tenantId: a.tenantId, invitationId: id, to: maskDestination(input.email) }, "invitación sin correo: dirección suprimida");
     else await sendInvitationEmail(s.db, a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
     await auditFromRequest(s.db, req, a, "member.invited", {
       targetType: "invitation",
@@ -633,6 +633,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (sso?.enabled && sso.enforce) {
       throw new AppError(403, "sso_required", "Te sumaste a la organización: ingresá con su inicio de sesión único (SSO)", {
         joined: true,
+        // nosemgrep: calasign-dato-personal-en-error — el correo de quien acepta la invitación, de vuelta a esa persona
         startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(sso.slug)}&login_hint=${encodeURIComponent(email)}`,
       });
     }

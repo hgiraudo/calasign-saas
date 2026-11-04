@@ -104,7 +104,8 @@ export function mapRecipients(record: Pick<CrmRecord, "id" | "properties" | "con
     if (channels.length === 0) {
       if (email) channels = ["email"];
       else if (phone) channels = ["whatsapp"];
-      else throw new MappingError("crm_contact_unreachable", `"${name}" (rol "${r.role}") no tiene correo ni teléfono en el CRM`);
+      // Sin el nombre del contacto: el texto va a last_error y al log del worker (SEG-20); el rol alcanza para encontrarlo.
+      else throw new MappingError("crm_contact_unreachable", `El destinatario del rol "${r.role}" no tiene correo ni teléfono en el CRM`);
     }
     out.push({ role: r.role, name, email, phone, channels });
   }

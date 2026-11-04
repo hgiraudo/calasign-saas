@@ -15,7 +15,7 @@ import { AppError, rateLimitError } from "./lib/errors";
 import { markBearerAuthRoutes, rateLimitIdentity, rateLimitIpKey, type RateLimitIdentity } from "./lib/ip";
 import { bearerToken, requestPath } from "./lib/util";
 import { addCspSource } from "./lib/csp";
-import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
+import { safeLoggerOptions } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
 import { sessionRoutes } from "./modules/sessions";
@@ -72,12 +72,9 @@ export function withTurnstile(csp: string, origin: string): string {
 }
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
-  // Logs sin secretos: los tokens de firma, invitaciones, códigos y credenciales viajan en la URL o en headers.
-  const safeLogger = {
-    level: config.logLevel,
-    serializers: { req: safeRequestSerializer },
-    redact: { paths: LOG_REDACT_PATHS, censor: "[redactado]" },
-  };
+  // Logs sin secretos ni datos personales (SEG-20): los tokens de firma, invitaciones, códigos y credenciales viajan en
+  // la URL o en headers, y un objeto logueado puede llevar el correo o el documento de una persona.
+  const safeLogger = safeLoggerOptions(config.logLevel);
   const logger =
     deps.logger === undefined
       ? safeLogger

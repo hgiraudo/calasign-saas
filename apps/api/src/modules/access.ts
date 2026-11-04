@@ -361,6 +361,7 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   // sumarse a SELF_SCOPED_MUTATIONS (si solo toca datos propios de quien llama) o tener su propia regla de permisos.
   // Así una ruta nueva no queda abierta a cualquier miembro por olvido. Esta comprobación va siempre al final.
   if (!isRead && !SELF_SCOPED_MUTATIONS.has(`${method} ${url}`) && !url.startsWith("/dev/")) {
+    // nosemgrep: calasign-url-en-error-o-log — el patrón de la ruta (routeOptions.url), sin valores ni query
     throw new AppError(403, "forbidden", "Ruta sin política de acceso", { route: `${method} ${url}` });
   }
 }

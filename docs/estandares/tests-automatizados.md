@@ -53,7 +53,8 @@ Buscá tu fila **antes** de escribir el test.
 | Un job, un barrido, un reintento | Test que lo corre **dos veces** (idempotencia) y uno que lo hace fallar a mitad | `sweep-robustness.test.ts`, `storage-export-retry.test.ts` |
 | Una carrera (dos pedidos a la vez) | Test que fuerza el orden; **en PGlite pasar no prueba nada** de concurrencia real | `crm-writeback-race.test.ts`, `ai-metadata-races.test.ts` |
 | Un destino saliente (webhook, Slack, S3, URL de un PDF) | Caso en `ssrf.test.ts`: IP interna, nombre que resuelve a una interna, redirect | — |
-| Una ruta con un secreto en el path o la query | Caso en `redact.test.ts` | Y la ruta en `lib/redact.ts` |
+| Una ruta con un secreto en el path o la query, o un parámetro con un dato personal | Caso en `redact.test.ts` | Y la ruta en `lib/redact.ts` (`SECRET_AFTER`, `SECRET_PARAMS` o `PII_PARAMS`) |
+| Una clave nueva que lleva un dato personal en los logs (`PII_KEY_ENDINGS`, `PII_KEYS` de `lib/redact.ts`) | Caso en el `it.each` de `redact.test.ts`, visto censurado en la línea de pino | — |
 | Una regla de Semgrep propia (`scripts/semgrep/calasign.yml`) | Un caso `ruleid:` y uno `ok:` en `scripts/semgrep/calasign.tsx` (`semgrep --test`, lo corre `sast.sh`) | Correrla sobre el repo: cada hallazgo se arregla o lleva `nosemgrep` con el motivo (SEG-48) |
 | Un código de error nuevo | Nada a mano: `check-error-codes.mjs` verifica el texto en PT-BR/EN | — |
 | Un conector de CRM o de terceros | Simulador HTTP del proveedor en la suite e2e del área (`e2e-crm`, `e2e-connectors`) | Unit del mapeo (`crm-mapping.test.ts`) |
@@ -296,7 +297,7 @@ serían días. Por eso cada paquete muta **pocos módulos críticos y puros** y 
 | Paquete | Módulos | Tests | Por qué esos |
 |---|---|---|---|
 | `packages/pdf` | `src/signatures.ts` | `test/byterange.test.ts` | `byteRangeIssue`: si el hueco sin firmar no es exactamente el `/Contents`, se pueden cambiar bytes sin invalidar la firma |
-| `apps/api` | `src/lib/redact.ts`, `src/lib/totp.ts` | `test/redact.test.ts`, `test/totp.test.ts` | Que ningún secreto llegue a un log; el segundo factor |
+| `apps/api` | `src/lib/redact.ts`, `src/lib/totp.ts` | `test/redact.test.ts`, `test/totp.test.ts` | Que ningún secreto ni dato personal llegue a un log; el segundo factor |
 | `apps/api` | `src/lib/util.ts` | `test/util.test.ts`, `test/crypto-gcm-tag.test.ts` | La base criptográfica: AES-256-GCM con la clave de la aplicación (y de dónde sale esa clave), HMAC por propósito, scrypt de las contraseñas, el JSON canónico de la cadena de evidencia, `bearerToken` y `requestPath` (qué credencial y qué ruta ve el control de acceso) |
 | `apps/api` | `src/lib/password-policy.ts` | `test/password-policy.test.ts` | Contraseñas cortas, comunes o armadas con el correo: cada palabra base y cada regla de `basedOnEmail` |
 | `apps/api` | `src/infra/evidence.ts` | `test/evidence-chain.test.ts` (Db falsa en memoria) | El hash de cada evento y `verifyRows`: un mutante que sobrevive es una evidencia alterada que la verificación no detecta |
@@ -317,6 +318,7 @@ el resto va entre `// Stryker disable all` y `// Stryker restore all` (sus mutan
 | `api` `totp.ts` | 99 | 55 | 20 | 24 | 56 % | 73 % |
 | `api` `redact.ts` (3-Nov-2026, con los tests nuevos) | 146 | 145 | 1 | 0 | **99 %** | 99 % |
 | `api` `totp.ts` (3-Nov-2026, con los tests nuevos) | 92 | 87 | 5 | 0 | **95 %** | 95 % |
+| `api` `redact.ts` (3-Nov-2026, con los datos personales de SEG-20) | 296 | 293 + 1 por tiempo | 2 | 0 | **99 %** | 99 % |
 
 - La primera corrida de `pdf` encontró 23 bordes de `byteRangeIssue` sin probar (valores negativos o no enteros, el
   límite exacto del archivo, cada extremo de los rangos hexadecimales, el largo impar, el relleno con ceros). Se
@@ -332,6 +334,12 @@ el resto va entre `// Stryker disable all` y `// Stryker restore all` (sus mutan
   `undefined` se saltea igual), `/\s/g` por `/\s+/g` (dos veces), `.trim()` antes de un `replace` que ya saca los
   espacios, `bits > 5` en base32 (el carácter sale igual en la vuelta siguiente o en la cola) y
   `opts.lastStep != null` → `true` (`step <= null` es `step <= 0`, falso para cualquier paso posterior a 1970).
+- **3-Nov-2026, datos personales (SEG-20).** `redact.ts` suma `maskEmails`, `PII_PARAMS` y la limpieza de cada log
+  (`sanitizeLogValue`, `LOG_HOOKS`): cada clave censurada tiene su caso en un `it.each`, más el tope de profundidad,
+  los números y booleanos que quedan, los objetos de una clase que no se recorren y los errores (también un
+  `DOMException`, que con el prototipo original hacía reventar el log). Los 2 vivos son **equivalentes**: el
+  `i <= segs.length` de antes y sacar `"stack"` de la lista de campos del error (en V8 `stack` es siempre propio, así
+  que igual se copia).
 - 🔴 **El incremental mintió**: tras agregar los tests, la corrida incremental seguía dando 49 vivos en `api` (80 %);
   sin el incremental eran 6 (98 %). No vuelve a probar los mutantes de constantes del módulo (las listas, las regex)
   si sólo cambió el test. Para medir o subir el piso: `./scripts/mutacion.sh --completo`.

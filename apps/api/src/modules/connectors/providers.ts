@@ -355,7 +355,8 @@ export async function cFetch(c: Conn, r: Req, retried = false): Promise<FetchOut
     // Documentos con el tope de subida (lo que pase igual lo rechaza preparePdfUpload); JSON con el de APIs.
     raw = await readCapped(res, r.binary && res.ok ? config.maxUploadBytes : MAX_API_RESPONSE_BYTES);
   } catch (e) {
-    if (e instanceof BodyTooLargeError) throw new ConnectorError(`${c.provider} ${r.path}: ${e.message}`, 422);
+    // Sin la query, como el error HTTP de abajo: el texto va a last_error y al log del worker (SEG-20).
+    if (e instanceof BodyTooLargeError) throw new ConnectorError(`${c.provider} ${r.path.split("?")[0]}: ${e.message}`, 422);
     throw e;
   }
   if (r.binary && res.ok) return { data: raw, headers: res.headers };

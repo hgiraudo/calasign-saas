@@ -1407,6 +1407,7 @@ export function errorResponses(op: Op, oauthDenied: boolean): Record<string, unk
   const byStatus = new Map<number, Set<string>>();
   const add = (code: string) => {
     const e = ERRORS[code];
+    // nosemgrep: calasign-url-en-error-o-log — el patrón de la ruta de la spec, sin valores: falla al armar la spec
     if (!e) throw new Error(`OpenAPI: código de error desconocido ${code} (${op.method} ${op.path})`);
     if (!byStatus.has(e.status)) byStatus.set(e.status, new Set());
     byStatus.get(e.status)!.add(code);

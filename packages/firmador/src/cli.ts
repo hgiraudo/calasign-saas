@@ -86,6 +86,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   const link = cmd ? parseDeepLink(cmd) : null;
   const ui = await startUi({ api: link?.api ?? null, code: link?.code ?? null });
+  // nosemgrep: calasign-url-en-error-o-log — la URL local de la interfaz, para que la abra quien está en esta consola
   console.log(`Firmador CalaSign abierto en ${ui.url}`);
   console.log("Cerrá esta ventana cuando termines.");
   return await new Promise<number>(() => {});

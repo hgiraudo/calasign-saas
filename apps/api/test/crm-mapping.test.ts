@@ -56,8 +56,11 @@ describe("mapeo CRM → plantilla", () => {
     expect(() => mapRecipients(deal, [{ role: "Otro", source: "contact_role", contactRole: "Firmante", channels: ["email"] }])).toThrow(
       /rol "Firmante"/,
     );
-    const sinDatos: CrmRecord = { ...deal, contacts: [{ id: "3", name: "X", email: null, phone: null, role: null, primary: false }] };
-    expect(() => mapRecipients(sinDatos, [{ role: "C", source: "contact", index: 0, channels: ["email"] }])).toThrow(/no tiene correo ni teléfono/);
+    const sinDatos: CrmRecord = { ...deal, contacts: [{ id: "3", name: "Ana Perez", email: null, phone: null, role: null, primary: false }] };
+    const sinContacto = () => mapRecipients(sinDatos, [{ role: "C", source: "contact", index: 0, channels: ["email"] }]);
+    expect(sinContacto).toThrow(/rol "C" no tiene correo ni teléfono/);
+    // El error termina en last_error y en el log del worker: nombra el rol, no a la persona (SEG-20).
+    expect(sinContacto).not.toThrow(/Ana Perez/);
   });
 
   it("prellenado desde propiedades, con rutas y omitiendo vacíos", () => {

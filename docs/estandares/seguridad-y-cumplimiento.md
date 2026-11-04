@@ -111,7 +111,7 @@ Todo el árbol: 2 críticas, 3 altas, 13 moderadas, 4 bajas. **Sólo dependencia
 
 | Severidad | Paquete | Por dónde llega | Exposición | Arreglo |
 |---|---|---|---|---|
-| Crítica | `tinypool` 1.1.1 | `vitest` 3.2.7 (sólo tests) | Baja: no corre en el servidor | Subir vitest a una versión con tinypool ≥ 2.1.2 |
+| Crítica | `tinypool` 1.1.1 | `vitest` 3.2.7 (sólo tests) | Baja: no corre en el servidor | ✅ **4-Nov-2026**: vitest **4.1.12**, que ya no usa tinypool (y trae `@vitest/mocker` arreglado) |
 | Alta | `zod` 3.25.76 (memoria con colecciones grandes) | `@modelcontextprotocol/sdk` 1.32.1 | Media: el MCP valida entradas de agentes | Subir el SDK de MCP cuando traiga zod ≥ 4.6.6, o un `pnpm.overrides` probado |
 | Alta | `body-parser` 2.3.0 (DoS por bytes de más) | `@modelcontextprotocol/sdk` → `express` | Baja: el servidor MCP usa el transporte web estándar sobre Fastify (`modules/mcp/index.ts`), no monta express | Mismo que arriba |
 | Alta | `node-forge` 1.4.0 (verificación RSA PKCS#1 v1.5 laxa) | `apps/api` directo | Baja: sólo se usa para **leer** `.p12` (`custody.ts`, Firmador), no para verificar firmas | Sin versión arreglada: mantener el uso acotado a parsear |
@@ -137,9 +137,12 @@ no tiene `minimumReleaseAge`, que llega con pnpm 10.16):
 | Paquete | Arreglada en | Publicada | Subir desde |
 |---|---|---|---|
 | `nodemailer` 10.0.16 (3 moderadas) | 10.1.4 | 18-Oct-2026 | **1-Nov-2026** |
-| `fast-uri` 3.1.8 / 4.2.2 (vía `ajv` y `@fastify/ajv-compiler`) | 3.1.9 / 4.2.3 (`pnpm.overrides`) | 19-Oct-2026 | **2-Nov-2026** |
+| `fast-uri` 3.1.8 / 4.2.2 (vía `ajv` y `@fastify/ajv-compiler`) | 3.1.9 / 4.2.3 | 19-Oct-2026 | ✅ **Subido el 4-Nov-2026** en el lockfile (`pnpm update -r --depth Infinity fast-uri`: los rangos ya lo admitían, sin `overrides`) |
 | `vite` 6.4.4 (dev) | 6.4.5 | 21-Oct-2026 | **4-Nov-2026** |
 | `glob`/`minimatch` (vía `@fastify/static`), `react-router` 6 | majors nuevos | — | con la próxima subida de `@fastify/static` / migración a react-router 7 |
+
+**4-Nov-2026**, tras subir vitest y fast-uri: osv-scanner pasa de 29 a **16** (0 críticas; la única alta es la de
+`zod`, aceptada arriba).
 
 ### 5.2 Herramientas de SAST y DAST (sin Docker)
 

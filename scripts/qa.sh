@@ -117,7 +117,7 @@ unit_tests() {
   run "vitest firmador" packages/firmador ./node_modules/.bin/vitest run --reporter=dot
   run "vitest sdk-node" packages/sdk-node ./node_modules/.bin/vitest run --reporter=dot
   local workers=()
-  [ -n "${QA_WORKERS:-}" ] && workers=(--maxWorkers="$QA_WORKERS" --minWorkers=1)
+  [ -n "${QA_WORKERS:-}" ] && workers=(--maxWorkers="$QA_WORKERS")
   run "vitest api" apps/api ./node_modules/.bin/vitest run --reporter=dot "${workers[@]}"
   echo "▶ integraciones y SDKs"
   run "integrations test" integrations sh -c 'node test/run.mjs && node test/connectors.mjs && node test/google-workspace.mjs'

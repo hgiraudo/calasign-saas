@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-cert-auth-"));
-const { certificateAuthMethod } = await import("../src/modules/otp");
+const { certificateAuthMethod, otpFallbackChannel } = await import("../src/modules/otp");
 
 describe("certificateAuthMethod", () => {
   it("autorregistrado con link y sin validar el correo: link en pantalla, correo no verificado", () => {
@@ -23,5 +23,37 @@ describe("certificateAuthMethod", () => {
   });
   it("autorregistrado con código por SMS: el canal verificado es el teléfono y se imprime ese", () => {
     expect(certificateAuthMethod({ auth_method: "otp_sms", self_registered: true, authenticated_at: new Date() })).toBe("otp_sms");
+  });
+});
+
+// La organización apagó el canal del método y el código salió por el otro al mismo teléfono (organization-channels):
+// el certificado dice por dónde salió el código que se verificó, no el método original.
+describe("certificado con el código por el otro canal", () => {
+  const R = "rcp-1";
+  const sent = (seq: number, data: Record<string, unknown>, actor = R) => ({ seq, type: "recipient.otp_sent", actor_id: actor, data });
+  const auth = (seq: number, actor = R) => ({ seq, type: "recipient.authenticated", actor_id: actor, data: {} });
+
+  it("el código verificado salió por WhatsApp en vez de SMS: el certificado dice WhatsApp", () => {
+    const ch = otpFallbackChannel([sent(1, { method: "otp_sms", channel: "whatsapp", fallbackFrom: "sms" }), auth(2)], R);
+    expect(ch).toBe("whatsapp");
+    expect(certificateAuthMethod({ auth_method: "otp_sms" }, ch)).toBe("otp_whatsapp");
+    expect(
+      certificateAuthMethod({ auth_method: "otp_whatsapp" }, otpFallbackChannel([sent(1, { channel: "sms", fallbackFrom: "whatsapp" }), auth(2)], R)),
+    ).toBe("otp_sms");
+  });
+
+  it("cuenta el último código antes de autenticarse, no uno posterior ni el de otro destinatario", () => {
+    // El verificado salió por su canal; después pidió otro que salió por el alternativo: el certificado sigue con SMS.
+    expect(otpFallbackChannel([sent(1, { method: "otp_sms" }), auth(2), sent(3, { channel: "whatsapp", fallbackFrom: "sms" })], R)).toBeNull();
+    // Un primer código por el alternativo y el último, ya con el canal encendido, por el suyo.
+    expect(otpFallbackChannel([sent(1, { channel: "whatsapp", fallbackFrom: "sms" }), sent(2, { method: "otp_sms" }), auth(3)], R)).toBeNull();
+    expect(otpFallbackChannel([sent(1, { channel: "whatsapp", fallbackFrom: "sms" }, "otro"), auth(2)], R)).toBeNull();
+    expect(otpFallbackChannel([sent(1, { channel: "whatsapp", fallbackFrom: "sms" })], R)).toBeNull();
+  });
+
+  it("sin cambio de canal, o con un método que no es por teléfono, el método de siempre", () => {
+    expect(certificateAuthMethod({ auth_method: "otp_sms" }, null)).toBe("otp_sms");
+    expect(certificateAuthMethod({ auth_method: "otp_email" }, "whatsapp")).toBe("otp_email");
+    expect(certificateAuthMethod({ auth_method: "link", self_registered: true, authenticated_at: null }, "sms")).toBe("link_self_registered");
   });
 });

@@ -81,8 +81,30 @@ export function isUnverifiedSelfRegistered(r: any): boolean {
  * Autenticación que imprime el certificado de finalización. Un autorregistrado (formulario o link público) sin validar
  * el correo no recibió el link por un canal: lo vio en pantalla, y el correo lo escribió él (`link_self_registered`).
  */
-export function certificateAuthMethod(r: { auth_method: string; self_registered?: boolean | null; authenticated_at?: unknown }): string {
-  return r.auth_method === "link" && isUnverifiedSelfRegistered(r) ? "link_self_registered" : r.auth_method;
+export function certificateAuthMethod(
+  r: { auth_method: string; self_registered?: boolean | null; authenticated_at?: unknown },
+  otpChannelUsed: "sms" | "whatsapp" | null = null,
+): string {
+  if (r.auth_method === "link" && isUnverifiedSelfRegistered(r)) return "link_self_registered";
+  // El certificado dice por dónde salió el código que se verificó: si la organización apagó el canal del método y salió
+  // por el otro al mismo teléfono (otpChannel), ése.
+  if (otpChannelUsed && (r.auth_method === "otp_sms" || r.auth_method === "otp_whatsapp")) return `otp_${otpChannelUsed}`;
+  return r.auth_method;
+}
+
+/**
+ * Canal del código que el destinatario verificó, cuando no fue el de su método (fallbackFrom en recipient.otp_sent):
+ * el último código enviado antes de su recipient.authenticated. null si salió por el canal del método o no hubo OTP.
+ */
+export function otpFallbackChannel(
+  events: { seq: number; type: string; actor_id: string | null; data?: Record<string, unknown> | null }[],
+  recipientId: string,
+): "sms" | "whatsapp" | null {
+  const auth = events.filter((x) => x.type === "recipient.authenticated" && x.actor_id === recipientId).at(-1);
+  if (!auth) return null;
+  const sent = events.filter((x) => x.type === "recipient.otp_sent" && x.actor_id === recipientId && x.seq < auth.seq).at(-1);
+  const ch = sent?.data?.fallbackFrom ? sent.data.channel : null;
+  return ch === "sms" || ch === "whatsapp" ? ch : null;
 }
 
 /**

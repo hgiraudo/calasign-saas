@@ -85,7 +85,8 @@ token donde el proveedor la admite).
   (`outbound.ts` `sendTracked`: queda omitido en `notifications` y en la evidencia; si era el único canal, el aviso
   sale por correo). Un código por SMS o WhatsApp apagado sale por el otro canal al mismo teléfono si está encendido;
   si no, `409 otp_channel_disabled`: nunca cae al correo, porque el link suele llegar por correo y un código al mismo
-  buzón no verifica nada más (`modules/otp.ts` `otpChannel`; código en `modules/channel-policy.ts`).
+  buzón no verifica nada más (`modules/otp.ts` `otpChannel`; código en `modules/channel-policy.ts`). El certificado
+  de finalización dice el canal por el que salió el código que se verificó (`otpFallbackChannel`), no el del método.
 - 🟡 **La celda de residencia fija dónde se guardan los archivos** (y la base, con un despliegue por celda): SES (us-east-2), Anthropic, Twilio, Meta, Stripe,
   Mercado Pago y los KYC procesan donde procesa cada proveedor, sea cual sea la celda.
 - 💲 **Región de procesamiento sin confirmar** para Anthropic, Twilio, Meta, Telegram, Veriff, Truora, Stripe,

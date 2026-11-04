@@ -13,7 +13,7 @@ import { deliver } from "../notifications/channels";
 import { channelOff, tenantChannels } from "../notifications/channel-policy";
 import { isSuppressed, scrubPii, sendTracked } from "../notifications/outbound";
 import { pastExpiry, receivesSignerNotices } from "./envelopes";
-import { certificateAuthMethod, isUnverifiedSelfRegistered } from "./otp";
+import { certificateAuthMethod, isUnverifiedSelfRegistered, otpFallbackChannel } from "./otp";
 import { normLocale, render, type TemplateKind } from "../notifications/templates";
 import { isSecurityNoticeKind, type SecurityNoticeKind } from "./security-notices";
 import { loadDocuments } from "./mappers";
@@ -566,7 +566,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     // Enmascarado como el de la verificación de identidad: el certificado lo reciben todos los destinatarios.
     idDocument: r.id_document_number ? `${(r.id_document_type ?? "").toUpperCase()} ${maskDocNumber(r.id_document_number)}`.trim() : null,
     channels: r.channels,
-    authMethod: inPersonLabels.get(r.id) ?? (r.embedded ? embeddedAuthLabel(e.locale) : certificateAuthMethod(r)),
+    authMethod: inPersonLabels.get(r.id) ?? (r.embedded ? embeddedAuthLabel(e.locale) : certificateAuthMethod(r, otpFallbackChannel(events, r.id))),
     sentAt: r.sent_at ? new Date(r.sent_at).toISOString() : null,
     viewedAt: r.viewed_at ? new Date(r.viewed_at).toISOString() : null,
     consentedAt: r.consented_at ? new Date(r.consented_at).toISOString() : null,

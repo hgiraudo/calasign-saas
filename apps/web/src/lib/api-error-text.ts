@@ -457,6 +457,16 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Você pediu links demais para o celular: tente mais tarde ou desenhe a assinatura nesta tela.",
     en: "You requested too many phone links: try again later or draw your signature on this screen.",
   },
+  channel_disabled: {
+    "pt-BR":
+      "A organização desativou esse canal (Configurações → Organização → Canais): escolha outro canal ou outra verificação (o e-mail sempre está disponível).",
+    en: "Your organization turned that channel off (Settings → Organization → Channels): choose another channel or verification (email is always available).",
+  },
+  otp_channel_disabled: {
+    "pt-BR":
+      "Esta organização não envia mais códigos por esse canal e sua assinatura é verificada com um código no seu telefone: peça a quem enviou o documento que mude sua forma de verificação.",
+    en: "This organization no longer sends codes through that channel and your signature is verified with a code to your phone: ask whoever sent you the document to change how you're verified.",
+  },
   handoff_channel_unavailable: {
     "pt-BR": "Esse canal não está disponível (no Telegram, só se você já vinculou seu chat): copie o link ou escolha outro canal.",
     en: "That channel isn't available (Telegram only works if you already linked your chat): copy the link or choose another channel.",

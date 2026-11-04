@@ -667,11 +667,30 @@ export const ERRORS: Record<string, Err> = {
     message: "Pediste demasiados links para el celular: probá más tarde o dibujá la firma en esta pantalla",
     summary: "Más de 20 pases por hora del mismo firmante",
   },
+  channel_disabled: {
+    status: 400,
+    code: "channel_disabled",
+    message:
+      "Ana Pérez: la organización apagó WhatsApp como canal de aviso (Ajustes → Organización → Canales): quitalo de los canales del destinatario (el correo siempre está disponible)",
+    details: { recipient: "Ana Pérez", channel: "whatsapp", via: "channel", path: "recipients.0" },
+    summary:
+      "Un destinatario pide un canal que la organización apagó (PATCH /v1/settings/organization, `channels`): `via: channel` es un canal de aviso (whatsapp, telegram) y `via: auth_method` el código de verificación (otp_sms, otp_whatsapp). `details.channel`: sms, whatsapp o telegram. Lo devuelven la creación y edición de sobres (también en una llamada, desde plantilla, low-code, formularios web, CRM, conectores, MCP), las correcciones, la reasignación, el clonado, la generación de documentos y los workflows; en un envío masivo es un error de la fila",
+  },
+  otp_channel_disabled: {
+    status: 409,
+    code: "otp_channel_disabled",
+    message:
+      "Esta organización ya no envía códigos por SMS y tu firma se verifica con un código a tu teléfono: pedile a quien te envió el documento que cambie tu forma de verificación",
+    details: { channel: "sms" },
+    summary:
+      "El firmante se verifica por SMS o WhatsApp y la organización apagó ese canal (y el otro canal al mismo teléfono también está apagado o no configurado). No cae al correo: el remitente cambia la verificación (en una corrección) o un administrador vuelve a encender el canal",
+  },
   handoff_channel_unavailable: {
     status: 409,
     code: "handoff_channel_unavailable",
     message: "Todavía no vinculaste tu Telegram: copiá el link y pegalo en el chat, o elegí otro canal",
-    summary: "El canal no está configurado en el entorno o (Telegram) el firmante no vinculó su chat",
+    summary:
+      "El canal no está configurado en el entorno, la organización lo apagó (details.reason: channel_disabled) o (Telegram) el firmante no vinculó su chat",
   },
   handoff_cooldown: {
     status: 429,

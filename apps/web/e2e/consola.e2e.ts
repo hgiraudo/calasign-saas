@@ -23,7 +23,7 @@ test.describe("consola", () => {
     sinErrores();
   });
 
-  test("Ajustes → Organización: cambia el huso horario y lo muestra con su desfase", async ({ page, request }) => {
+  test("Ajustes → Organización: cambia el huso horario (con su desfase) y apaga un canal de terceros", async ({ page, request }) => {
     const sinErrores = vigilarErrores(page);
     const cuenta = await altaDeCuenta(request);
     await page.goto("/login");
@@ -40,12 +40,22 @@ test.describe("consola", () => {
     await expect(huso).toHaveValue("UTC");
     await huso.selectOption("America/Bogota");
     await expect(page.getByRole("status").first()).toContainText("UTC−05:00");
-    await page.getByRole("button", { name: "Guardar" }).click();
+    await page.getByRole("button", { name: "Guardar", exact: true }).click();
     await expect(page.getByText("Guardado.")).toBeVisible();
 
-    // Quedó guardado en la organización (lo lee la misma sesión del alta).
+    // Quedó guardado en la organización (lo lee la misma sesión del alta), con los canales encendidos por defecto.
     const res = await request.get("/v1/settings/organization");
-    expect(await res.json()).toEqual({ timeZone: "America/Bogota" });
+    expect(await res.json()).toEqual({ timeZone: "America/Bogota", channels: { sms: true, whatsapp: true, telegram: true } });
+
+    // Canales de terceros: apagar WhatsApp lo guarda sin tocar el huso, y avisa qué pasa con el código por teléfono.
+    const whatsapp = page.getByRole("checkbox", { name: /WhatsApp/ });
+    await expect(whatsapp).toBeChecked();
+    await whatsapp.uncheck();
+    await expect(page.getByText(/recibe el código por el otro al mismo teléfono/)).toBeVisible();
+    await page.getByRole("button", { name: "Guardar canales" }).click();
+    await expect(page.getByText("Guardado.")).toBeVisible();
+    const res2 = await request.get("/v1/settings/organization");
+    expect(await res2.json()).toEqual({ timeZone: "America/Bogota", channels: { sms: true, whatsapp: false, telegram: true } });
     sinErrores();
   });
 

@@ -12,7 +12,8 @@ import { LOCALE_LABELS, allowNextNavigation, expiryFromDateInput, localDateInput
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, validateFields, type DraftField } from "../components/FieldEditor";
 import { PHONE_RE, normalizePhone } from "../components/SignerExtras";
-import { AUTH_METHODS, type AuthMethod } from "@calasign/shared";
+import { allowedAuthMethods, allowedNotifyChannels, AUTH_METHODS, type AuthMethod } from "@calasign/shared";
+import { useOrganizationChannels } from "../lib/organization-channels";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, OrderInput, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
@@ -699,6 +700,11 @@ function RecipientsStep({
   const sx = useSignerText();
   const x = useExpText();
   const authLabel = (m: AuthMethod) => (m === "in_person" ? x("auth.in_person") : sx(`auth.${m}` as Parameters<typeof sx>[0]));
+  // Canales que la organización apagó (Ajustes → Organización): no se ofrecen. Uno ya elegido en este borrador (se apagó
+  // después) se sigue mostrando, para poder quitarlo: la API rechaza guardarlo (channel_disabled).
+  const orgChannels = useOrganizationChannels();
+  const notifyChannels = allowedNotifyChannels(orgChannels, CHANNELS);
+  const authMethods = allowedAuthMethods(orgChannels, AUTH_METHODS);
 
   const add = () => {
     const maxOrder = recipients.reduce((m, r) => Math.max(m, r.routingOrder), 0);
@@ -800,7 +806,7 @@ function RecipientsStep({
                 <label className="field">
                   <span>{sx("edit.authMethod")}</span>
                   <select value={r.authMethod} onChange={(e) => set(i, { authMethod: e.target.value as AuthMethod })}>
-                    {AUTH_METHODS.map((m) => (
+                    {AUTH_METHODS.filter((m) => authMethods.includes(m) || m === r.authMethod).map((m) => (
                       <option
                         key={m}
                         value={m}
@@ -834,7 +840,7 @@ function RecipientsStep({
               </label>
               <fieldset className="field rr-channels">
                 <legend>{t("edit.channels")}</legend>
-                {CHANNELS.map((c) => (
+                {CHANNELS.filter((c) => notifyChannels.includes(c) || r.channels.includes(c)).map((c) => (
                   <label key={c} className="check">
                     <input
                       type="checkbox"

@@ -261,7 +261,7 @@ export const docsEs = {
   "concepts.rstatus.reassigned": "El remitente lo reemplazó por otra persona. `replacedBy` apunta al nuevo destinatario.",
   "concepts.channels.h": "Canales de notificación",
   "concepts.channels.p":
-    "`channels` define por dónde llega la invitación: {channels}. `email` necesita `email`; `whatsapp` necesita `phone` en formato E.164 (`+5491122334455`); `telegram` necesita `telegramChatId` o, si no lo tenés, otro canal para mandar el link de vinculación. Con `embedded: true` o `inPerson` el destinatario no recibe invitaciones. `locale` (`es`, `pt-BR`, `en`) define el idioma de los mensajes y de la página de firma.",
+    "`channels` define por dónde llega la invitación: {channels}. `email` necesita `email`; `whatsapp` necesita `phone` en formato E.164 (`+5491122334455`); `telegram` necesita `telegramChatId` o, si no lo tenés, otro canal para mandar el link de vinculación. Con `embedded: true` o `inPerson` el destinatario no recibe invitaciones. La organización puede apagar SMS, WhatsApp y Telegram (`PATCH /v1/settings/organization`, `channels`): uno apagado como canal o como código (`otp_sms`, `otp_whatsapp`) da 400 `channel_disabled`. `locale` (`es`, `pt-BR`, `en`) define el idioma de los mensajes y de la página de firma.",
   "concepts.routing.h": "Orden de firma",
   "concepts.routing.p":
     "`routingOrder` (1 a 100) define los turnos. Todos los destinatarios con el mismo número reciben la invitación a la vez (firma en **paralelo**); el turno siguiente se activa recién cuando terminó el anterior (firma en **secuencia**). Combinando números armás flujos mixtos. Las copias (`cc`) reciben el documento al final, sin importar su número.",

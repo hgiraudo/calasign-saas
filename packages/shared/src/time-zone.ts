@@ -2,6 +2,7 @@
 // fecha de los campos «fecha de firma» se escriben en el huso que configura la cuenta, con su desfase respecto de UTC
 // a la vista, para que el PDF no se lea en una hora que no es la de nadie. Sin configurar: UTC (como antes).
 import { z } from "zod";
+import { OrganizationChannelsInput, type OrganizationChannels } from "./organization-channels";
 
 export const DEFAULT_TIME_ZONE = "UTC";
 
@@ -122,13 +123,24 @@ export function formatDateTimeInZone(d: Date, tz: string): string {
 export interface OrganizationSettings {
   /** Huso IANA de las horas del certificado y de la fecha de firma (UTC si no se configuró). */
   timeZone: string;
+  /**
+   * Canales de terceros permitidos (true = encendido): SMS (Twilio), WhatsApp (Meta) y Telegram. Uno apagado no se puede
+   * elegir para ningún destinatario (400 channel_disabled) y, si se apagó después, no se usa al enviar. Ver
+   * organization-channels.ts.
+   */
+  channels: OrganizationChannels;
 }
 
-export const UpdateOrganizationSettingsInput = z.object({
-  timeZone: z
-    .string()
-    .trim()
-    .max(64)
-    .refine(isValidTimeZone, { message: "Huso horario desconocido: usá un nombre IANA, p. ej. America/Argentina/Buenos_Aires" }),
-});
+/** PATCH parcial: cada ajuste es opcional (antes el huso era obligatorio; un cliente viejo lo sigue mandando igual). */
+export const UpdateOrganizationSettingsInput = z
+  .object({
+    timeZone: z
+      .string()
+      .trim()
+      .max(64)
+      .refine(isValidTimeZone, { message: "Huso horario desconocido: usá un nombre IANA, p. ej. America/Argentina/Buenos_Aires" })
+      .optional(),
+    channels: OrganizationChannelsInput.optional(),
+  })
+  .refine((x) => x.timeZone !== undefined || x.channels !== undefined, { message: "Indicá timeZone o channels" });
 export type UpdateOrganizationSettingsInput = z.infer<typeof UpdateOrganizationSettingsInput>;

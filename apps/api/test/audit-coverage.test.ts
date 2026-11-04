@@ -277,3 +277,27 @@ describe("2FA", () => {
     }
   });
 });
+
+describe("auditoría de los canales de la organización", () => {
+  it("apagar canales queda como settings.organization_updated con el antes y el después de cada uno (sin duplicar settings.changed)", async () => {
+    const t = await newTenant();
+    const owner = await newUser(t);
+    const cookies = await newSession(owner, t);
+    const r = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings/organization",
+      cookies,
+      payload: { channels: { sms: false, telegram: false } },
+    });
+    expect(r.statusCode).toBe(200);
+    const rows = await audits(t, "settings.organization_updated");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_id: owner, target_id: "organization", target_type: "settings" });
+    expect(rows[0].data).toEqual({
+      from: { "channels.sms": true, "channels.telegram": true },
+      to: { "channels.sms": false, "channels.telegram": false },
+      changed: ["channels.sms", "channels.telegram"],
+    });
+    expect(await audits(t, "settings.changed")).toHaveLength(0);
+  });
+});

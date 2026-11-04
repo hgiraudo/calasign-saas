@@ -24,6 +24,7 @@ import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } fro
 import { deliver } from "../notifications/channels";
 import { scrubPii } from "../notifications/outbound";
 import { getSmsProvider } from "../notifications/sms";
+import { tenantChannels } from "../notifications/channel-policy";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { currentSignerGroup, lockEnvelope, pastExpiry } from "./envelopes";
@@ -56,6 +57,7 @@ interface HandoffRow {
 /** Columnas del destinatario que usa este módulo (SELECT * de recipients). */
 interface SignerRow {
   id: string;
+  tenant_id: string;
   name: string;
   email: string | null;
   phone: string | null;
@@ -104,14 +106,18 @@ const MSG = {
 const handoffExpired = () =>
   new AppError(410, "handoff_expired", "El link para dibujar la firma venció o ya no sirve: pedí otro desde la pantalla donde estás firmando");
 
-/** Canales por los que la API puede mandar el link en este entorno (en local, todo cae en el buzón de desarrollo). */
-function availableChannels(r: { telegram_chat_id?: string | null }): HandoffChannel[] {
+/**
+ * Canales por los que la API puede mandar el link en este entorno (en local, todo cae en el buzón de desarrollo) y que
+ * la organización no apagó (Ajustes → Organización: el link del pase lleva el secreto y pasaría por ese proveedor).
+ */
+async function availableChannels(db: Db, r: { tenant_id: string; telegram_chat_id?: string | null }): Promise<HandoffChannel[]> {
+  const allowed = await tenantChannels(db, r.tenant_id);
   const out: HandoffChannel[] = [];
-  if (getSmsProvider() || config.devMailbox) out.push("sms");
-  if ((config.whatsapp.token && config.whatsapp.phoneNumberId) || config.devMailbox) out.push("whatsapp");
+  if (allowed.sms && (getSmsProvider() || config.devMailbox)) out.push("sms");
+  if (allowed.whatsapp && ((config.whatsapp.token && config.whatsapp.phoneNumberId) || config.devMailbox)) out.push("whatsapp");
   // Telegram no le escribe a un número: solo al chat que el firmante vinculó con el bot (telegram.ts). Sin chat, la web
   // ofrece copiar el link o compartirlo por Telegram desde el propio dispositivo.
-  if (r.telegram_chat_id && (config.telegram.botToken || config.devMailbox)) out.push("telegram");
+  if (allowed.telegram && r.telegram_chat_id && (config.telegram.botToken || config.devMailbox)) out.push("telegram");
   return out;
 }
 
@@ -155,7 +161,7 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
       url: await handoffUrl(db, h, token),
       purpose: h.purpose,
       expiresAt: new Date(h.expires_at).toISOString(),
-      channels: availableChannels(r),
+      channels: await availableChannels(db, r),
       sent,
     };
   }
@@ -165,7 +171,11 @@ export async function signatureHandoffRoutes(app: FastifyInstance, s: Services) 
    * esquivan la espera ni los topes); si no sale, el envío reservado igual cuenta para la espera, como en el OTP.
    */
   async function sendLink(req: FastifyRequest, r: SignerRow, e: EnvelopeRow, h: HandoffRow, token: string, input: SendSignatureHandoffInput) {
-    if (!availableChannels(r).includes(input.channel)) {
+    if (!(await availableChannels(s.db, r)).includes(input.channel)) {
+      if (!(await tenantChannels(s.db, r.tenant_id))[input.channel])
+        throw conflict("handoff_channel_unavailable", "Esta organización no envía links por ese canal: copiá el link o elegí otro canal", {
+          reason: "channel_disabled",
+        });
       throw conflict(
         "handoff_channel_unavailable",
         input.channel === "telegram"

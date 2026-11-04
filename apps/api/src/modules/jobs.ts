@@ -10,6 +10,7 @@ import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
 import { BUMP_UPDATED_AT, decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
+import { channelOff, tenantChannels } from "../notifications/channel-policy";
 import { isSuppressed, scrubPii, sendTracked } from "../notifications/outbound";
 import { pastExpiry, receivesSignerNotices } from "./envelopes";
 import { certificateAuthMethod, isUnverifiedSelfRegistered } from "./otp";
@@ -320,13 +321,20 @@ async function notify(
 
   // Sin repetidos: los esquemas aceptan ["email","email",…] (también al delegar, desde el link público) y cada repetición
   // era un envío más del mismo aviso al mismo destino.
-  const channels: ("email" | "whatsapp" | "telegram")[] = unverified
+  const chosen: ("email" | "whatsapp" | "telegram")[] = unverified
     ? ["email"]
     : [...new Set<"email" | "whatsapp" | "telegram">(r.channels ?? ["email"])];
+  // La organización apagó después todos los canales que tenía elegidos (WhatsApp, Telegram): el aviso sale por correo si
+  // hay dirección (el correo no se apaga). Cada canal apagado igual pasa por sendTracked, que lo deja registrado como
+  // omitido (y acá, en la evidencia): se ve por qué no llegó por ahí.
+  const allowed = await tenantChannels(d.db, e.tenant_id);
+  const channels = chosen.every((c) => channelOff(allowed, c)) && r.email ? [...chosen, "email" as const] : chosen;
   // Telegram sin vincular: el correo invita a activarlo desde la página de firma (que genera un link t.me de un solo
-  // uso). El token de firma no viaja a Telegram.
+  // uso), salvo que la organización haya apagado Telegram. El token de firma no viaja a Telegram.
   const tgHint =
-    link && channels.includes("telegram") && !r.telegram_chat_id && config.telegram.botUsername ? TELEGRAM_HINT[normLocale(locale)] : null;
+    link && channels.includes("telegram") && allowed.telegram && !r.telegram_chat_id && config.telegram.botUsername
+      ? TELEGRAM_HINT[normLocale(locale)]
+      : null;
   const errors: { text: string; transient: boolean }[] = [];
   let delivered = 0;
 
@@ -379,7 +387,8 @@ async function notify(
         await appendEvent(t, {
           tenantId: e.tenant_id,
           envelopeId: e.id,
-          // Dirección suprimida (rebotó o se quejó antes): no sale, y el remitente lo ve en la actividad del sobre.
+          // Dirección suprimida (rebotó o se quejó antes) o canal que la organización apagó: no sale, y el remitente lo ve
+          // en la actividad del sobre (reason: channel_disabled).
           type: out.status === "sent" ? "notification.sent" : "notification.suppressed",
           actor: SYSTEM,
           data: {
@@ -388,6 +397,7 @@ async function notify(
             template: p.kind,
             destination: maskDestination(to!),
             ...(out.status === "sent" ? { provider: out.res.provider } : {}),
+            ...(out.status === "suppressed" && out.reason ? { reason: out.reason } : {}),
           },
         });
       });

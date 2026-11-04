@@ -11,6 +11,8 @@ import { enqueue } from "../infra/queue";
 import { AppError, conflict } from "../lib/errors";
 import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
+import { channelOff, tenantChannels } from "../notifications/channel-policy";
+import { getSmsProvider } from "../notifications/sms";
 import { clearBounceSuppression, isSuppressed, noteDkimSendResult } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
@@ -160,6 +162,38 @@ export async function assertOtpDestinationCapacity(db: Db, tenantId: string, des
   }
 }
 
+/** Si el entorno puede mandar por ese canal al teléfono (en local, todo cae en el buzón de desarrollo). */
+function phoneChannelReady(channel: "sms" | "whatsapp"): boolean {
+  if (config.devMailbox) return true;
+  return channel === "sms" ? Boolean(getSmsProvider()) : Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId);
+}
+
+/**
+ * Canal por el que sale el código. Si la organización apagó el del método (SMS o WhatsApp, migración 0128) después de
+ * elegirlo, sale por el otro canal al mismo teléfono si está encendido y configurado: el factor es el mismo (tener ese
+ * teléfono) y queda en la evidencia (fallbackFrom). Si no hay ninguno, 409 otp_channel_disabled: NUNCA cae al correo,
+ * porque el link de firma suele llegar por correo y un código al mismo buzón no verifica nada más que el link (bajaría
+ * la verificación que pidió el remitente sin que nadie lo decida). Lo arregla el remitente (quitar y volver a agregar al
+ * firmante con otra verificación, en una corrección) o un administrador volviendo a encender el canal.
+ */
+async function otpChannel(
+  db: Db,
+  tenantId: string,
+  method: OtpMethod,
+): Promise<{ channel: "email" | "sms" | "whatsapp"; fallbackFrom: "sms" | "whatsapp" | null }> {
+  const channel = METHOD_CHANNEL[method];
+  if (channel === "email") return { channel, fallbackFrom: null };
+  const allowed = await tenantChannels(db, tenantId);
+  if (!channelOff(allowed, channel)) return { channel, fallbackFrom: null };
+  const alt = channel === "sms" ? "whatsapp" : "sms";
+  if (!channelOff(allowed, alt) && phoneChannelReady(alt)) return { channel: alt, fallbackFrom: channel };
+  throw conflict(
+    "otp_channel_disabled",
+    `Esta organización ya no envía códigos por ${channel === "sms" ? "SMS" : "WhatsApp"} y tu firma se verifica con un código a tu teléfono: pedile a quien te envió el documento que cambie tu forma de verificación`,
+    { channel },
+  );
+}
+
 function codeHash(recipientId: string, code: string) {
   return sha256Hex(`${recipientId}:${code}`);
 }
@@ -194,7 +228,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000);
     const locale = normLocale(r.locale ?? e.locale);
     const m = MSG[locale];
-    const channel = METHOD_CHANNEL[method];
+    const { channel, fallbackFrom } = await otpChannel(s.db, e.tenant_id, method);
     // Dirección con una queja contra esta organización (notifications/ses-feedback.ts): no se le escribe. Un rebote
     // permanente no frena el código: lo pide la persona en este momento (con los topes de abajo) y, si lo valida, la
     // dirección recibe correo y el rebote se borra (verify). El mensaje lo ve solo quien tiene el link.
@@ -273,7 +307,14 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         envelopeId: e.id,
         type: "recipient.otp_sent",
         actor: recipientActor(req, r),
-        data: { method, destination: maskDestination(destination), provider: res.provider },
+        // fallbackFrom: el método pedía ese canal, la organización lo apagó y el código salió por el otro canal al mismo
+        // teléfono (channel).
+        data: {
+          method,
+          destination: maskDestination(destination),
+          provider: res.provider,
+          ...(fallbackFrom ? { channel, fallbackFrom } : {}),
+        },
       });
     });
     const out: OtpSendResponse = {

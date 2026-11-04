@@ -39,6 +39,7 @@ export const LOWCODE_OPS: Op[] = [
     method: "post",
     path: "/v1/envelopes/from-template/{templateId}",
     operationId: "sendFromTemplateForm",
+    errors: ["channel_disabled"],
     tag: "Plantillas",
     summary: "Enviar desde plantilla con roles como objeto (conectores low-code)",
     description:

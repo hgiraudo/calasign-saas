@@ -2,6 +2,7 @@
 // job se reintente, y errores sin datos personales (terminan en logs y en jobs.last_error).
 import type { Db } from "../infra/db";
 import { maskDestination, uuidv7 } from "../lib/util";
+import { CHANNEL_DISABLED_NOTE, channelOff, tenantChannels } from "./channel-policy";
 import { deliver, type OutboundMessage, type SendResult } from "./channels";
 
 /** Dirección normalizada para la supresión. */
@@ -81,7 +82,7 @@ export function scrubPii(s: string): string {
 export type TrackedResult =
   | { status: "sent"; res: SendResult; id: string }
   | { status: "already" }
-  | { status: "suppressed" }
+  | { status: "suppressed"; reason?: "channel_disabled" }
   | { status: "failed"; error: string; transient: boolean };
 
 export interface TrackedSend {
@@ -159,10 +160,10 @@ export async function noteDkimSendResult(db: Db, tenantId: string | null | undef
 }
 
 /**
- * Envía y registra en `notifications`. Correo a una dirección suprimida: no sale (fila 'suppressed'). Ya enviado por
- * este job al mismo canal y destino: no sale otra vez. La fila se inserta 'queued' ANTES de enviar y se actualiza
- * después: si el registro posterior falla (o el proceso muere a mitad del envío), el reintento del job la ve y no
- * reenvía. Contrapartida: un proceso que muere después de insertar y antes de entregar deja ese aviso sin enviar
+ * Envía y registra en `notifications`. Correo a una dirección suprimida o canal que la organización apagó: no sale
+ * (fila 'suppressed'). Ya enviado por este job al mismo canal y destino: no sale otra vez. La fila se inserta 'queued'
+ * ANTES de enviar y se actualiza después: si el registro posterior falla (o el proceso muere a mitad del envío), el
+ * reintento del job la ve y no reenvía. Contrapartida: un proceso que muere después de insertar y antes de entregar deja ese aviso sin enviar
  * (se prefiere eso a mandarlo dos veces); la fila 'queued' queda a la vista.
  */
 export async function sendTracked(db: Db, t: TrackedSend, m: OutboundMessage & { cta?: string | null }): Promise<TrackedResult> {
@@ -193,6 +194,13 @@ export async function sendTracked(db: Db, t: TrackedSend, m: OutboundMessage & {
   if (m.channel === "email" && (await isSuppressed(db, m.to, t.tenantId))) {
     await insert("suppressed", { error: "dirección suprimida (rebote permanente o queja)" });
     return { status: "suppressed" };
+  }
+  // Canal de terceros que la organización apagó (SMS, WhatsApp, Telegram; migración 0128) después de elegirlo: no sale
+  // y queda registrado como omitido, igual que una dirección suprimida (el llamador lo anota en la evidencia del sobre).
+  // Se mira acá, en el último paso antes de entregar, para que ningún aviso lo esquive.
+  if (m.channel !== "email" && channelOff(await tenantChannels(db, t.tenantId), m.channel)) {
+    await insert("suppressed", { error: CHANNEL_DISABLED_NOTE });
+    return { status: "suppressed", reason: "channel_disabled" };
   }
   const queued = await insert("queued");
   const finish = (status: "sent" | "failed", extra: { provider?: string | null; messageId?: string | null; error?: string | null }) =>

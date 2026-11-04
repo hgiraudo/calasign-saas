@@ -839,6 +839,18 @@ function detailText(code: string, details: unknown, loc: "pt-BR" | "en"): string
         : "Você atingiu o limite de usuários do seu plano. Altere-o em Faturamento.";
     return en ? "Your plan doesn't include this. Upgrade it in Billing." : "O seu plano não inclui isso. Altere-o em Faturamento.";
   }
+  // Canal que la organización apagó (details: recipient, channel sms/whatsapp/telegram, via channel/auth_method).
+  if (code === "channel_disabled" && (d.channel === "sms" || d.channel === "whatsapp" || d.channel === "telegram")) {
+    const who = typeof d.recipient === "string" && d.recipient ? `${d.recipient}: ` : "";
+    const name = d.channel === "sms" ? "SMS" : d.channel === "whatsapp" ? "WhatsApp" : "Telegram";
+    if (d.via === "auth_method")
+      return en
+        ? `${who}your organization turned ${name} off (Settings → Organization → Channels), so the verification code can't go there: choose the code by email or another verification.`
+        : `${who}a organização desativou ${name} (Configurações → Organização → Canais), então o código de verificação não pode ir por aí: escolha o código por e-mail ou outra verificação.`;
+    return en
+      ? `${who}your organization turned ${name} off as a notification channel (Settings → Organization → Channels): remove it from the recipient's channels (email is always available).`
+      : `${who}a organização desativou ${name} como canal de aviso (Configurações → Organização → Canais): tire-o dos canais do destinatário (o e-mail sempre está disponível).`;
+  }
   // Firma con certificado que exige corresponder al documento, sin documento cargado (details.recipient: el nombre).
   if (code === "missing_id_document") {
     const who = typeof d.recipient === "string" && d.recipient ? `${d.recipient}: ` : "";

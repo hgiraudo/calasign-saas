@@ -15,6 +15,8 @@ import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement, maskDocNumber } from "./identity/kyc";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
 import { downgradeIdMatchSql, explicitRequirements, normalizeRequirements } from "./certsign-requirements";
+import { assertChannelsAllowed } from "./channel-policy";
+import { tenantChannels } from "../notifications/channel-policy";
 
 /** Aplica los campos opcionales de recordatorios/delegación de Create/UpdateEnvelopeInput (solo los presentes). */
 export async function applyEnvelopeSettings(
@@ -55,9 +57,15 @@ export async function replaceRecipient(db: Db, e: any, old: any, c: NewContact, 
   // Cada delegación suma un destinatario, una invitación y una línea en el certificado: con tope por sobre.
   const reps = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM recipients WHERE envelope_id = $1 AND replaces IS NOT NULL`, [e.id]);
   if ((reps?.n ?? 0) >= 20) throw conflict("too_many_replacements", "Este sobre ya tuvo demasiadas delegaciones o reasignaciones");
+  // Sin canales indicados: correo, o WhatsApp si solo hay teléfono y la organización no lo apagó. Los indicados (la
+  // reasignación del remitente) no pueden incluir uno apagado. El método de verificación se hereda tal cual: si su canal
+  // se apagó después, lo resuelve el pedido del código (otp.ts), igual que para el destinatario original.
+  const allowed = await tenantChannels(db, e.tenant_id);
   const channels = c.channels?.length
     ? c.channels
-    : [...(c.email ? (["email"] as const) : []), ...(!c.email && c.phone ? (["whatsapp"] as const) : [])];
+    : [...(c.email ? (["email"] as const) : []), ...(!c.email && c.phone && allowed.whatsapp ? (["whatsapp"] as const) : [])];
+  if (!channels.length) throw conflict("invalid_channels", "La organización no manda avisos por WhatsApp: indicá el correo de la persona");
+  await assertChannelsAllowed(db, e.tenant_id, [{ name: c.name, channels }], "channels");
   if (channels.includes("email") && !c.email) throw conflict("invalid_channels", "El canal email requiere email");
   if (channels.includes("whatsapp") && !c.phone) throw conflict("invalid_channels", "El canal WhatsApp requiere teléfono");
   // El reemplazo hereda la verificación que pidió el remitente: no se baja a "solo link" en silencio.

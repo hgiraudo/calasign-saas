@@ -98,6 +98,7 @@ import {
   MeSchema,
   MemberSchema,
   named,
+  OrganizationSettingsSchema,
   PaymentProviderSchema,
   RecipientIdentityDetailSchema,
   ReportsSummarySchema,
@@ -378,6 +379,7 @@ const OPS: Op[] = [
     response: CreateEnvelopeResponseSchema,
     idempotent: true,
     errors: [
+      "channel_disabled",
       "not_pdf",
       "invalid_field",
       "anchor_not_found",
@@ -482,7 +484,16 @@ const OPS: Op[] = [
     body: PutRecipientsInput,
     response: EnvelopeDetailSchema,
     expectedUpdatedAt: true,
-    errors: ["not_draft", "duplicate_ids", "id_in_use", "identity_provider_unavailable", "plan_limit_kyc", "logic_order", "version_changed"],
+    errors: [
+      "channel_disabled",
+      "not_draft",
+      "duplicate_ids",
+      "id_in_use",
+      "identity_provider_unavailable",
+      "plan_limit_kyc",
+      "logic_order",
+      "version_changed",
+    ],
   },
   {
     method: "put",
@@ -583,7 +594,7 @@ const OPS: Op[] = [
       "Mensaje, vencimiento, datos de contacto (link nuevo y el anterior revocado), altas y bajas de destinatarios y campos solo para quien no abrió el sobre. Quien ya firmó es inmutable. El sobre corregido sigue limitado a 50 destinatarios y 500 campos (si no, 422 envelope_incomplete).",
     body: CorrectEnvelopeBody,
     response: EnvelopeDetailSchema,
-    errors: ["invalid_contact", "recipient_immutable", "envelope_incomplete"],
+    errors: ["channel_disabled", "invalid_contact", "recipient_immutable", "envelope_incomplete"],
   },
   {
     method: "post",
@@ -595,7 +606,7 @@ const OPS: Op[] = [
       "El nuevo destinatario hereda rol, orden, campos, cobro, verificación de identidad y firma con certificado; el anterior queda `reassigned` (replacedBy) con su link revocado. Si el anterior ya estaba invitado, el nuevo recibe la invitación enseguida. Como mucho 20 delegaciones o reasignaciones por sobre (409 too_many_replacements).",
     body: ReassignInput,
     response: EnvelopeDetailSchema,
-    errors: ["not_in_progress", "not_replaceable", "too_many_replacements"],
+    errors: ["channel_disabled", "not_in_progress", "not_replaceable", "too_many_replacements"],
   },
   {
     method: "post",
@@ -753,6 +764,7 @@ const OPS: Op[] = [
     response: EnvelopeDetailSchema,
     idempotent: true,
     errors: [
+      "channel_disabled",
       "template_empty",
       "unknown_role",
       "duplicate_role",
@@ -996,7 +1008,7 @@ const OPS: Op[] = [
     body: WebFormInput,
     status: 201,
     response: WebFormSchema,
-    errors: ["invalid_role", "invalid_form", "template_empty", "plan_limit_web_forms"],
+    errors: ["channel_disabled", "invalid_role", "invalid_form", "template_empty", "plan_limit_web_forms"],
   },
   { method: "get", path: "/v1/web-forms/{id}", operationId: "getWebForm", tag: "Formularios web", summary: "Detalle", response: WebFormSchema },
   {
@@ -1009,7 +1021,7 @@ const OPS: Op[] = [
       "Lo hace quien lo creó o quien tiene envelopes:manage_all. La plantilla no se puede cambiar. Mismas reglas que al crear: el rol de quien completa tiene que ser signer, del primer turno y sin destinatario fijo (400 invalid_role); `embeddable` con `requireOtp` → 400 invalid_form. Exige formularios web en el plan (402), salvo para desactivarlo (`active: false`), así se puede apagar tras bajar de plan.",
     body: UpdateWebFormInput,
     response: WebFormSchema,
-    errors: ["invalid_role", "invalid_form", "plan_limit_web_forms"],
+    errors: ["channel_disabled", "invalid_role", "invalid_form", "plan_limit_web_forms"],
   },
   {
     method: "delete",
@@ -1237,7 +1249,7 @@ const OPS: Op[] = [
       expiresAt: iso,
     }),
     auth: "token",
-    errors: ["envelope_closed"],
+    errors: ["otp_channel_disabled", "envelope_closed"],
   },
   {
     method: "post",
@@ -1510,15 +1522,21 @@ const OPS: Op[] = [
     path: "/v1/settings/organization",
     operationId: "getOrganizationSettings",
     tag: "Organización",
-    summary: "Ajustes generales de la organización: el huso horario de las horas del certificado y de la fecha de firma",
+    summary: "Ajustes generales de la organización: el huso horario y los canales de terceros permitidos (SMS, WhatsApp, Telegram)",
+    description:
+      "`timeZone`: huso IANA de las horas del certificado y de la fecha de firma. `channels`: `{ sms, whatsapp, telegram }`, true = encendido (por defecto los tres). Un canal apagado no se puede elegir como canal de aviso ni como código de verificación (400 channel_disabled), no se ofrece para el link del celular ni para vincular Telegram, y lo que ya lo tenía elegido no sale por ahí (el aviso queda omitido en la evidencia y sale por correo si era el único canal). Lo lee cualquier miembro.",
+    response: OrganizationSettingsSchema,
   },
   {
     method: "patch",
     path: "/v1/settings/organization",
     operationId: "updateOrganizationSettings",
     tag: "Organización",
-    summary: "Cambiar el huso horario (IANA, p. ej. America/Argentina/Buenos_Aires); se aplica a los sobres que se completen después",
+    summary: "Cambiar el huso horario o apagar/encender canales de terceros (SMS, WhatsApp, Telegram)",
+    description:
+      "Parcial: `timeZone` (IANA, p. ej. America/Argentina/Buenos_Aires; se aplica a los sobres que se completen después) y/o `channels` (solo los canales que vienen). Exige settings:manage (propietario o administrador) y queda en la auditoría (settings.organization_updated, con el antes y el después de cada canal). Un firmante pendiente que se verifica por un canal apagado recibe el código por el otro canal al mismo teléfono si está encendido; si no, 409 otp_channel_disabled al pedirlo.",
     body: UpdateOrganizationSettingsInput,
+    response: OrganizationSettingsSchema,
   },
 
   // Evidencia

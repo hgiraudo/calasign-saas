@@ -7,6 +7,7 @@ import { api, errorText, HttpError, uuid } from "../lib/api";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { ErrorBox, Spinner, recipientColor } from "../components/ui";
 import { useTitle } from "../lib/white-label";
+import { useOrganizationChannels } from "../lib/organization-channels";
 
 interface Person {
   name: string;
@@ -36,6 +37,8 @@ export function TemplateUsePage() {
   const [prefill, setPrefill] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // WhatsApp apagado por la organización (Ajustes → Organización): no se ofrece (la API lo rechazaría).
+  const orgChannels = useOrganizationChannels();
 
   useEffect(() => {
     api<TemplateDetail>(`/v1/templates/${id}`)
@@ -188,7 +191,7 @@ export function TemplateUsePage() {
             </div>
             <div className="row-wrap">
               <span className="muted small">{t("edit.channels")}:</span>
-              {CHANNELS_UI.map((c) => (
+              {CHANNELS_UI.filter((c) => c.id !== "whatsapp" || orgChannels.whatsapp || p.channels.includes(c.id)).map((c) => (
                 <label key={c.id} className="check">
                   <input
                     type="checkbox"

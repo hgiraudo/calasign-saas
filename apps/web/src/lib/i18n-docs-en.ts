@@ -253,7 +253,7 @@ export const docsEn: Record<DocsKey, string> = {
   "concepts.rstatus.reassigned": "The sender replaced them with someone else. `replacedBy` points to the new recipient.",
   "concepts.channels.h": "Notification channels",
   "concepts.channels.p":
-    "`channels` defines how the invitation is delivered: {channels}. `email` requires `email`; `whatsapp` requires `phone` in E.164 format (`+5491122334455`); `telegram` requires `telegramChatId` or, if you don't have it, another channel to send the linking link. With `embedded: true` or `inPerson` the recipient gets no invitations. `locale` (`es`, `pt-BR`, `en`) sets the language of the messages and the signing page.",
+    "`channels` defines how the invitation is delivered: {channels}. `email` requires `email`; `whatsapp` requires `phone` in E.164 format (`+5491122334455`); `telegram` requires `telegramChatId` or, if you don't have it, another channel to send the linking link. With `embedded: true` or `inPerson` the recipient gets no invitations. The organization can turn off SMS, WhatsApp and Telegram (`PATCH /v1/settings/organization`, `channels`): a channel or code (`otp_sms`, `otp_whatsapp`) that's off returns 400 `channel_disabled`. `locale` (`es`, `pt-BR`, `en`) sets the language of the messages and the signing page.",
   "concepts.routing.h": "Signing order",
   "concepts.routing.p":
     "`routingOrder` (1 to 100) defines the routing steps. All recipients with the same number get the invitation at the same time (**parallel** signing); the next step only starts once the previous one is finished (**sequential** signing). Combine numbers to build mixed flows. Copy recipients (`cc`) get the document at the end, regardless of their number.",

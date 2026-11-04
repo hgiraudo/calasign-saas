@@ -34,6 +34,7 @@ import { loadDetail, loadDocuments, toDocument } from "./mappers";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { guardTemplateForms } from "./webforms";
 import { explicitRequirementsJson } from "./certsign-requirements";
+import { assertEnvelopeChannelsAllowed } from "./channel-policy";
 
 const toTemplate = (r: any) => ({
   id: r.id,
@@ -887,6 +888,9 @@ export async function insertEnvelopeFromTemplate(
       [rid, role.id],
     );
   }
+  // Canales que la organización apagó (SMS, WhatsApp, Telegram), sobre lo escrito: from-template, low-code, CRM,
+  // conectores, formularios web y cada fila del envío masivo pasan por acá (con los canales por defecto que pusieron).
+  await assertEnvelopeChannelsAllowed(t, ctx.tenantId, envId);
   onRecipients?.(recMap);
   const fieldMap = new Map<string, string>();
   // Plantillas guardadas antes de que el cambio de rol borrara los campos: copia y aprobador no llevan campos.

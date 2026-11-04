@@ -21,6 +21,7 @@ import {
   type ZohoProduct,
   type ZohoRegion,
 } from "@calasign/shared";
+import { useOrganizationChannels } from "../lib/organization-channels";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useCrmText } from "../lib/i18n-crm";
@@ -552,6 +553,8 @@ function MappingEditor({
   onSaved: () => void;
 }) {
   const t = useCrmText();
+  // WhatsApp apagado por la organización (Ajustes → Organización): no se ofrece (la API rechaza el mapeo).
+  const orgChannels = useOrganizationChannels();
   const [connectionId, setConnectionId] = useState(mapping?.connectionId ?? connections[0]?.id ?? "");
   const conn = connections.find((c) => c.id === connectionId);
   const provider = conn?.provider ?? "hubspot";
@@ -847,7 +850,7 @@ function MappingEditor({
               </div>
               <div className="row-between">
                 <div className="row-wrap" aria-label={t("m.channels")}>
-                  {CHANNELS.filter((c) => c !== "telegram").map((ch) => (
+                  {CHANNELS.filter((c) => c !== "telegram" && (c !== "whatsapp" || orgChannels.whatsapp || r.channels.includes(c))).map((ch) => (
                     <label key={ch} className="check small">
                       <input
                         type="checkbox"

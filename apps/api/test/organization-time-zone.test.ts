@@ -65,7 +65,7 @@ describe("huso horario de la organización", () => {
   it("por defecto UTC; se cambia con PATCH, se rechaza uno desconocido y queda en la auditoría", async () => {
     const get = await app.inject({ method: "GET", url: "/v1/settings/organization", headers });
     expect(get.statusCode).toBe(200);
-    expect(get.json()).toEqual({ timeZone: "UTC" });
+    expect(get.json()).toEqual({ timeZone: "UTC", channels: { sms: true, whatsapp: true, telegram: true } });
 
     const bad = await app.inject({ method: "PATCH", url: "/v1/settings/organization", headers, payload: { timeZone: "Marte/Olympus" } });
     expect(bad.statusCode).toBe(400);
@@ -79,7 +79,7 @@ describe("huso horario de la organización", () => {
       payload: { timeZone: "America/Argentina/Buenos_Aires" },
     });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json()).toEqual({ timeZone: "America/Argentina/Buenos_Aires" });
+    expect(ok.json()).toEqual({ timeZone: "America/Argentina/Buenos_Aires", channels: { sms: true, whatsapp: true, telegram: true } });
     const row = await db.one<any>(`SELECT time_zone FROM tenants WHERE id = $1`, [tenant]);
     expect(row.time_zone).toBe("America/Argentina/Buenos_Aires");
 
@@ -88,7 +88,7 @@ describe("huso horario de la organización", () => {
       [tenant],
     );
     expect(audit).toHaveLength(1);
-    expect(audit[0].data).toMatchObject({ from: { timeZone: "UTC" }, to: { timeZone: "America/Argentina/Buenos_Aires" } });
+    expect(audit[0].data).toEqual({ from: { timeZone: "UTC" }, to: { timeZone: "America/Argentina/Buenos_Aires" }, changed: ["timeZone"] });
   });
 
   it("el alta de cuenta guarda el huso que manda la web; uno inválido no frena el alta y queda en UTC", async () => {

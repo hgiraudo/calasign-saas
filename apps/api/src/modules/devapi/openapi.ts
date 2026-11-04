@@ -248,7 +248,7 @@ export const DEVAPI_OPS: Op[] = [
     bodyOptional: true,
     status: 201,
     response: CloneResponseSchema,
-    errors: ["purged_clone"],
+    errors: ["channel_disabled", "purged_clone"],
   },
   {
     method: "post",

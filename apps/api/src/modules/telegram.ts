@@ -8,6 +8,7 @@ import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { Db } from "../infra/db";
 import { decrypt, encrypt, randomToken, sha256Hex } from "../lib/util";
 import { sendTelegram, telegramStartLink } from "../notifications/channels";
+import { tenantChannels } from "../notifications/channel-policy";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { envelopeBaseUrl } from "./white-label/brand";
@@ -20,6 +21,10 @@ const MSG = {
   },
   cta: { es: "Revisar y firmar", "pt-BR": "Revisar e assinar", en: "Review and sign" },
   unknown: "Link inválido o vencido. / Link inválido ou expirado. / Invalid or expired link.",
+  disabled:
+    "Esta organización no envía avisos por Telegram: vas a recibirlos por los otros canales. / " +
+    "Esta organização não envia avisos pelo Telegram: você vai recebê-los pelos outros canais. / " +
+    "This organization doesn't send notifications through Telegram: you'll get them through the other channels.",
   needsOtp:
     "Primero abrí el link de firma e ingresá el código que te enviamos; después volvé a tocar este enlace. / " +
     "Primeiro abra o link de assinatura e informe o código que enviamos; depois toque este link de novo. / " +
@@ -81,6 +86,12 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
     const e = r ? await s.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [r.envelope_id]) : null;
     if (!r || !e || e.status === "draft") {
       await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
+      return { ok: true };
+    }
+    // La organización apagó Telegram (después de que se generó el link de vinculación): no se vincula el chat ni se
+    // manda el link de firma por ahí. La respuesta no lleva nada del sobre.
+    if (!(await tenantChannels(s.db, e.tenant_id)).telegram) {
+      await sendTelegram({ to: String(chatId), text: MSG.disabled, link: null }).catch(() => {}); // de mejor esfuerzo: solo la respuesta del bot
       return { ok: true };
     }
     const linked = await s.db.tx(async (t): Promise<boolean | "needs_otp"> => {

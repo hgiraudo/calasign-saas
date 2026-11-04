@@ -25,6 +25,7 @@ import { certificateStepFor } from "./certsign";
 import { deleteBlobsQuietly } from "./file-cleanup";
 import { purgedOriginal } from "./retention";
 import { tenantTimeZone } from "./organization-settings";
+import { tenantChannels } from "../notifications/channel-policy";
 
 /** Tope de píxeles de la imagen de firma o iniciales (el lienzo de la web es mucho menor). */
 const SIGNATURE_MAX_PIXELS = 2000 * 1000;
@@ -226,8 +227,11 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       locale: r.locale ?? e.locale,
       consented: Boolean(r.consented_at),
       // Token de vinculación propio y de vida corta (no el de firma: el link t.me pasa por Telegram). Solo con la página
-      // habilitada (código validado, sobre abierto).
-      telegramLink: r.channels?.includes("telegram") && !r.telegram_chat_id && !blocked ? await telegramLinkFor(db, r) : null,
+      // habilitada (código validado, sobre abierto) y si la organización no apagó Telegram.
+      telegramLink:
+        r.channels?.includes("telegram") && !r.telegram_chat_id && !blocked && (await tenantChannels(db, e.tenant_id)).telegram
+          ? await telegramLinkFor(db, r)
+          : null,
       authMethod: r.auth_method ?? "link",
     },
     // Un original borrado por retención no se puede abrir (410 purged): no se lista, ni sus campos.

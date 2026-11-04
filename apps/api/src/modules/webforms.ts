@@ -27,6 +27,7 @@ import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, templateSendIssues, type LoadedTemplate } from "./templates";
 import { tenantBaseUrl, turnstileHostOk } from "./custom-domains";
+import { assertChannelsAllowed } from "./channel-policy";
 
 const MAX_FILL_MS = 2 * 3600_000;
 
@@ -394,6 +395,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       prefill: input.prefill ?? {},
     };
     checkConfig(l, row);
+    // Canales que la organización apagó, al guardar (si no, el 400 lo vería quien completa el formulario público).
+    await assertChannelsAllowed(s.db, a.tenantId, input.fixedRecipients, "fixedRecipients");
     assertEmbeddableWithoutOtp(input.embeddable, input.requireOtp);
     const id = uuidv7();
     await s.db.query(
@@ -450,6 +453,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       prefill: input.prefill ?? cur.prefill,
     };
     if (input.signerRoleId || input.fixedRecipients || input.prefill) checkConfig(await loadTemplateForUse(s.db, a.tenantId, cur.template_id), next);
+    if (input.fixedRecipients) await assertChannelsAllowed(s.db, a.tenantId, input.fixedRecipients, "fixedRecipients");
     // Solo si el pedido toca esas opciones: un formulario viejo con las dos se puede seguir pausando o editando.
     if (input.embeddable !== undefined || input.requireOtp !== undefined) {
       assertEmbeddableWithoutOtp(input.embeddable ?? cur.embeddable, input.requireOtp ?? cur.require_otp);

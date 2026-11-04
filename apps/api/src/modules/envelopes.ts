@@ -38,6 +38,7 @@ import { noteSettledPaymentOnClose } from "./billing/payment-close";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { createEnvelopeRoute, ONE_SHOT_JSON_BODY_LIMIT } from "./envelope-oneshot";
 import { envelopeSearchSql } from "./devapi/search";
+import { assertChannelsAllowed } from "./channel-policy";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 /**
@@ -673,6 +674,8 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de destinatarios repetidos");
   const foreign = await t.query(`SELECT id FROM recipients WHERE id = ANY($1) AND envelope_id <> $2`, [ids, envelopeId]);
   if (foreign.length) throw conflict("id_in_use", "Id de destinatario en uso");
+  // Canales que la organización apagó (SMS, WhatsApp, Telegram): POST/PUT, sobre en una llamada, MCP y lotes pasan por acá.
+  await assertChannelsAllowed(t, a.tenantId, list);
   // Solo Telegram sin telegramChatId (PutRecipientsInput no lo rechaza): vale si el destinatario ya vinculó su Telegram.
   const unlinked = list.flatMap((r, i) => (telegramOnlyWithoutChat(r) ? [{ r, i }] : []));
   if (unlinked.length) {

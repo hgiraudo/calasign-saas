@@ -6,6 +6,7 @@ import { useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Modal } from "./ui";
 import { useFocusOnMount } from "./ExperienceExtras";
+import { useOrganizationChannels } from "../lib/organization-channels";
 
 // En lib/api.ts (sin dependencias de componentes): lo usan también ExperienceExtras y DeclineModal.
 export { isStaleError };
@@ -301,6 +302,7 @@ export function ReassignModal({
 }) {
   const sx = useSignerText();
   const { t } = useI18n();
+  const orgChannels = useOrganizationChannels();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -316,7 +318,8 @@ export function ReassignModal({
     setBusy(true);
     setError(null);
     try {
-      const channels = [...(email.trim() ? ["email"] : []), ...(phone.trim() ? ["whatsapp"] : [])];
+      // WhatsApp solo si la organización no lo apagó (Ajustes → Organización): si no, la API rechaza la reasignación.
+      const channels = [...(email.trim() ? ["email"] : []), ...(phone.trim() && orgChannels.whatsapp ? ["whatsapp"] : [])];
       onDone(
         await api<EnvelopeDetail>(`/v1/envelopes/${envelopeId}/recipients/${recipient.id}/reassign`, {
           method: "POST",

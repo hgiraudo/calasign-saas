@@ -600,6 +600,20 @@ export const BrandingSchema = named(
 
 // ───────────────────────────── Verificación de identidad ─────────────────────────────
 
+export const OrganizationSettingsSchema = named(
+  "OrganizationSettings",
+  z.object({
+    timeZone: z.string().describe("Huso IANA de las horas del certificado y de la fecha de firma (UTC si no se configuró)."),
+    channels: z
+      .object({
+        sms: z.boolean().describe("SMS (Twilio): código de verificación y link del celular."),
+        whatsapp: z.boolean().describe("WhatsApp (Meta Cloud API): avisos, código de verificación y link del celular."),
+        telegram: z.boolean().describe("Telegram: avisos al chat vinculado y vinculación desde la página de firma."),
+      })
+      .describe("Canales de terceros permitidos (true = encendido; por defecto, los tres)."),
+  }),
+);
+
 export const IdentitySettingsSchema = named(
   "IdentitySettings",
   z.object({

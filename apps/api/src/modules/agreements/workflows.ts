@@ -46,6 +46,7 @@ import { channelHasAddress } from "./documents";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, renderDocument, storeGeneratedPdf } from "./documents";
 import { ingestEnvelope } from "./repository";
 import { noteSettledPaymentOnClose } from "../billing/payment-close";
+import { assertChannelsAllowed } from "../channel-policy";
 
 const MAX_STEP_ATTEMPTS = 3;
 const STALE_CLAIM_MS = 10 * 60_000;
@@ -1050,6 +1051,19 @@ function validateSteps(steps: WorkflowStep[]) {
   });
 }
 
+/**
+ * Canales que la organización apagó, en los destinatarios de los pasos "enviar a firmar" (los que se eligieron; los que
+ * dependen del correo o teléfono que llegan en la ejecución se vuelven a mirar al crear el sobre).
+ */
+async function checkWorkflowChannels(db: Db, tenantId: string, steps: WorkflowStep[]) {
+  const list = steps.flatMap((st, i) =>
+    st.type === "send_for_signature"
+      ? st.config.recipients.map((r, j) => ({ name: r.role, channels: r.channels ?? null, path: `steps.${i}.config.recipients.${j}` }))
+      : [],
+  );
+  await assertChannelsAllowed(db, tenantId, list, (k) => list[k]!.path);
+}
+
 async function createRun(
   db: Db,
   wf: any,
@@ -1205,6 +1219,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     if (input.publicStart) requireFeature((await tenantPlan(s.db, a.tenantId)).plan, "web_forms", "El inicio público de workflows");
     validateSteps(input.steps as WorkflowStep[]);
     await checkApprovers(a.tenantId, input.steps as WorkflowStep[]);
+    await checkWorkflowChannels(s.db, a.tenantId, input.steps as WorkflowStep[]);
     const row = await s.db.one(
       `INSERT INTO workflows (id, tenant_id, name, description, active, public_start, public_slug, steps, signing_secret_enc, created_by, created_by_api_key)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -1241,6 +1256,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     // Chequeos que consultan la base fuera de la transacción (miembros, plantillas, plan); los que dependen de lo
     // guardado se repiten con la fila bloqueada.
     if (input.steps) await checkApprovers(a.tenantId, input.steps as WorkflowStep[]);
+    if (input.steps) await checkWorkflowChannels(s.db, a.tenantId, input.steps as WorkflowStep[]);
     const planAllowsPublic = (await tenantPlan(s.db, a.tenantId)).plan;
     const actor = a.actor;
     const { row, cancelled } = await s.db.tx(async (t) => {

@@ -22,6 +22,7 @@ import { applyIdentityFlags, providerReady } from "../identity/kyc";
 import { explicitRequirements } from "../certsign-requirements";
 import { copyFieldLogic } from "../logic";
 import { loadDetail, loadDocuments } from "../mappers";
+import { assertEnvelopeChannelsAllowed } from "../channel-policy";
 
 /** Campos cuyo valor es una imagen o un archivo: en los datos de formulario solo se informa si se completaron. */
 const IMAGE_TYPES = new Set(["signature", "initials"]);
@@ -312,6 +313,9 @@ async function cloneRecipients(t: Services["db"], a: AuthContext, srcId: string,
       r.id,
     ]);
   }
+  // Canales que la organización apagó después de crear el original (SMS, WhatsApp, Telegram): el clon es un sobre
+  // nuevo y no los puede pedir (400 channel_disabled; se crea uno nuevo con otros canales o se vuelve a encender).
+  await assertEnvelopeChannelsAllowed(t, a.tenantId, id);
   // El anfitrión de una firma en persona del original pudo dejar la organización: sin él nadie abre la sesión y ese
   // firmante no recibe invitación, así que el sobre quedaba trabado al enviarlo. Como en replaceRecipient, firma por link.
   await t.query(

@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import {
   BULK_MAX_ROWS,
   CreateBulkSendInput,
+  DEFAULT_ORGANIZATION_CHANNELS,
   PLANS,
   PLAN_IDS,
   EnvelopeFromTemplateInput,
@@ -14,6 +15,7 @@ import {
   type BulkSend,
   type BulkSendItem,
   type BulkValidationResult,
+  type OrganizationChannels,
 } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import type { Actor } from "../infra/evidence";
@@ -23,6 +25,8 @@ import { iso, queryList, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, hasPerm } from "./access";
 import { csvCell } from "./agreements/common";
 import { idempotent } from "./envelopes";
+import { channelDisabledMessage, firstChannelViolation } from "./channel-policy";
+import { tenantChannels } from "../notifications/channel-policy";
 import { ownerCanStillCreate } from "./owner-check";
 import { envelopesSentThisMonth, planLimitError, requireFeature, tenantPlan } from "./billing/plans";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -357,6 +361,8 @@ function prepareRows(
   rows: BulkRowInput[],
   base: { templateId: string; subject?: string | null; message?: string | null; locale?: string; expiresAt?: string | null },
   lineNumbers?: number[],
+  /** Canales que la organización permite: una fila que pide uno apagado es una fila con error (no un 400 de todo el envío). */
+  channels: OrganizationChannels = DEFAULT_ORGANIZATION_CHANNELS,
 ) {
   const roleName = new Map(l.tpl.roles.map((r) => [r.id, r.name]));
   return rows.map((row, i): Prepared => {
@@ -391,6 +397,11 @@ function prepareRows(
       });
       return { ...at, input: null, errors, names };
     }
+    const off = firstChannelViolation(
+      channels,
+      parsed.data.recipients.map((r) => ({ name: r.name || (r.roleId && roleName.get(r.roleId)) || r.role, channels: r.channels })),
+    );
+    if (off) return { ...at, input: null, errors: [channelDisabledMessage(off.who, off.v)], names };
     try {
       planFromTemplate(l, parsed.data);
       return { ...at, input: parsed.data, errors: [], names };
@@ -438,6 +449,7 @@ async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
       expiresAt: input.expiresAt,
     },
     lines,
+    await tenantChannels(s.db, tenantId),
   );
   return { input, loaded, prepared, columns };
 }

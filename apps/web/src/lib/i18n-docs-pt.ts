@@ -254,7 +254,7 @@ export const docsPt: Record<DocsKey, string> = {
   "concepts.rstatus.reassigned": "O remetente o substituiu por outra pessoa. `replacedBy` aponta para o novo destinatário.",
   "concepts.channels.h": "Canais de notificação",
   "concepts.channels.p":
-    "`channels` define por onde chega o convite: {channels}. `email` precisa de `email`; `whatsapp` precisa de `phone` no formato E.164 (`+5491122334455`); `telegram` precisa de `telegramChatId` ou, se você não o tiver, de outro canal para enviar o link de vinculação. Com `embedded: true` ou `inPerson` o destinatário não recebe convites. `locale` (`es`, `pt-BR`, `en`) define o idioma das mensagens e da página de assinatura.",
+    "`channels` define por onde chega o convite: {channels}. `email` precisa de `email`; `whatsapp` precisa de `phone` no formato E.164 (`+5491122334455`); `telegram` precisa de `telegramChatId` ou, se você não o tiver, de outro canal para enviar o link de vinculação. Com `embedded: true` ou `inPerson` o destinatário não recebe convites. A organização pode desativar SMS, WhatsApp e Telegram (`PATCH /v1/settings/organization`, `channels`): um canal ou código (`otp_sms`, `otp_whatsapp`) desativado retorna 400 `channel_disabled`. `locale` (`es`, `pt-BR`, `en`) define o idioma das mensagens e da página de assinatura.",
   "concepts.routing.h": "Ordem de assinatura",
   "concepts.routing.p":
     "`routingOrder` (1 a 100) define os turnos. Todos os destinatários com o mesmo número recebem o convite ao mesmo tempo (assinatura em **paralelo**); o turno seguinte só é ativado quando o anterior termina (assinatura em **sequência**). Combinando números, você monta fluxos mistos. As cópias (`cc`) recebem o documento no final, independentemente do número.",

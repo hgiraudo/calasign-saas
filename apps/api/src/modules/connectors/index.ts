@@ -42,6 +42,7 @@ import { ownerCanStillCreate } from "../owner-check";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
 import { MappingError, mapPrefill, mapRecipients, neededProperties, statusForEvidence, statusValue } from "../crm/mapping";
 import { statusRank } from "../crm";
+import { assertChannelsAllowed } from "../channel-policy";
 import { evidenceCertificate, loadSignedBundle } from "./evidence-file";
 import {
   Conn,
@@ -955,6 +956,13 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const conn = await loadConn(s.db, a.tenantId, input.connectionId);
     checkFlowInput(conn.provider, input.objectType, input.documentSource, input.writeBack);
     await assertTemplateAccess(s.db, a, input.templateId, "view");
+    // Canales que la organización apagó: al guardar el flujo (al crear cada sobre se vuelve a mirar).
+    await assertChannelsAllowed(
+      s.db,
+      a.tenantId,
+      input.roles.map((r) => ({ name: r.role, channels: r.channels })),
+      "roles",
+    );
     const id = uuidv7();
     await s.db.query(
       `INSERT INTO connector_flows (id, tenant_id, connection_id, name, object_type, template_id, document_source, role_map, prefill_map, write_back, trigger, trigger_config, send, active, created_by, created_by_api_key, webhook_secret_enc)
@@ -1001,6 +1009,13 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const documentSource = input.documentSource ?? f.document_source;
     checkFlowInput(conn.provider, objectType, documentSource, input.writeBack ?? f.write_back);
     if (input.templateId) await assertTemplateAccess(s.db, a, input.templateId, "view");
+    if (input.roles)
+      await assertChannelsAllowed(
+        s.db,
+        a.tenantId,
+        input.roles.map((r) => ({ name: r.role, channels: r.channels })),
+        "roles",
+      );
     await s.db.query(
       `UPDATE connector_flows SET name = COALESCE($2, name), object_type = $3, template_id = COALESCE($4, template_id), document_source = $5,
          role_map = COALESCE($6::jsonb, role_map), prefill_map = COALESCE($7::jsonb, prefill_map), write_back = COALESCE($8::jsonb, write_back),

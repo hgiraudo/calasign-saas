@@ -45,6 +45,7 @@ import { applyIdentityFlags, maskDocNumber } from "./identity/kyc";
 import { normalizeDocumentNumber } from "./identity/namematch";
 import { applyCertificateFlags, missingIdDocument } from "./certsign";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
+import { assertChannelsAllowed } from "./channel-policy";
 
 const IN_PERSON_SESSION_MIN = 60;
 const PENDING = ["created", "sent", "viewed"];
@@ -248,6 +249,10 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       },
       next.name,
     );
+    // Solo los canales que se agregan ahora: un canal que ya tenía y la organización apagó después no frena una
+    // corrección del nombre o del correo (al enviar, outbound.ts lo saltea).
+    const addedChannels = next.channels.filter((c: string) => !(r.channels ?? []).includes(c));
+    await assertChannelsAllowed(db, a.tenantId, [{ name: next.name, channels: addedChannels }], () => `updateRecipients.${updIds.indexOf(r.id)}`);
     const changes: Record<string, unknown> = {};
     if (next.name !== r.name) changes.name = { from: r.name, to: next.name };
     if ((next.email ?? null) !== (r.email ?? null)) changes.email = { from: masked(r.email), to: masked(next.email) };
@@ -365,6 +370,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   const added: { id: string; name: string; role: string; routingOrder: number }[] = [];
   for (const [i, raw] of (input.addRecipients ?? []).entries()) {
     const r = RecipientInput.parse(raw);
+    // Canales y código de verificación que la organización apagó (SMS, WhatsApp, Telegram).
+    await assertChannelsAllowed(db, a.tenantId, [r], () => `addRecipients.${i}`);
     const id = r.id ?? uuidv7();
     if (recips.has(id) || (await db.one(`SELECT 1 FROM recipients WHERE id = $1`, [id]))) throw conflict("id_in_use", "Id de destinatario en uso");
     if (groupBefore.order !== null && (r.role === "signer" || r.role === "approver") && r.routingOrder < groupBefore.order)

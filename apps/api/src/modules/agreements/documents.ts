@@ -40,6 +40,7 @@ import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope, idempotent } from "../envelopes";
 import { insertEnvelopeField } from "../fieldvalues";
 import { discardBlobsOnFailure } from "../file-cleanup";
+import { assertChannelsAllowed } from "../channel-policy";
 import { getPath, interpolate, interpolateValue, toIsoDate, toNumberOrNull } from "./common";
 
 // ───────────────────────────── Render ─────────────────────────────
@@ -225,6 +226,12 @@ export async function createEnvelopeFromPdf(
       );
     }
   }
+  // Canales que la organización apagó (generación de documentos, workflows y negociaciones pasan por acá).
+  await assertChannelsAllowed(
+    t,
+    ctx.tenantId,
+    spec.recipients.map((r) => ({ name: r.name, channels: r.channels ?? (r.email ? ["email"] : ["whatsapp"]) })),
+  );
 
   // El asunto puede salir de datos interpolados (sin tope, con saltos de línea o vacío): como en los demás caminos.
   const subject = (spec.subject.replace(/\s+/g, " ").trim() || spec.fileName).slice(0, 300);

@@ -57,7 +57,7 @@ punto de partida para el cuestionario.
 | **SEG-13** | **Ninguna credencial se guarda en claro**: sesiones y API keys como SHA-256; token del firmante como hash (búsqueda) y AES-256-GCM (reenvío) | ✅ | `docs/ARQUITECTURA.md` §3.1 · `test/signer-session-token.test.ts` |
 | **SEG-14** | **Contraseñas**: largo mínimo, lista de comunes, no contiene el correo, bloqueo por intentos por red y por cuenta; 2FA TOTP; SSO obligatorio por organización | ✅ | `lib/password-policy.ts` · `test/staff-auth-hardening.test.ts`, `totp.test.ts` |
 | **SEG-15** | **Límite de pedidos** en todo lo público (login, verificación, formularios, OTP) | ✅ | `@fastify/rate-limit` en `app.ts` y por ruta |
-| **SEG-16** | **Cookie de sesión `__Host-`**, `HttpOnly`, `Secure`, `SameSite=Lax`; cierre por inactividad | ✅ (TODO con fecha: quitar la cookie vieja el 2026-11-10) | `modules/context.ts` · `test/config-cookies.test.ts` |
+| **SEG-16** | **Cookie de sesión `__Host-`**, `HttpOnly`, `Secure`, `SameSite=Lax`; cierre por inactividad | ✅ La de nombre viejo (`cs_session`, sin `__Host-`) dejó de abrir sesión con HTTPS el **5-Nov-2026** (se leía desde el cambio del 20-Oct-2026; ninguna sesión de entonces seguía vigente) | `modules/context.ts` · `test/http-headers.test.ts` |
 
 ---
 

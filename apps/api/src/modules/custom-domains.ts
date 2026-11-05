@@ -12,7 +12,7 @@ import { iso, randomToken, requestPath, sha256Hex, uuidv7 } from "../lib/util";
 import { auditFromRequest, recordAudit } from "./audit";
 import { getTenantBranding } from "./branding";
 import { signerTokenHash } from "./signer-token";
-import { authenticate, sessionCookieNames, type Services } from "./context";
+import { authenticate, SESSION_COOKIE, type Services } from "./context";
 
 const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
 const isLocalEnv = () => config.environment === "local";
@@ -523,15 +523,14 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
         .send({ error: { code: "use_platform_host", message: `En un dominio propio no se inicia sesión: entrá por ${config.appUrl}` } });
     }
     // @fastify/cookie ya parseó las cookies (su hook corre antes): se quita la de sesión de las dos partes.
-    const names = sessionCookieNames();
     const cookie = req.headers.cookie;
-    if (cookie && names.some((n) => cookie.includes(`${n}=`))) {
+    if (cookie?.includes(`${SESSION_COOKIE}=`)) {
       req.headers.cookie = cookie
         .split(";")
-        .filter((c) => !names.includes(c.trim().split("=")[0]))
+        .filter((c) => c.trim().split("=")[0] !== SESSION_COOKIE)
         .join(";");
     }
-    for (const n of names) if (req.cookies && n in req.cookies) delete req.cookies[n];
+    if (req.cookies && SESSION_COOKIE in req.cookies) delete req.cookies[SESSION_COOKIE];
   });
 
   // En un dominio propio (o de sub-marca), los links públicos de OTRAS organizaciones no funcionan: firma, negociación,

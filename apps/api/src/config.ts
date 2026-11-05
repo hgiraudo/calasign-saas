@@ -36,8 +36,7 @@ const production = env.NODE_ENV === "production";
 /**
  * Sufijos públicos de hostings conocidos (sección privada de la Public Suffix List): nunca van como Domain= de una cookie.
  * No hay una biblioteca de la PSL entre las dependencias: se cubre lo habitual (segundos niveles genéricos de los
- * ccTLD, como com.ar, co.uk, com.br o com.mx, con la regla de isPublicSuffix, y los hostings más comunes). Un caso no
- * cubierto se resuelve con SESSION_COOKIE_PARENT_DOMAINS.
+ * ccTLD, como com.ar, co.uk, com.br o com.mx, con la regla de isPublicSuffix, y los hostings más comunes).
  */
 const PRIVATE_SUFFIXES = new Set([
   "vercel.app",
@@ -109,18 +108,6 @@ export function hostAndParentDomains(url: string): string[] {
   return labels.map((_, i) => labels.slice(i).join(".")).filter((d) => !isPublicSuffix(d));
 }
 
-/**
- * LEGACY_SESSION_COOKIE_READ_UNTIL: fecha ISO. Un valor ilegible daba NaN y `Date.now() >= NaN` es siempre false: la
- * cookie vieja se seguía leyendo para siempre. Se aborta el arranque.
- */
-function legacyCookieReadUntil(v: string | undefined): number {
-  const raw = v?.trim() || "2026-11-10T00:00:00Z";
-  const t = Date.parse(raw);
-  if (!Number.isFinite(t))
-    throw new Error(`LEGACY_SESSION_COOKIE_READ_UNTIL inválido: "${v}" (se espera una fecha ISO, p. ej. 2026-11-10T00:00:00Z)`);
-  return t;
-}
-
 // Entorno: solo local | dev | prod. Un valor mal escrito ("production", "staging") caía en las ramas "no prod" (mock de
 // pagos, plan enterprise por defecto, claves cs_test) sin aviso; se aborta el arranque. Sin APP_ENV: prod con
 // NODE_ENV=production, local si no (tests y e2e locales no la definen). "local" relaja controles (allowList del rate
@@ -173,24 +160,6 @@ export const config = {
    * "recordarme" duran 14 días desde el ingreso. SESSION_IDLE_HOURS, por defecto 24.
    */
   sessionIdleHours: Math.max(1, Math.floor(numEnv(env.SESSION_IDLE_HOURS, 24)) || 24),
-  /**
-   * Dominios (Domain=) con los que el cierre de sesión borra además la cookie de nombre viejo (cs_session): una
-   * cs_session plantada desde un subdominio con Domain= de un dominio padre no se borraba con el Set-Cookie sin Domain
-   * y, mientras se lea la cookie vieja, volvía a abrir una sesión después del logout. Por defecto, el host de APP_URL y
-   * sus dominios padre; SESSION_COOKIE_PARENT_DOMAINS (separados por coma) los reemplaza. Nunca un sufijo público.
-   */
-  legacySessionCookieDomains:
-    env.SESSION_COOKIE_PARENT_DOMAINS !== undefined
-      ? list(env.SESSION_COOKIE_PARENT_DOMAINS)
-          .map((d) => d.toLowerCase().replace(/^\./, "").replace(/\.$/, ""))
-          .filter((d) => d && !isPublicSuffix(d))
-      : hostAndParentDomains(env.APP_URL ?? ""),
-  /**
-   * Hasta cuándo se sigue leyendo la cookie de sesión de nombre viejo (cs_session). __Host-cs_session llegó con el
-   * deploy del 2026-10-20 y una sesión dura como máximo 14 días: pasada esta fecha ya no queda ninguna sesión válida con
-   * el nombre viejo. TODO(2026-11-10): quitar LEGACY_SESSION_COOKIE y esta opción (context.ts).
-   */
-  legacySessionCookieReadUntil: legacyCookieReadUntil(env.LEGACY_SESSION_COOKIE_READ_UNTIL),
   storage: {
     driver: (env.STORAGE_DRIVER ?? (env.S3_BUCKET ? "s3" : "local")) as "local" | "s3",
     bucket: env.S3_BUCKET ?? "",

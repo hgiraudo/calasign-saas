@@ -40,32 +40,17 @@ declare module "fastify" {
  * servicio en *.calasign…) no puede plantar ni pisar la sesión. En local sin HTTPS queda "cs_session".
  */
 export const SESSION_COOKIE = config.cookieSecure ? "__Host-cs_session" : "cs_session";
-/**
- * Nombre anterior. Transición: se sigue leyendo si no está la nueva (las sesiones abiertas antes del cambio no se
- * cierran de golpe) hasta config.legacySessionCookieReadUntil, y cada login o logout la borra.
- * TODO(2026-11-10): quitar (pasada la vida máxima de una sesión, SESSION_DAYS, desde el deploy del 2026-10-20 que
- * introdujo __Host-cs_session) junto con legacySessionCookieDomains y legacySessionCookieReadUntil de config.ts.
- */
-export const LEGACY_SESSION_COOKIE = "cs_session";
-const SESSION_COOKIE_NAMES = SESSION_COOKIE === LEGACY_SESSION_COOKIE ? [SESSION_COOKIE] : [SESSION_COOKIE, LEGACY_SESSION_COOKIE];
+// Con HTTPS, la de nombre viejo (cs_session, sin __Host-) ya no abre sesión: un subdominio la puede plantar. Se leyó
+// durante la transición, del deploy del 2026-10-20 hasta el 5-Nov-2026, pasada la vida máxima de una sesión (SESSION_DAYS).
 
-/** Token de la sesión web del pedido (cookie nueva o, durante la transición, la vieja). */
+/** Token de la sesión web del pedido. */
 export function sessionCookieToken(req: FastifyRequest): string | undefined {
-  const v = req.cookies?.[SESSION_COOKIE];
-  if (v) return v;
-  // Pasada la transición, la vieja ya no abre sesión: sin el prefijo __Host-, un subdominio la puede plantar.
-  if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE && Date.now() >= config.legacySessionCookieReadUntil) return undefined;
-  return req.cookies?.[LEGACY_SESSION_COOKIE] || undefined;
-}
-
-/** Todos los nombres con los que puede llegar la sesión web (para quitarla de un pedido). */
-export function sessionCookieNames(): readonly string[] {
-  return SESSION_COOKIE_NAMES;
+  return req.cookies?.[SESSION_COOKIE] || undefined;
 }
 
 /**
- * Deja la cookie de sesión (y borra la del nombre viejo si quedaba). `maxAgeSeconds` null: cookie de sesión del
- * navegador (se borra al cerrarlo), para los ingresos sin "recordarme".
+ * Deja la cookie de sesión. `maxAgeSeconds` null: cookie de sesión del navegador (se borra al cerrarlo), para los
+ * ingresos sin "recordarme".
  */
 export function setSessionCookie(reply: FastifyReply, token: string, maxAgeSeconds: number | null) {
   reply.setCookie(SESSION_COOKIE, token, {
@@ -75,18 +60,12 @@ export function setSessionCookie(reply: FastifyReply, token: string, maxAgeSecon
     secure: config.cookieSecure,
     ...(maxAgeSeconds == null ? {} : { maxAge: maxAgeSeconds }),
   });
-  if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE) reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", secure: config.cookieSecure });
 }
 
-/** Borra la cookie de sesión con cualquiera de sus nombres. */
+/** Borra la cookie de sesión. */
 export function clearSessionCookie(reply: FastifyReply) {
   // Secure también al borrar: el navegador rechaza un Set-Cookie __Host- sin Secure (y la cookie no se borraría).
-  for (const n of SESSION_COOKIE_NAMES) reply.clearCookie(n, { path: "/", secure: config.cookieSecure });
-  // La vieja también con Domain= del host y sus dominios padre: una cs_session plantada desde un subdominio con
-  // Domain=<padre> no se borra con el Set-Cookie sin Domain (los atributos tienen que coincidir).
-  if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE)
-    for (const domain of config.legacySessionCookieDomains)
-      reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", domain, secure: config.cookieSecure });
+  reply.clearCookie(SESSION_COOKIE, { path: "/", secure: config.cookieSecure });
 }
 
 /** Vida máxima de una sesión web con "recordarme" (y de la cookie persistente). */

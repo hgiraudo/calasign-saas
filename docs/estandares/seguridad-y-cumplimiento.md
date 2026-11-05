@@ -136,13 +136,13 @@ no tiene `minimumReleaseAge`, que llega con pnpm 10.16):
 
 | Paquete | Arreglada en | Publicada | Subir desde |
 |---|---|---|---|
-| `nodemailer` 10.0.16 (3 moderadas) | 10.1.4 | 18-Oct-2026 | **1-Nov-2026** |
+| `nodemailer` 10.0.16 (3 moderadas) | 10.1.4 | 18-Oct-2026 | ✅ **Subido el 5-Nov-2026 a 10.1.7** (la última de 10.1, del mismo día; 10.2 y 10.3 traen cambios nuevos y no hacen falta) |
 | `fast-uri` 3.1.8 / 4.2.2 (vía `ajv` y `@fastify/ajv-compiler`) | 3.1.9 / 4.2.3 | 19-Oct-2026 | ✅ **Subido el 4-Nov-2026** en el lockfile (`pnpm update -r --depth Infinity fast-uri`: los rangos ya lo admitían, sin `overrides`) |
-| `vite` 6.4.4 (dev) | 6.4.5 | 21-Oct-2026 | **4-Nov-2026** |
+| `vite` 6.4.4 (dev) | 6.4.5 | 21-Oct-2026 | ✅ **Subido el 5-Nov-2026** |
 | `glob`/`minimatch` (vía `@fastify/static`), `react-router` 6 | majors nuevos | — | con la próxima subida de `@fastify/static` / migración a react-router 7 |
 
 **4-Nov-2026**, tras subir vitest y fast-uri: osv-scanner pasa de 29 a **16** (0 críticas; la única alta es la de
-`zod`, aceptada arriba).
+`zod`, aceptada arriba). **5-Nov-2026**, con nodemailer y vite: **11**.
 
 ### 5.2 Herramientas de SAST y DAST (sin Docker)
 

@@ -31,6 +31,8 @@ test.describe("consola", () => {
     await page.getByRole("textbox", { name: "Contraseña" }).fill(cuenta.password);
     await page.getByRole("button", { name: "Ingresar" }).click();
     await expect(page).toHaveURL(/\/app/);
+    // Antes de otro page.goto, que termine de entrar (ver login() en seguridad.e2e.ts).
+    await expect(page.getByRole("button", { name: "Salir" })).toBeVisible();
 
     await page.goto("/app/settings");
     await page.getByRole("link", { name: /Organización/ }).click();

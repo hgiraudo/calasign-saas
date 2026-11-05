@@ -63,6 +63,10 @@ async function login(page: Page, cuenta: Cuenta) {
   await page.getByRole("textbox", { name: "Contraseña" }).fill(cuenta.password);
   await page.getByRole("button", { name: "Ingresar" }).click();
   await expect(page).toHaveURL(/\/app/);
+  // La URL cambia antes de que termine de entrar: el login navega a /app dos veces (nav() y el <Navigate> de LoginPage).
+  // Un page.goto en el medio lo interrumpe la segunda (WebKit, con la máquina cargada: QA nocturno del 5-Nov-2026).
+  // Con el marco de la consola a la vista, la página de login ya no está montada.
+  await expect(page.getByRole("button", { name: "Salir" })).toBeVisible();
 }
 
 /** ¿Algún elemento del documento (de la página o de un marco) tiene este color de fondo? */

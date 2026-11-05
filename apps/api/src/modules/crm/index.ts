@@ -1072,6 +1072,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     const conn = await loadConn(s.db, a.tenantId, input.connectionId);
     checkMappingInput(conn.provider, input.objectType, input.trigger, input.templateId, input.triggerConfig, input.writeBack);
     if (input.templateId) await assertTemplateAccess(s.db, a, input.templateId, "view");
+    // El filtro de on_completion también es una plantilla: la de otra organización quedaba guardada sin validar.
+    if (input.triggerConfig.templateId) await assertTemplateAccess(s.db, a, input.triggerConfig.templateId, "view");
     // Canales que la organización apagó: al guardar el mapeo (al crear cada sobre se vuelve a mirar).
     await assertChannelsAllowed(
       s.db,
@@ -1127,6 +1129,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     };
     checkMappingInput(conn.provider, merged.objectType, merged.trigger, merged.templateId, merged.triggerConfig, input.writeBack ?? m.write_back);
     if (input.templateId) await assertTemplateAccess(s.db, a, input.templateId, "view");
+    if (input.triggerConfig?.templateId) await assertTemplateAccess(s.db, a, input.triggerConfig.templateId, "view");
     if (input.roles)
       await assertChannelsAllowed(
         s.db,

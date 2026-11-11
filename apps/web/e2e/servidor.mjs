@@ -3,7 +3,7 @@
 // de desarrollo, sin TSA (sello sin red) y la web compilada de apps/web/dist. Se borra todo al salir.
 // La web tiene que estar compilada antes (scripts/qa.sh --web lo hace).
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,28 @@ if (!existsSync(join(ROOT, "apps/web/dist/index.html"))) {
   console.error("Falta apps/web/dist: compilá la web antes (corepack pnpm --filter @calasign/web build)");
   process.exit(1);
 }
-const data = mkdtempSync(join(tmpdir(), "calasign-web-e2e-"));
+// La carpeta lleva el PID y cada arranque borra las de servidores que ya no existen: si Playwright lo mata sin dejarlo
+// limpiar, la carpeta (~45 MB de PGlite) quedaba para siempre en /tmp, que es tmpfs. Así se juntaron 1,7 GB y el
+// QA nocturno del 10 y 11-Nov-2026 se quedó sin disco (ENOSPC en PGlite) y se colgó.
+const PREFIX = "calasign-web-e2e-";
+const vivo = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+for (const name of readdirSync(tmpdir())) {
+  const m = name.startsWith(PREFIX) ? /^(\d+)-/.exec(name.slice(PREFIX.length)) : null;
+  if (!m || vivo(Number(m[1]))) continue;
+  try {
+    rmSync(join(tmpdir(), name), { recursive: true, force: true });
+  } catch {
+    // de otro usuario en un /tmp compartido: se saltea
+  }
+}
+const data = mkdtempSync(join(tmpdir(), `${PREFIX}${process.pid}-`));
 const api = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "scripts/e2e-api-entry.mts")], {
   cwd: join(ROOT, "apps/api"),
   env: {

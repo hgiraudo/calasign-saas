@@ -13,6 +13,7 @@
 #   QA_E2E_PORT=N    puerto de la API efímera (4199). Si ya hay algo escuchando ahí, aborta: puede ser de otra sesión.
 #   QA_TSA=1         la API efímera usa la TSA por defecto (red); sin esto, TSA_URL vacío (sello sin red, determinístico)
 #   QA_KEEP=1        conserva var/qa/<corrida>/ (logs y datos de la e2e) aunque todo pase
+#   QA_TIMEOUT_VITEST_API=25m  techo de vitest en apps/api (sale con 124 si un test se cuelga; el nocturno lo pone)
 #
 # El completo y --e2e en verde sobre un árbol sin cambios dejan una marca por commit (en el directorio común de git:
 # la ven todos los worktrees, también el del QA nocturno). deploy-dev.sh la usa para no repetir el QA de ese commit.
@@ -118,7 +119,12 @@ unit_tests() {
   run "vitest sdk-node" packages/sdk-node ./node_modules/.bin/vitest run --reporter=dot
   local workers=()
   [ -n "${QA_WORKERS:-}" ] && workers=(--maxWorkers="$QA_WORKERS")
-  run "vitest api" apps/api ./node_modules/.bin/vitest run --reporter=dot "${workers[@]}"
+  # Techo opcional (lo pone el QA nocturno): un test colgado dejaba a vitest esperando para siempre y la noche moría por
+  # el timeout de systemd sin log útil (10 y 11-Nov-2026). Normal: ~6 min con 3 hilos. timeout mata al grupo entero
+  # (workers incluidos), pero lo saca del grupo de la terminal: a mano el Ctrl-C no le llegaría, por eso no va siempre.
+  local techo=()
+  [ -n "${QA_TIMEOUT_VITEST_API:-}" ] && techo=(timeout -k 30s "$QA_TIMEOUT_VITEST_API")
+  run "vitest api" apps/api "${techo[@]}" ./node_modules/.bin/vitest run --reporter=dot "${workers[@]}"
   echo "▶ integraciones y SDKs"
   run "integrations test" integrations sh -c 'node test/run.mjs && node test/connectors.mjs && node test/google-workspace.mjs'
   # -I: modo aislado (no carga módulos del directorio actual); sin URL corre sólo las pruebas sin red.
@@ -197,6 +203,17 @@ web_tests() {
 }
 
 echo "QA $MODE — $(git rev-parse --short HEAD)$([ -z "$(git status --porcelain --untracked-files=no)" ] || echo ' (con cambios sin commitear)') — logs en $RUN/"
+case $MODE in
+  rapido) static_checks ;;
+  *)
+    # Las bases PGlite de vitest y de las e2e van al temporal (/tmp suele ser tmpfs, compartido). Lleno, fallan tests
+    # sueltos con ENOSPC ("Check free disk space") y vitest puede colgarse: mejor avisarlo antes.
+    tmp_libre=$(df -Pk "${TMPDIR:-/tmp}" 2>/dev/null | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
+    if [ "${tmp_libre:-9}" -lt 3 ]; then
+      echo "  ⚠ ${tmp_libre} GB libres en ${TMPDIR:-/tmp}: los tests pueden fallar por espacio (du -sh ${TMPDIR:-/tmp}/* | sort -h)" >&2
+    fi
+    ;;
+esac
 case $MODE in
   rapido) static_checks ;;
   completo) static_checks; unit_tests ;;

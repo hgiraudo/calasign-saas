@@ -13,7 +13,7 @@
 # scripts/dast.sh --remoto $DAST_REMOTO (pasivo; por defecto https://dev.calasign.com, vacío para saltearlo).
 #
 # Variables: QA_NOCTURNO_DIR (worktree, por defecto ../calasign-qa), QA_WORKERS (3: deja RAM a las otras sesiones),
-# DAST_REMOTO.
+# QA_TIMEOUT_VITEST_API (25m) y DAST_REMOTO.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WT="${QA_NOCTURNO_DIR:-$(dirname "$REPO")/calasign-qa}"
@@ -57,6 +57,15 @@ avisar() {
   notify-send -u critical "CalaSign: QA nocturno en ROJO" "$1" 2>/dev/null || true
 }
 
+# Si systemd corta igual (TimeoutStartSec), el SIGTERM llega también acá: que quede escrito en rojo y avise, en vez de
+# dejar ultimo.txt con la última noche verde (así pasaron las noches del 10 y 11-Nov-2026 sin aviso).
+cortado() {
+  echo "✗ ROJO (cortado por systemd) — $(date '+%F %T') — $LOG" >"$ESTADO/ultimo.txt"
+  avisar "Cortado por timeout. Log: $LOG"
+  exit 143
+}
+trap cortado TERM INT
+
 # Subshell, no llaves: con { … } el `exit` de adentro terminaba todo el script y nunca se escribía ultimo.txt ni
 # salía el aviso (así pasó en rojo la noche del 4-Nov-2026 sin que nadie se enterara).
 (
@@ -68,13 +77,21 @@ avisar() {
   (cd "$WT" && corepack pnpm install --frozen-lockfile --prefer-offline) || { echo "✗ pnpm install"; exit 1; }
   # De noche también WebKit (Safari): suma ~2 min que a mano molestan.
   cd "$WT" || exit 1
+  # Temporales propios, en disco: /tmp es tmpfs (RAM) y lo comparten los QA nocturnos de otros proyectos, que corren a
+  # la misma hora. Lleno, PGlite fallaba con ENOSPC y vitest se colgaba (10 y 11-Nov-2026). Se vacía en cada corrida.
+  export TMPDIR="$WT/var/tmp"
+  rm -rf "$TMPDIR" && mkdir -p "$TMPDIR" || exit 1
   rc=0
-  QA_WORKERS="${QA_WORKERS:-3}" E2E_WEBKIT="${E2E_WEBKIT:-1}" ./scripts/qa.sh --e2e || rc=1
+  # Cada paso con techo (timeout mata al grupo entero y sale con 124): uno colgado se corta, queda en rojo con su log y
+  # los demás corren igual. La suma (180 min) entra en el TimeoutStartSec de la unidad (200 min).
+  paso() { local max="$1"; shift; timeout -k 1m "$max" "$@"; local r=$?; [ $r -eq 124 ] && echo "✗ cortado a los $max: $*"; return $r; }
+  QA_WORKERS="${QA_WORKERS:-3}" E2E_WEBKIT="${E2E_WEBKIT:-1}" QA_TIMEOUT_VITEST_API="${QA_TIMEOUT_VITEST_API:-25m}" \
+    paso 75m ./scripts/qa.sh --e2e || rc=1
   # Seguridad (SEG-48/49): SAST completo, DAST activo contra una API efímera y pasivo contra dev. Uno a la vez, después
   # del QA: ZAP usa ~1 GB de RAM.
-  echo; ./scripts/sast.sh --completo || rc=1
-  echo; ./scripts/dast.sh || rc=1
-  if [ -n "${DAST_REMOTO-https://dev.calasign.com}" ]; then echo; ./scripts/dast.sh --remoto "${DAST_REMOTO-https://dev.calasign.com}" || rc=1; fi
+  echo; paso 20m ./scripts/sast.sh --completo || rc=1
+  echo; paso 60m ./scripts/dast.sh || rc=1
+  if [ -n "${DAST_REMOTO-https://dev.calasign.com}" ]; then echo; paso 25m ./scripts/dast.sh --remoto "${DAST_REMOTO-https://dev.calasign.com}" || rc=1; fi
   exit $rc
 ) >"$LOG" 2>&1
 RC=$?

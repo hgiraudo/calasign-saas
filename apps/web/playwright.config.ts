@@ -39,5 +39,8 @@ export default defineConfig({
     timeout: 120_000,
     stdout: "ignore",
     stderr: "pipe",
+    // Sin esto Playwright lo mata con SIGKILL y no llega a borrar su carpeta de datos (servidor.mjs igual barre las
+    // que quedaron de servidores muertos).
+    gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
   },
 });

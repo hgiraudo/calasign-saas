@@ -165,8 +165,12 @@ máquina):
   efímera en `:4196`) y `dast.sh --remoto` contra dev (`DAST_REMOTO` cambia el destino; vacío lo saltea). Una alerta
   alta nueva de ZAP o un hallazgo nuevo del SAST deja la noche en rojo. Informes en `var/dast/` y `var/sast/` del
   worktree. Herramientas: `seguridad-y-cumplimiento.md` §5.2.
-- Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando. Tope de la
-  unidad: 150 min.
+- Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando.
+- Cada paso con techo propio (`timeout`, sale con 124 y el log dice «cortado a los …»): `qa.sh --e2e` 75 min (y
+  dentro, vitest de la API 25 min con `QA_TIMEOUT_VITEST_API`), SAST 20, DAST activo 60 y remoto 25. La unidad corta a
+  los 200 min, por encima de la suma; si igual corta, el script escribe `ultimo.txt` en rojo y avisa.
+- Temporales en disco, en `var/tmp/` del worktree (`TMPDIR`), que se vacía en cada corrida: `/tmp` es tmpfs y lo
+  comparten los QA nocturnos de otros proyectos de la máquina, que corren a la misma hora.
 - Resultado en `var/qa-nocturno/ultimo.txt` y el log de cada noche al lado (quedan 14). En rojo, aviso de escritorio.
 - Sin `linger` el timer corre sólo con la sesión abierta; `Persistent=true` recupera la corrida perdida al volver
   (`sudo loginctl enable-linger $USER` lo hace correr con la sesión cerrada).
@@ -181,6 +185,16 @@ Nos pasó lo mismo del 1 al 4-Nov-2026: el cuerpo del script iba entre llaves (`
 el script entero antes de escribir `ultimo.txt` y de avisar. Ninguna noche dejó `ultimo.txt` y la del 4-Nov quedó en
 rojo (SAST) sin aviso. Desde `490b13c` es un subshell. Si `--estado` dice «Nunca corrió» con logs en
 `var/qa-nocturno/`, el script está roto, no el timer.
+
+Y otra vez el 10 y 11-Nov-2026, con el mismo commit que había pasado el 9: vitest de la API falló con `ENOSPC`
+(«Check free disk space» de PGlite) y se quedó colgado hasta que systemd lo mató a los 150 min; `ultimo.txt` siguió
+diciendo «verde» del 9 y no hubo aviso. `/tmp` (tmpfs de 7,4 GB) estaba lleno: 1,7 GB eran carpetas de la API de
+Playwright (`calasign-web-e2e-*`) que no se borraban porque Playwright mata su `webServer` con SIGKILL, y el resto,
+temporales de los QA nocturnos de otros proyectos. Arreglos: `servidor.mjs` lleva el PID en la carpeta y barre las de
+servidores muertos (como `test-support/global-tmp.ts`), Playwright lo apaga con SIGTERM (`gracefulShutdown`), el
+nocturno usa su propio `TMPDIR`, cada paso tiene techo y `qa.sh` avisa si el temporal tiene menos de 3 GB libres.
+**Un test que crea una carpeta temporal tiene que borrarla también cuando lo matan** (PID en el nombre y barrido al
+arrancar), no sólo en el `exit`.
 
 ---
 

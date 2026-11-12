@@ -212,6 +212,10 @@ arrancar), no sólo en el `exit`.
    siempre.
 6. **Timeouts como sincronización.** `await sleep(500)` y después afirmar: pasa en esta máquina y falla en otra.
    Esperar la condición (polling con tope) o el evento.
+7. **Una carpeta temporal que sólo se borra en el `exit`.** Si al proceso lo matan (SIGKILL de Playwright, Ctrl+C,
+   `timeout`), queda para siempre en `/tmp`, que es tmpfs y lo comparten otros proyectos: lleno, PGlite falla con
+   `ENOSPC` y vitest se cuelga (§4.4, 10 y 11-Nov-2026). PID en el nombre y, al arrancar, borrar las de procesos que ya
+   no existen (`test-support/global-tmp.ts`, `apps/web/e2e/servidor.mjs`).
 
 ### 5.1 Suites que sólo existen en local
 
@@ -251,7 +255,8 @@ del consentimiento quitada, el test del firmante da rojo («Expected: disabled /
 ### 6.2 Cómo corre
 
 - **API efímera propia** (`e2e/servidor.mjs`, `:4197`, PGlite temporal, buzón de desarrollo, sin TSA) que sirve
-  `apps/web/dist`. 🔴 Si el puerto está ocupado **falla**: no corre contra una API ajena.
+  `apps/web/dist`. 🔴 Si el puerto está ocupado **falla**: no corre contra una API ajena. Playwright la apaga con
+  SIGTERM (`gracefulShutdown`) para que borre su carpeta, y cada arranque barre las de servidores muertos.
 - **Los datos se arman por la API** (`helpers/api.ts`); la UI sólo para lo que se prueba.
 - **Un worker**: comparten la API y la máquina tiene poca RAM.
 - **Navegadores**: Chromium siempre; **WebKit** (Safari, 22 tests más, ~3 min) con `E2E_WEBKIT=1`: lo corre siempre el

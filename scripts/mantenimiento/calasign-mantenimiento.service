@@ -1,0 +1,11 @@
+[Unit]
+Description=CalaSign: mantenimiento diario (un agente revisa el QA nocturno, SAST y DAST, corrige, y el script sube y despliega)
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/scripts/mantenimiento.sh
+# Que no le gane la RAM ni la CPU a las sesiones de trabajo.
+Nice=10
+IOSchedulingClass=idle
+# Espera al QA nocturno (hasta 4 h si sigue corriendo) + agente (tope 4 h) + qa.sh --e2e (tope 90 min) + deploy (~10 min).
+TimeoutStartSec=10h

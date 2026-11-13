@@ -1,0 +1,9 @@
+[Unit]
+Description=CalaSign: mantenimiento diario a las 07:30 (después del QA nocturno de las 03:30)
+
+[Timer]
+OnCalendar=*-*-* 07:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

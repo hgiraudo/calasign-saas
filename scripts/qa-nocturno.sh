@@ -79,7 +79,10 @@ trap cortado TERM INT
   cd "$WT" || exit 1
   # Temporales propios, en disco: /tmp es tmpfs (RAM) y lo comparten los QA nocturnos de otros proyectos, que corren a
   # la misma hora. Lleno, PGlite fallaba con ENOSPC y vitest se colgaba (10 y 11-Nov-2026). Se vacía en cada corrida.
-  export TMPDIR="$WT/var/tmp"
+  # En /var/tmp y no dentro del repo (así estuvo el 12 y 13-Nov, rojo): AppArmor sólo deja a Ghostscript crear
+  # temporales en /tmp y /var/tmp, y bajo el repo Node toma el package.json raíz ("type": "module") y los conectores
+  # generados en el temporal dejan de cargarse con require.
+  export TMPDIR="/var/tmp/calasign-qa-nocturno-$(id -u)"
   rm -rf "$TMPDIR" && mkdir -p "$TMPDIR" || exit 1
   rc=0
   # Cada paso con techo (timeout mata al grupo entero y sale con 124): uno colgado se corta, queda en rojo con su log y

@@ -174,8 +174,12 @@ máquina):
 - Cada paso con techo propio (`timeout`, sale con 124 y el log dice «cortado a los …»): `qa.sh --e2e` 75 min (y
   dentro, vitest de la API 25 min con `QA_TIMEOUT_VITEST_API`), SAST 20, DAST activo 60 y remoto 25. La unidad corta a
   los 200 min, por encima de la suma; si igual corta, el script escribe `ultimo.txt` en rojo y avisa.
-- Temporales en disco, en `var/tmp/` del worktree (`TMPDIR`), que se vacía en cada corrida: `/tmp` es tmpfs y lo
-  comparten los QA nocturnos de otros proyectos de la máquina, que corren a la misma hora.
+- Temporales en disco, en `/var/tmp/calasign-qa-nocturno-<uid>` (`TMPDIR`), que se vacía en cada corrida: `/tmp` es
+  tmpfs y lo comparten los QA nocturnos de otros proyectos de la máquina, que corren a la misma hora. **No** dentro del
+  repo: el 12 y 13-Nov-2026 estuvo en `var/tmp/` del worktree y la noche quedó roja por dos lados. AppArmor (perfil
+  `gs` de Ubuntu) sólo deja a Ghostscript crear temporales en `/tmp` y `/var/tmp`, y bajo el repo Node encuentra el
+  `package.json` raíz (`"type": "module"`) y los conectores que `integrations/test` genera en el temporal ya no se
+  cargan con `require`.
 - Resultado en `var/qa-nocturno/ultimo.txt` y el log de cada noche al lado (quedan 14). En rojo, aviso de escritorio.
 - Sin `linger` el timer corre sólo con la sesión abierta; `Persistent=true` recupera la corrida perdida al volver
   (`sudo loginctl enable-linger $USER` lo hace correr con la sesión cerrada).
@@ -200,6 +204,35 @@ servidores muertos (como `test-support/global-tmp.ts`), Playwright lo apaga con 
 nocturno usa su propio `TMPDIR`, cada paso tiene techo y `qa.sh` avisa si el temporal tiene menos de 3 GB libres.
 **Un test que crea una carpeta temporal tiene que borrarla también cuando lo matan** (PID en el nombre y barrido al
 arrancar), no sólo en el `exit`.
+
+
+### 4.5 Mantenimiento diario
+
+**Estado (13-Nov-2026).** 🟡 Nuevo: `scripts/mantenimiento.sh`, timer `calasign-mantenimiento` a las **07:30**, después
+del QA nocturno. Instalación (una vez por máquina, la hace el usuario):
+
+```bash
+./scripts/mantenimiento.sh --instalar    # crea el worktree ../calasign-mant e instala el timer
+claude setup-token                       # token de larga duración; guardarlo en ~/.config/calasign-mantenimiento/token (chmod 600)
+./scripts/mantenimiento.sh --estado      # el último informe y el próximo disparo
+./scripts/mantenimiento.sh --sin-subir   # una corrida ahora, sin push ni deploy (los commits quedan en la rama mant/<fecha>)
+```
+
+1. Espera a que termine el QA nocturno de hoy (§4.4: `qa.sh --e2e`, SAST completo, DAST activo —el pentest de ZAP— y
+   pasivo contra dev); si no corrió, lo corre.
+2. En un worktree propio (`../calasign-mant`, rama `mant/<fecha>` desde `main`) lanza un agente de Claude Code sin
+   supervisión (`claude -p`, permisos en modo `auto`, tope de 4 h y US$ 20) con las instrucciones de
+   `scripts/mantenimiento/prompt.md`: revisa el QA, los informes de SAST y DAST (todas las alertas, no sólo las altas),
+   `pnpm audit` y osv, ESLint y el trinquete; corrige con su test y su documentación, y commitea. No puede hacer push,
+   deploy, `sudo`, `systemctl`, `terraform` ni `aws`, ni tocar el checkout compartido. Lo que necesita una persona
+   (excepciones, versiones mayores, contratos de la API, migraciones, infraestructura, cosas pagas) va al informe.
+3. El script, no el agente, corre `qa.sh --e2e` sobre esos commits. Sólo en verde: push a `origin/main` (sin force:
+   si avanzó, rebase o se frena), adelanta el `main` local (`--ff-only`) y despliega en dev (`deploy-dev.sh`).
+4. Informe del día en `var/mantenimiento/<fecha>.md` (la primera línea va en el aviso de escritorio) y log al lado;
+   quedan 30 días.
+
+Variables: `MANT_BUDGET_USD`, `MANT_HORAS`, `MANT_MODELO`, `MANT_DIR`. La señal de que corre es la fecha del último
+informe (`--estado`), igual que en el nocturno.
 
 ---
 

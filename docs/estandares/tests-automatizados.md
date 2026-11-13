@@ -96,6 +96,11 @@ Corre **un comando pesado a la vez** (la máquina tiene 14 GB y puede haber otra
 `var/qa/<corrida>/` (se borran si todo pasa; `QA_KEEP=1` los conserva) y sale con ≠0 si algo falló, mostrando las
 últimas líneas de lo que falló. Con poca RAM: `QA_WORKERS=2 ./scripts/qa.sh`.
 
+Una vez por máquina, además de Node y pnpm: `sudo apt install python3-lxml`. Es el verificador independiente de la firma
+XML (`packages/xades/test/verify_xmldsig.py`, libxml2): `qa.sh` lo exige (`XMLDSIG_REQUIRED=1`) y sin él `vitest xades`
+falla con «instalar python3-lxml». Antes el test lo salteaba y en ninguna máquina estaba instalado: del 17-Oct al
+12-Nov-2026 el contraste con libxml2 no corrió nunca con el QA en verde (§5, punto 3).
+
 ### 4.1 La API efímera del modo `--e2e`
 
 - Arranca en `:4199` (**no** 4190: `fetch` bloquea ese puerto por especificación y todas las suites dan «bad port»),

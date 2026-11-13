@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,11 @@ import { DIAN_POLICY_V2, signXml, verifyXml, type XmlProfile } from "../src";
 
 const VERIFIER = fileURLToPath(new URL("./verify_xmldsig.py", import.meta.url));
 
-/** Verificación independiente con libxml2 (lxml) si está disponible (XMLDSIG_PYTHONPATH o lxml del sistema). */
+/**
+ * Verificación independiente con libxml2 (lxml del sistema, o XMLDSIG_PYTHONPATH). Sin lxml devuelve null y el test
+ * sigue con las otras dos; con XMLDSIG_REQUIRED=1 (lo pone qa.sh) falla: sin eso nunca corrió en ninguna máquina
+ * del 17-Oct al 12-Nov-2026 y el QA daba verde igual. También falla si el verificador se cae con el XML firmado.
+ */
 function independent(xml: string): { valid: boolean; references?: { uri: string; valid: boolean }[]; error?: string } | null {
   const dir = mkdtempSync(join(tmpdir(), "xmldsig-"));
   const file = join(dir, "doc.xml");
@@ -19,11 +23,21 @@ function independent(xml: string): { valid: boolean; references?: { uri: string;
   try {
     const out = execFileSync("python3", [VERIFIER, file], {
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, PYTHONPATH: process.env.XMLDSIG_PYTHONPATH ?? "" },
     });
     return JSON.parse(out);
-  } catch {
+  } catch (e) {
+    if (process.env.XMLDSIG_REQUIRED === "1") {
+      const stderr = String((e as { stderr?: unknown }).stderr ?? "")
+        .trim()
+        .split("\n")
+        .at(-1);
+      throw new Error(`verificador libxml2 (verify_xmldsig.py): ${stderr || (e as Error).message} — instalar python3-lxml`);
+    }
     return null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

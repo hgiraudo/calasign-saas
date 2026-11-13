@@ -114,7 +114,8 @@ unit_tests() {
   echo "▶ unit (vitest)"
   run "vitest pdf" packages/pdf ./node_modules/.bin/vitest run --reporter=dot
   # xades no tiene vitest propio: usa el de apps/api (como dice el README).
-  run "vitest xades" packages/xades ../../apps/api/node_modules/.bin/vitest run --reporter=dot
+  # XMLDSIG_REQUIRED: el contraste con libxml2 (python3-lxml) es obligatorio en el gate; sin lxml el test lo salteaba.
+  run "vitest xades" packages/xades env XMLDSIG_REQUIRED=1 ../../apps/api/node_modules/.bin/vitest run --reporter=dot
   run "vitest firmador" packages/firmador ./node_modules/.bin/vitest run --reporter=dot
   run "vitest sdk-node" packages/sdk-node ./node_modules/.bin/vitest run --reporter=dot
   local workers=()

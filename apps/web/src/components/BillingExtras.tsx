@@ -1,5 +1,5 @@
 // Cobro al firmar: panel del remitente (borrador), resumen en el detalle y panel/puerta del firmante.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   PAYMENT_CURRENCIES,
   PAYMENT_METHOD_CODES,
@@ -100,7 +100,8 @@ export function PaymentOptionsPanel({
     if (signers[0] && !signers.some((s) => s.id === payer)) setPayer(signers[0].id);
   }, [signers, payer]);
 
-  const configured = data?.providers.filter((p) => p.configured) ?? [];
+  // Memorizado: una lista nueva en cada render volvía a correr el efecto de abajo en cada render.
+  const configured = useMemo(() => data?.providers.filter((p) => p.configured) ?? [], [data]);
   useEffect(() => {
     if (configured[0] && provider && !configured.some((p) => p.id === provider)) setProvider(configured[0].id);
   }, [configured, provider]);

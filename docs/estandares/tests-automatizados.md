@@ -138,8 +138,8 @@ el próximo puede volver a subir hasta el número viejo sin que nadie se entere.
 Además: estructura de `apps/api/migrations` (nombre, número repetido, migración versionada editada) y un aviso si un
 archivo **nuevo** pasa las 1.000 líneas.
 
-**ESLint sigue la misma idea**: errores en cero, y los avisos (`react-hooks/exhaustive-deps`, 4 hoy) no pueden
-subir: `qa.sh` corre `eslint --max-warnings 4` (`ESLINT_MAX_WARNINGS` lo cambia). Si un arreglo baja la cuenta, el
+**ESLint sigue la misma idea**: errores en cero, y los avisos (`react-hooks/exhaustive-deps`, 2 desde el 14-Nov-2026) no pueden
+subir: `qa.sh` corre `eslint --max-warnings 2` (`ESLINT_MAX_WARNINGS` lo cambia). Si un arreglo baja la cuenta, el
 número de `qa.sh` y de `package.json` (`lint`) baja en el mismo commit.
 
 ### 4.3 Cableado al deploy

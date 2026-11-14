@@ -358,7 +358,8 @@ export function BrandingPage() {
     });
 
   // ───────── Vista previa en vivo ─────────
-  const theme = (cfg.theme ?? {}) as Theme;
+  // Memorizado: sin tema propio, un `{}` nuevo en cada render recalculaba `effectiveTheme` y la vista previa en cada render.
+  const theme = useMemo(() => (cfg.theme ?? {}) as Theme, [cfg.theme]);
   const cssProblem = cfg.customCss ? customCssProblem(cfg.customCss) : null;
   // Lo que una sub-marca no define lo hereda de la marca de la organización (como mergeConfig en el servidor).
   const defaultBrand = brand && !brand.isDefault ? brands?.find((b) => b.isDefault) : undefined;

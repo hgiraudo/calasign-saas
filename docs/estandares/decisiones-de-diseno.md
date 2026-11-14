@@ -137,7 +137,7 @@ necesiten información de tipos: `tsc` ya es el gate de tipos) + `eslint-plugin-
 | Qué | Cómo quedó |
 |---|---|
 | Errores | **0**. El hook rechaza un commit con errores en lo que está en stage |
-| `react-hooks/exhaustive-deps` | En **aviso**: 4 hoy (`BillingExtras`, `embed`, `Billing`, `Branding`). No se tocaron a ciegas: agregar una dependencia cambia cuándo corre el efecto. `qa.sh` corre con `--max-warnings 4`: el total no sube; si se arregla uno, se baja el número el mismo día |
+| `react-hooks/exhaustive-deps` | En **aviso**: 2 (`embed`, `Billing`). No se tocaron a ciegas: agregar una dependencia cambia cuándo corre el efecto. `BillingExtras` y `Branding` se arreglaron el 14-Nov-2026 sin tocar dependencias: un valor derivado (`?? []`, `?? {}`) memorizado con `useMemo`, que antes cambiaba en cada render. `qa.sh` corre con `--max-warnings 2`: el total no sube; si se arregla uno, se baja el número el mismo día |
 | `no-explicit-any`, `catch` vacíos | Apagadas: las mide el trinquete por archivo (§9), con baseline |
 | `no-control-regex` | Apagada: filtrar `\x00-\x1f` en cabeceras y nombres de archivo es deliberado |
 | Entornos | Declarados por carpeta: Apps Script (un scope global compartido entre archivos), Zapier en CommonJS, widget AMD de Kommo, Office/Word, service worker |

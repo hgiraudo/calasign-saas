@@ -11,7 +11,8 @@
 #   gitleaks  .gitleaks.toml (rutas de datos de prueba) y .gitleaksignore (fingerprint)
 #   osv       se mira, no corta: las altas/críticas de producción ya las corta pnpm audit (SEG-41)
 #   Trivy     .trivyignore
-# Herramientas en ~/.local/bin (instalación: seguridad-y-cumplimiento.md §5.2). Informes en var/sast/<corrida>/.
+# Herramientas en ~/.local/bin (instalación: seguridad-y-cumplimiento.md §5.2). Informes en var/sast/<corrida>/ (en verde
+# queda sólo osv.txt, con --completo).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
@@ -76,5 +77,17 @@ if [ "$MODE" = completo ]; then
   fi
 fi
 
-if [ $FAILED -eq 0 ]; then echo "✓ SAST $MODE verde"; rm -rf "$RUN"; exit 0; fi
+if [ $FAILED -eq 0 ]; then
+  echo "✓ SAST $MODE verde"
+  # En verde se borra todo menos el informe de osv (informativo: verde no quiere decir que esté vacío). Hasta el
+  # 14-Nov-2026 se borraba también, y lo más nuevo en var/sast/ era un rojo del 4-Nov que el mantenimiento diario podía
+  # leer como el de la noche.
+  if [ "$MODE" = completo ] && [ -s "$RUN/osv.txt" ]; then
+    find "$RUN" -mindepth 1 ! -name osv.txt -delete
+    echo "  (informe de osv-scanner en $RUN/osv.txt)"
+  else
+    rm -rf "$RUN"
+  fi
+  exit 0
+fi
 echo "✗ SAST $MODE en ROJO (informes en $RUN/)"; exit 1

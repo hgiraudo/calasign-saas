@@ -169,7 +169,8 @@ máquina):
 - Después, la seguridad (capa 9, desde el 31-Oct-2026): `sast.sh --completo`, `dast.sh` (ZAP activo sobre una API
   efímera en `:4196`) y `dast.sh --remoto` contra dev (`DAST_REMOTO` cambia el destino; vacío lo saltea). Una alerta
   alta nueva de ZAP o un hallazgo nuevo del SAST deja la noche en rojo. Informes en `var/dast/` y `var/sast/` del
-  worktree. Herramientas: `seguridad-y-cumplimiento.md` §5.2.
+  worktree (del SAST en verde queda sólo `osv.txt`: hasta el 14-Nov-2026 se borraba todo y lo más nuevo en `var/sast/`
+  era un rojo del 4-Nov, que se podía leer como el de la noche). Herramientas: `seguridad-y-cumplimiento.md` §5.2.
 - Con `Nice=10`, E/S `idle` y `QA_WORKERS=3`: no le gana la máquina a una sesión que esté trabajando.
 - Cada paso con techo propio (`timeout`, sale con 124 y el log dice «cortado a los …»): `qa.sh --e2e` 75 min (y
   dentro, vitest de la API 25 min con `QA_TIMEOUT_VITEST_API`), SAST 20, DAST activo 60 y remoto 25. La unidad corta a

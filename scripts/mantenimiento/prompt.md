@@ -14,8 +14,9 @@ no preguntes, decidí con las reglas de abajo y dejá por escrito lo que necesit
 1. **El QA nocturno de hoy.** Resultado: `{{QA_ULTIMO}}`. Log: `{{QA_LOG}}`. Si está en rojo, los logs de cada paso
    están en `{{QA_WT}}/var/qa/` (la corrida más nueva). Un rojo se arregla en la causa: si el mismo commit pasaba
    antes, buscá qué cambió en el entorno (disco, /tmp, fecha, red, otra sesión) antes de tocar el código.
-2. **SAST** (`{{QA_WT}}/var/sast/`, la corrida más nueva): hallazgos de Semgrep (propias y públicas), gitleaks,
-   osv-scanner (informativo: mirá si apareció algo nuevo con arreglo) y Trivy.
+2. **SAST** (`{{QA_WT}}/var/sast/`, la corrida más nueva; mirá que la fecha sea la de la noche): hallazgos de Semgrep
+   (propias y públicas), gitleaks, osv-scanner (informativo: mirá si apareció algo nuevo con arreglo) y Trivy. En
+   verde sólo queda `osv.txt`: lo demás salió limpio.
 3. **DAST / pentest** (`{{QA_WT}}/var/dast/`, las dos corridas más nuevas: la activa local y la pasiva remota contra
    dev): `zap.json` (todas las alertas, no sólo las altas: las medias y bajas también se arreglan si son reales) y
    `testssl.json`. Compará con la corrida anterior para ver qué es nuevo.

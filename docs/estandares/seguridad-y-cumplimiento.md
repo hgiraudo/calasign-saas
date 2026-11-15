@@ -150,11 +150,14 @@ días; `qs` y `@eslint/plugin-kit` ya estaban en las 11 del 5-Nov y no tenían f
 
 | Paquete | Advisories | Exposición | Arreglada en | Publicada | Subir desde |
 |---|---|---|---|---|---|
-| `hono` 4.13.13 (vía `@modelcontextprotocol/sdk`, rango `^4.11.4`) | 4 moderadas, 1 baja: `mount()`, `RegExpRouter`, `csrf()`, `validator('form')`, helper `css` | Baja: la API no usa el router ni los middlewares de Hono (rutea Fastify) | 4.13.16 | 1-Nov-2026 | **15-Nov-2026**, con la versión exacta (`pnpm update -r --depth Infinity hono@4.13.16`): la última de 4.13 es de días |
-| `@hono/node-server` 2.1.5 (ídem) | 2 moderadas: `\` como separador de path, `ECONNRESET` en un upgrade de WebSocket | Baja: sólo `getRequestListener` en el transporte MCP de Node (`modules/mcp/index.ts`), detrás de Fastify, sin WebSocket | 2.1.6 | 2-Nov-2026 | **16-Nov-2026**, ídem con `@2.1.6` |
+| `hono` 4.13.13 (vía `@modelcontextprotocol/sdk`, rango `^4.11.4`) | 4 moderadas, 1 baja: `mount()`, `RegExpRouter`, `csrf()`, `validator('form')`, helper `css` | Baja: la API no usa el router ni los middlewares de Hono (rutea Fastify) | 4.13.16 | 1-Nov-2026 | ✅ **Subido el 15-Nov-2026 a 4.13.16** (sólo el lockfile; 4.13.17 y 4.13.18 tienen menos de 14 días). `pnpm update hono@4.13.16` no toca una dependencia transitiva: se puso `"hono": "4.13.16"` en `pnpm.overrides`, `pnpm install`, y se sacó el override; el lockfile conserva 4.13.16 porque cumple el `^4.11.4` del SDK |
+| `@hono/node-server` 2.1.5 (ídem) | 2 moderadas: `\` como separador de path, `ECONNRESET` en un upgrade de WebSocket | Baja: sólo `getRequestListener` en el transporte MCP de Node (`modules/mcp/index.ts`), detrás de Fastify, sin WebSocket | 2.1.6 | 2-Nov-2026 | **16-Nov-2026**, igual que `hono` (override temporal a `2.1.6` exacto: 2.1.7 y 2.1.8 son del 11 y 12-Nov) |
 | `node-forge` 1.4.1 (directo en `apps/api` y `packages/firmador`, fijado exacto) | 3 moderadas (ReDoS en `forge.http`, dos caídas del cliente TLS), 1 baja (Ed25519) | Baja: sólo se leen `.p12`; no se usa `forge.http`, `forge.tls` ni Ed25519 | 1.4.3 | 4-Nov-2026 | **18-Nov-2026** |
 | `qs` 6.15.1 (sólo dev: `@stryker-mutator/core` → `typed-rest-client` 2.3.1, que lo fija exacto) | 4 moderadas | Ninguna en producción: el test de mutación no recibe entradas de afuera | 6.16.1 | 14-Oct-2026 | Sin camino patch/minor: Stryker 10.1 sigue en `typed-rest-client ~2.3.0`; se va con la subida de Stryker que traiga `typed-rest-client` 3 (ya pide `qs ^6.16.1`) |
 | `@eslint/plugin-kit` 0.2.8 (dev) | 1 baja (ReDoS en comentarios de configuración) | Ninguna: corre sobre el código propio | 0.3.4 (0.x: cambio de menor = mayor) | 2025 | Con la próxima subida de ESLint |
+
+**15-Nov-2026**, con `hono` 4.13.16: osv-scanner pasa de 22 a **17**; `pnpm audit --prod`, de 16 a 11 (0 críticas,
+la alta de `zod` ignorada).
 
 ### 5.2 Herramientas de SAST y DAST (sin Docker)
 
